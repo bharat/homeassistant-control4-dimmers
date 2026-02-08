@@ -1,24 +1,204 @@
 /**
  * Zigbee2MQTT External Converter for Control4 Zigbee Dimmers
  *
- * Control4 dimmers expose standard Zigbee HA profile on endpoint 1:
+ * Standard Zigbee HA control (endpoint 1, profile 0x0104):
  *   - Cluster 0x0006 (genOnOff) for on/off
  *   - Cluster 0x0008 (genLevelCtrl) for dimming
  *
+ * Proprietary C4 text protocol (endpoint 1, profile 0xC25C "MIB"):
+ *   - Cluster 0x0001, raw ASCII payload (NO ZCL framing)
+ *   - Command format: "0s<seq_hex> <command> <params>\r\n"
+ *   - Response format: "0r<seq_hex> 000 [data]\r\n"  (000 = success)
+ *   - Query format:   "0g<seq_hex> <command> <params>\r\n"
+ *   - Telemetry:      "0t<seq_hex> sa <command> <data>\r\n"
+ *   - Responses/events arrive on endpoint 197 (0xC5), profile 0xC25C
+ *
+ * Known C4 text commands:
+ *   c4.dmx.led <led_id> <mode> <rrggbb>  — Set LED color
+ *     led_id: 01=top, 04=bottom
+ *     mode:   03=ON color (shown when load is on)
+ *             04=OFF color (shown when load is off)
+ *     rrggbb: hex RGB (ff0000=red, 00ff00=green, ffffff=white, 000000=off)
+ *
+ *   c4.dmx.pwr <hex_level>   — Set power level (e.g. "b5" ≈ 71%)
+ *   c4.dmx.off <param>       — Turn off (e.g. "0000")
+ *   c4.dmx.amb <led_id>      — Query/set ambient LED (0g to query, 0s to set)
+ *   c4.dmx.ls                — Light status telemetry (incoming only, 0t prefix)
+ *   c4.dmx.key               — Button/key events (incoming only)
+ *   c4.dmx.bp                — Button press events
+ *   c4.dmx.cc                — Config change?
+ *   c4.dmx.hc / c4.dmx.he   — Unknown
+ *   c4.dmx.plm / c4.dmx.pmti / c4.dmx.sc — Unknown
+ *
  * Known quirks:
- *   - modelId is returned as empty string from genBasic (breaks auto-discovery)
- *   - modelID field is absent from database after failed interview
+ *   - modelId returned as empty string from genBasic (breaks auto-discovery)
  *   - Endpoints 196/197 refuse simpleDescriptor requests (interview failures)
  *   - Device does NOT send ZCL default responses (must use disableDefaultResponse)
  *   - manufId (43981 / 0xABCD) IS available even after failed interview
+ *   - Text commands use profile 0xC25C, NOT 0x0104 or 0xC25D
+ *   - Responses arrive on endpoint 0xC5 (197), not the sending endpoint
+ *   - C4 Director always sends all 4 LED commands as a group (top+bottom × on+off)
  *
- * Matching strategy: fingerprint on manufacturerID (43981) since modelID
- * is unavailable. zigbeeModel entries are kept for manual database patches.
- *
+ * Matching: fingerprint on manufacturerID since modelID is often absent.
  * Factory reset: Press top 13x, bottom 4x, top 13x (13-4-13)
  */
 
 import {light} from 'zigbee-herdsman-converters/lib/modernExtend';
+
+// ─── Protocol Constants ──────────────────────────────────────────────
+
+const C4_MIB_PROFILE = 0xC25C; // 49756 — C4 "MIB" profile for text commands
+const C4_CLUSTER     = 1;      // Proprietary cluster (NOT genPowerCfg)
+
+// ─── LED Mapping ─────────────────────────────────────────────────────
+
+const LED_IDS = {
+    top:    '01',
+    bottom: '04',
+};
+
+const LED_MODES = {
+    on:  '03', // Color shown when the dimmer load is ON
+    off: '04', // Color shown when the dimmer load is OFF
+};
+
+// ─── Sequence Counter ────────────────────────────────────────────────
+
+let seqCounter = Math.floor(Math.random() * 0xFFFF);
+
+function nextSeq() {
+    seqCounter = (seqCounter + 1) & 0xFFFF;
+    return seqCounter.toString(16).padStart(4, '0');
+}
+
+// ─── Core: Send C4 Text Command ─────────────────────────────────────
+//
+// The C4 text protocol sends raw ASCII as the APS payload with NO ZCL
+// framing. We bypass endpoint.command() and call sendRequest() directly
+// with a fake frame whose toBuffer() returns just our raw text bytes.
+
+async function sendC4(device, cmdBody) {
+    const ep = device.getEndpoint(1);
+    if (!ep) throw new Error('Endpoint 1 not found on device');
+
+    const seq = nextSeq();
+    const text = `0s${seq} ${cmdBody}\r\n`;
+    const rawBytes = Buffer.from(text, 'ascii');
+
+    const frame = {
+        cluster: {ID: C4_CLUSTER, name: 'c4Mib'},
+        command: {ID: 0x35, name: 'c4TextCmd'},
+        header: {
+            transactionSequenceNumber: seqCounter & 0xFF,
+            frameControl: {frameType: 1, direction: 0, disableDefaultResponse: true},
+        },
+        toBuffer: () => rawBytes,
+    };
+
+    const options = {
+        profileId: C4_MIB_PROFILE,
+        disableDefaultResponse: true,
+        disableResponse: true,
+        timeout: 10000,
+        direction: 0,
+        reservedBits: 0,
+        disableRecovery: false,
+        writeUndiv: false,
+        sendPolicy: 'immediate',
+    };
+
+    await ep.sendRequest(frame, options);
+    return text.trim();
+}
+
+// ─── toZigbee: Set LED Colors ────────────────────────────────────────
+//
+// Sets LED colors for a single LED+mode, or all 4 at once.
+//
+// Single LED:
+//   {"c4_led": {"led": "top", "color": "ff0000"}}
+//   {"c4_led": {"led": "top", "color": "ff0000", "mode": "on"}}
+//   {"c4_led": {"led": "bottom", "color": "0000ff", "mode": "off"}}
+//
+// All 4 at once (matches C4 Director behavior):
+//   {"c4_led": {"top_on": "ffffff", "top_off": "000000",
+//               "bottom_on": "000000", "bottom_off": "0000ff"}}
+
+const tzControl4Led = {
+    key: ['c4_led'],
+    convertSet: async (entity, key, value, meta) => {
+        const state = {};
+
+        // Batch mode: set all 4 LED states at once
+        if (value.top_on !== undefined || value.top_off !== undefined ||
+            value.bottom_on !== undefined || value.bottom_off !== undefined) {
+            const commands = [
+                ['01', '03', value.top_on],
+                ['01', '04', value.top_off],
+                ['04', '03', value.bottom_on],
+                ['04', '04', value.bottom_off],
+            ];
+
+            for (const [ledId, mode, color] of commands) {
+                if (color === undefined) continue;
+                const colorHex = color.replace('#', '').toLowerCase();
+                if (!/^[0-9a-f]{6}$/.test(colorHex)) {
+                    throw new Error(`Invalid color "${color}" — expected 6-digit hex RGB`);
+                }
+                await sendC4(meta.device, `c4.dmx.led ${ledId} ${mode} ${colorHex}`);
+            }
+
+            if (value.top_on) state.c4_led_top_on = value.top_on;
+            if (value.top_off) state.c4_led_top_off = value.top_off;
+            if (value.bottom_on) state.c4_led_bottom_on = value.bottom_on;
+            if (value.bottom_off) state.c4_led_bottom_off = value.bottom_off;
+
+            return {state};
+        }
+
+        // Single LED mode
+        const {led = 'top', color, mode = 'on'} = value;
+
+        if (!color) {
+            throw new Error('c4_led requires "color" (6-digit hex RGB) or batch keys (top_on, top_off, etc.)');
+        }
+
+        const ledId = LED_IDS[led] ?? led;
+        const colorHex = color.replace('#', '').toLowerCase();
+
+        if (!/^[0-9a-f]{6}$/.test(colorHex)) {
+            throw new Error(`Invalid color "${color}" — expected 6-digit hex RGB like "ff0000"`);
+        }
+
+        const modeCode = LED_MODES[mode] ?? mode;
+
+        await sendC4(meta.device, `c4.dmx.led ${ledId} ${modeCode} ${colorHex}`);
+        state[`c4_led_${led}_${mode}`] = colorHex;
+
+        return {state};
+    },
+};
+
+// ─── toZigbee: Raw C4 Text Command ──────────────────────────────────
+//
+// For experimentation. The "0s<seq> " prefix and "\r\n" suffix are auto-added.
+//
+//   {"c4_cmd": "c4.dmx.led 01 03 ff0000"}
+//   {"c4_cmd": "c4.dmx.pwr b5"}
+
+const tzControl4Cmd = {
+    key: ['c4_cmd'],
+    convertSet: async (entity, key, value, meta) => {
+        if (typeof value !== 'string') {
+            throw new Error('c4_cmd expects a string, e.g. "c4.dmx.led 01 03 ff0000"');
+        }
+
+        const sent = await sendC4(meta.device, value);
+        return {state: {c4_last_cmd: sent}};
+    },
+};
+
+// ─── Definition ──────────────────────────────────────────────────────
 
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
 const definition = {
@@ -35,6 +215,7 @@ const definition = {
     vendor: 'Control4',
     description: 'Control4 Zigbee In-Wall Dimmer',
     extend: [light({configureReporting: false})],
+    toZigbee: [tzControl4Led, tzControl4Cmd],
     meta: {disableDefaultResponse: true},
     endpoint: (device) => ({default: 1}),
     configure: async (device, coordinatorEndpoint, definition) => {

@@ -6,14 +6,14 @@
  *   - Cluster 0x0008 (genLevelCtrl) for dimming
  *
  * Known quirks:
- *   - modelId is returned as empty string "" from genBasic
+ *   - modelId is returned as empty string from genBasic (breaks auto-discovery)
+ *   - modelID field is absent from database after failed interview
  *   - Endpoints 196/197 refuse simpleDescriptor requests (interview failures)
  *   - Device does NOT send ZCL default responses (must use disableDefaultResponse)
- *   - Endpoint 196 cluster 1 is proprietary C4, NOT genPowerCfg — do NOT
- *     include it in the database or Z2M will try battery reporting on it
+ *   - manufId (43981 / 0xABCD) IS available even after failed interview
  *
- * After pairing, set modelID in database.db to one of the zigbeeModel values
- * below (e.g. "C4-APD120") since C4 devices report empty modelId.
+ * Matching strategy: fingerprint on manufacturerID (43981) since modelID
+ * is unavailable. zigbeeModel entries are kept for manual database patches.
  *
  * Factory reset: Press top 13x, bottom 4x, top 13x (13-4-13)
  */
@@ -30,6 +30,7 @@ const definition = {
         'C4-FPD120',   // Forward phase dimmer 120V
         'LDZ-102',     // Legacy dimmer model
     ],
+    fingerprint: [{manufacturerID: 43981}],
     model: 'C4-Dimmer',
     vendor: 'Control4',
     description: 'Control4 Zigbee In-Wall Dimmer',
@@ -44,22 +45,6 @@ const definition = {
 
         await endpoint.bind('genOnOff', coordinatorEndpoint);
         await endpoint.bind('genLevelCtrl', coordinatorEndpoint);
-
-        try {
-            await endpoint.configureReporting('genOnOff', [
-                {attribute: 'onOff', minimumReportInterval: 0, maximumReportInterval: 3600, reportableChange: 0},
-            ]);
-        } catch (e) {
-            // Non-fatal — C4 dimmers may not support reporting config
-        }
-
-        try {
-            await endpoint.configureReporting('genLevelCtrl', [
-                {attribute: 'currentLevel', minimumReportInterval: 5, maximumReportInterval: 3600, reportableChange: 1},
-            ]);
-        } catch (e) {
-            // Non-fatal
-        }
     },
 };
 

@@ -84,7 +84,8 @@ that those platforms never fully implemented.
   - Raw command interface for experimentation
 - **LED Color Pickers in Home Assistant** — each LED state is exposed as a
   native HA light entity with a color wheel (see [HA Integration Architecture](#ha-integration-architecture))
-- **Clean Z2M dashboard** — custom icon, no interview warnings
+- **Clean Z2M dashboard** — custom device icon, interview warnings
+  fixed via included database patch script
 
 ---
 
@@ -167,32 +168,29 @@ Device with Zigbee model '' is NOT supported
 **This is normal.** The external converter should still match the device
 via its fingerprint (profile 0x0104, deviceId 0x0101, clusters).
 
-#### Step 5: Verify and Fix Database (if needed)
+#### Step 5: Fix Interview State
 
-If the device shows a red warning triangle or as unsupported, you may need
-to manually patch the database. Stop Zigbee2MQTT and edit `database.db`:
+C4 dimmers always show "interview failed" in Z2M because their proprietary
+endpoints (196/197) refuse standard Zigbee introspection requests. This is
+cosmetic — the device works fine — but the warning triangle is annoying.
 
-Find the line with your device's IEEE address and ensure:
-```json
-{
-  "ieeeAddr": "0x000fff00XXXXXXXX",
-  "modelID": "",
-  "manufacturerName": "Control4",
-  "interviewCompleted": true,
-  "type": "Router",
-  "endpoints": {
-    "1": {
-      "profId": 260,
-      "epId": 1,
-      "devId": 257,
-      "inClusterList": [0, 3, 4, 5, 6, 8, 10],
-      "outClusterList": []
-    }
-  }
-}
+Fix it with the included Python script:
+
+```bash
+# Stop Zigbee2MQTT first! It overwrites database.db on shutdown.
+
+# Dry-run (default) — see what would change, no writes
+python3 scripts/fix-c4-database.py /path/to/database.db
+
+# Apply the fix (creates a timestamped backup first)
+python3 scripts/fix-c4-database.py /path/to/database.db --apply
+
+# Restart Zigbee2MQTT
 ```
 
-Restart Zigbee2MQTT. The device should now be recognized by the converter.
+The script finds all C4 devices by manufacturer ID (43981 / 0xABCD) and
+sets `interviewState` to `SUCCESSFUL`. It's idempotent — safe to run
+multiple times. Run it after each new dimmer pairing.
 
 #### Step 6: Test Commands
 
@@ -219,7 +217,7 @@ Once one dimmer works:
 2. Enable Permit Join on Zigbee2MQTT
 3. Factory reset each dimmer (13-4-13)
 4. Wait for all to pair
-5. Patch database.db if needed
+5. Stop Z2M, run `fix-c4-database.py --apply`, restart Z2M
 6. Set LED colors for each dimmer
 7. Test each one
 8. Rename devices in Z2M to match your room names
@@ -249,6 +247,23 @@ Once all dimmers are migrated and stable:
 2. Optionally remove any C4 Zigbee range extenders (your Z2M mesh will
    need its own routing - the C4 dimmers themselves act as Zigbee routers)
 3. Monitor your Zigbee mesh map in Z2M for healthy routing
+
+### Tips & Gotchas
+
+**Device icon**: The converter includes a custom device icon for the Z2M
+dashboard. It's hosted externally (postimg.cc) since this repo is private.
+If the icon stops loading, re-host `dimmer.png` and update the `icon` URL
+in the converter's definition object.
+
+**Entity names in HA**: Z2M derives HA entity names from the endpoint name
+(e.g. `top_led_on` becomes "Top_led_on"). The `withLabel()` API does not
+control light entity names in Z2M 2.7+. To get clean display names like
+"Top LED (On)", rename entities manually in HA:
+Settings → Devices → select entity → Name.
+
+**Interview warning**: Always shows "failed" after pairing — this is
+cosmetic. Run `scripts/fix-c4-database.py --apply` after each batch of
+pairings. See [Step 5](#step-5-fix-interview-state) for details.
 
 ---
 
@@ -423,12 +438,14 @@ mosquitto_pub -t zigbee2mqtt/Kitchen/set -m \
 - Move your coordinator closer temporarily
 - Check that Permit Join is enabled and the channel is correct
 
-### Interview fails completely
+### Interview shows as "failed"
 
-- This is expected for endpoints 196/197. Endpoint 1 should still work.
+- This is expected. C4 endpoints 196/197 refuse `simpleDescriptor` requests,
+  which Z2M interprets as a failed interview. Endpoint 1 works fine.
+- Run `scripts/fix-c4-database.py --apply` after pairing to clear the warning.
+- The script is idempotent — run it after every batch of new pairings.
 - If endpoint 1 also fails, the device may need a firmware update or may
   be a newer model with different behavior.
-- Try pairing multiple times. Sometimes it takes 2-3 attempts.
 
 ### Commands timeout
 
@@ -438,8 +455,9 @@ mosquitto_pub -t zigbee2mqtt/Kitchen/set -m \
 
 ### Device pairs but shows as unsupported
 
-- The fingerprint matching may not work for your specific model
-- Manually set the modelId in database.db
+- Ensure the external converter is installed and Z2M has been restarted
+- The converter matches on `manufacturerID: 43981` — check Z2M logs for
+  the manufacturer ID your device reports
 - Check Z2M logs for the actual clusters reported by the device
 
 ### LED commands accepted but LEDs don't change
@@ -581,6 +599,14 @@ creates one extension per LED state, each returning:
   the appropriate `c4.dmx.led` command via the raw text protocol.
 - Color conversion (HSV→RGB, XY→RGB) is done in the converter since
   the C4 protocol only accepts hex RGB colors.
+- **Gamma correction** (γ=2.0) is applied to RGB channel values before
+  sending to the device. The C4 LED has a non-linear response — without
+  gamma correction, colors like blue appear grayish-white because low
+  channel values (e.g. 0x18) produce disproportionate light output.
+  The C4 Director only ever sends pure channels (0x00 or 0xFF); gamma
+  correction lets us support the full color range.
+- Factory default colors are pre-populated: top=white when on,
+  bottom=blue when off (matching C4 Director behavior out of the box).
 
 See [HA Integration Architecture](#ha-integration-architecture) for the
 full routing and state management details.
@@ -594,10 +620,9 @@ control4-zigbee-migration/
 ├── README.md                          # This file
 ├── PROGRESS.md                        # Session-by-session progress log
 ├── external_converters/
-│   └── control4-dimmer.mjs            # Zigbee2MQTT external converter
-├── device_icons/
-│   └── C4-APD120.png                  # Custom Z2M dashboard icon
-├── mosquitto_pub.sh                   # Helper script for MQTT commands
+│   └── control4-dimmer.mjs            # Z2M external converter (the main thing)
+├── scripts/
+│   └── fix-c4-database.py             # Fix interview state in Z2M database
 └── sniff-c4-traffic.md                # Guide to sniff C4 Zigbee traffic
 ```
 

@@ -622,7 +622,11 @@ control4-zigbee-migration/
 ├── external_converters/
 │   └── control4-dimmer.mjs            # Z2M external converter (the main thing)
 ├── scripts/
-│   └── fix-c4-database.py             # Fix interview state in Z2M database
+│   ├── fix-c4-database.py             # Fix interview state in Z2M database
+│   └── probe-device.py                # Interactive device probing via MQTT
+├── docs/
+│   ├── c4-protocol.md                 # Complete C4 text protocol reference
+│   └── device-identification.md       # Dimmer vs keypad identification guide
 └── sniff-c4-traffic.md                # Guide to sniff C4 Zigbee traffic
 ```
 

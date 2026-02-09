@@ -39,12 +39,14 @@
 - [ ] Rename all HA entities for clean display names
 - [ ] Decommission Control4 Director once all dimmers are stable
 
-### Phase 5: Keypad Support 🔲 NOT STARTED
-- [ ] Test pairing a C4 keypad (C4-KD120 or similar) with Z2M
-- [ ] Map keypad button presses to Z2M actions (incoming `c4.dmx.key` / `c4.dmx.bp` events)
-- [ ] LED control per-button on keypads (different colors per button)
-- [ ] Expose keypad LED colors to Home Assistant
-- [ ] May need a separate converter definition for keypads vs. plain dimmers
+### Phase 5: Keypad Support 🔲 NOT STARTED (Protocol Fully Documented)
+- [ ] Pair a C4 keypad (C4-KC120277 or similar) with Z2M
+- [ ] Create separate converter definition with keypad-specific fingerprint (endpoints 1+2)
+- [ ] Handle button press events: `c4.dmx.bp`, `c4.dmx.sc`, `c4.dmx.cc` (same namespace as dimmer)
+- [ ] LED control per-button (buttons 00–05, modes 03/04/05)
+- [ ] Expose keypad button LEDs as HA light entities with color pickers
+- [ ] Expose button presses as HA actions/triggers
+- [ ] Test with both C4-KC120277 (newer, `c4.dmx.*`) and C4-KP6-Z (older, `c4.kp.*`) if available
 
 ### Phase 6: Upstream Contribution 🔲 NOT STARTED
 - [ ] Clean up converter for general use (remove debug `console.error` calls)
@@ -53,6 +55,78 @@
 - [ ] Document `disableDefaultResponse` requirement and interview quirks
 - [ ] Reference existing community work (SmartThings/pstuart, Hubitat/iankberry, Z2M issue #160)
 - [ ] The `sendRequest()` hack to bypass ZCL framing may need a cleaner upstream approach
+
+---
+
+## Session 5: 2026-02-09 — Device Probing & Protocol Documentation
+
+### Goal
+Build tooling to probe Control4 devices for identification (dimmer vs. keypad), reverse-engineer the full join protocol from C4 Director logs, and document all findings.
+
+### What Was Built
+
+#### 1. Device Probing Toolkit
+
+Added three new `toZigbee` converters to `control4-dimmer.mjs`:
+- **`tzControl4Query`** — Send C4 GET queries via MQTT (`c4_query` key)
+- **`tzControl4ZclRead`** — Read arbitrary ZCL cluster attributes (`zcl_read` key), with one-by-one fallback when batch read fails due to `UNSUPPORTED_ATTRIBUTE`
+- **`tzControl4Probe`** — Comprehensive probe: enumerates endpoints, clusters, and attempts genBasic attribute reads
+
+Added `fzControl4Response` fromZigbee converter to capture raw C4 text protocol responses.
+
+#### 2. Interactive Probe Script (`scripts/probe-device.py`)
+
+Python script for interactive device interrogation via Z2M's MQTT API:
+- Commands: `probe`, `read`, `query`, `cmd`, `raw`, `state`, `debug`, `docker-test`
+- MQTT authentication support (`-u` / `-P`)
+- Command history via `readline`
+- **Docker log capture** (`--docker` flag): Tails Z2M Docker logs in background, filters for C4 profile (0xC25C) frames, decodes hex payloads to ASCII, and displays responses inline — no manual log forensics needed
+
+#### 3. Protocol Documentation
+
+Created comprehensive documentation in `docs/`:
+- **`docs/c4-protocol.md`** — Complete C4 text protocol reference (all known commands, packet types, response codes, transport layer details)
+- **`docs/device-identification.md`** — Device comparison (dimmer vs. keypad), endpoint fingerprints, Director join sequences, LED button numbering
+
+### Key Discoveries
+
+#### Device Self-Identification
+C4 devices broadcast their model on profile 0xC25D after joining:
+- Dimmer: `c4:control4_light:C4-APD120` (firmware 5.1.1)
+- Keypad: `c4:control4_kp:C4-KC120277` (firmware 4.4.16)
+
+#### Endpoint Fingerprints (Definitive Differentiator)
+- **Dimmer:** Endpoints 1, 196, 197
+- **Keypad:** Endpoints 1, 2
+
+#### Shared Command Namespace
+Both dimmers and keypads (at least the C4-KC120277) use `c4.dmx.*` commands. The older C4-KP6-Z uses `c4.kp.*` (per GitHub issue #15361).
+
+#### New Commands Discovered from Director Logs
+| Command | Purpose |
+|---------|---------|
+| `c4.dmx.off <load>` | Turn off load |
+| `c4.dmx.pwr <val>` | Power configuration |
+| `c4.dmx.plm <val>` | Power line mode |
+| `c4.dmx.pmti <a> <b>` | Power measurement timer |
+| `c4.dmx.dim` | Dimmer type query (dimmer-only) |
+| `c4.dm.tv <load> <var> [val]` | Dimming table values (ramp rates, min/max) |
+| `c4.sy.zpw <val>` | ZigBee power mode |
+| `c4.als.sra` | Ambient light sensor init |
+| `c4.dmx.ls` | Load status telemetry (voltage, current, temp, energy — dimmer-only) |
+
+#### genBasic Attributes — Fully Locked Down
+All `genBasic` attributes return `UNSUPPORTED_ATTRIBUTE` on C4 devices. Device identification must use the proprietary C4 protocol, not standard ZCL.
+
+### Errors Encountered & Resolved
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `probe-device.py` timeout on all commands | MQTT broker requires authentication | Added `--username` and `--password` arguments |
+| `zcl_read genBasic` batch read fails | C4 returns `UNSUPPORTED_ATTRIBUTE` for all genBasic attributes | Implemented one-by-one fallback in `tzControl4ZclRead` |
+| `c4_query` shows "No response captured" | `fzControl4Response` not firing for profile 0xC25C frames | Added `DockerResponseCapture` class to tail Docker logs and extract responses directly |
+| Docker capture regex not matching | Pattern used `INCOMING_MESSAGE_HANDLER` (all caps) but actual log line is `ezspIncomingMessageHandler` (camelCase) | Fixed regex to match `profileId` + `messageContents` loosely |
+| Docker capture getting stale history | `docker logs --since 1s` replayed old lines | Changed to `--tail 0` (stream new only) |
 
 ---
 

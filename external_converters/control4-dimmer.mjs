@@ -466,14 +466,26 @@ const tzControl4ZclRead = {
 
         console.error(`[C4 PROBE] Reading EP ${epId} cluster ${cluster}: ${JSON.stringify(attributes)}`);
 
+        // Try reading all at once first; if that fails (UNSUPPORTED_ATTRIBUTE),
+        // fall back to reading one at a time to get everything the device supports.
         try {
             const result = await ep.read(cluster, attributes, {timeout: 10000});
             console.error(`[C4 PROBE] Result: ${JSON.stringify(result)}`);
             return {state: {probe_result: {cluster: String(cluster), endpoint: epId, attributes: result}}};
-        } catch (err) {
-            const msg = err.message || String(err);
-            console.error(`[C4 PROBE] Error reading ${cluster}: ${msg}`);
-            return {state: {probe_result: {cluster: String(cluster), endpoint: epId, error: msg}}};
+        } catch (batchErr) {
+            console.error(`[C4 PROBE] Batch read failed (${batchErr.message}), trying one-by-one...`);
+            const result = {};
+            for (const attr of attributes) {
+                try {
+                    const val = await ep.read(cluster, [attr], {timeout: 10000});
+                    Object.assign(result, val);
+                    console.error(`[C4 PROBE]   ${attr} = ${JSON.stringify(val[attr] ?? val)}`);
+                } catch (err) {
+                    result[attr] = `<error: ${err.message}>`;
+                    console.error(`[C4 PROBE]   ${attr} = ERROR: ${err.message}`);
+                }
+            }
+            return {state: {probe_result: {cluster: String(cluster), endpoint: epId, attributes: result, note: 'read one-by-one (batch failed)'}}};
         }
     },
 };
@@ -512,16 +524,19 @@ const tzControl4Probe = {
             };
         }
 
-        // ── Read genBasic from EP 1 ──
+        // ── Read genBasic from EP 1 (one-by-one for resilience) ──
         const ep1 = device.getEndpoint(1);
         if (ep1) {
-            try {
-                result.genBasic = await ep1.read('genBasic', GENBASIC_ATTRS, {timeout: 10000});
-                console.error(`[C4 PROBE] genBasic: ${JSON.stringify(result.genBasic)}`);
-            } catch (err) {
-                result.genBasic = {error: err.message || String(err)};
-                console.error(`[C4 PROBE] genBasic error: ${err.message}`);
+            result.genBasic = {};
+            for (const attr of GENBASIC_ATTRS) {
+                try {
+                    const val = await ep1.read('genBasic', [attr], {timeout: 10000});
+                    Object.assign(result.genBasic, val);
+                } catch (err) {
+                    result.genBasic[attr] = `<unsupported>`;
+                }
             }
+            console.error(`[C4 PROBE] genBasic: ${JSON.stringify(result.genBasic)}`);
         }
 
         console.error(`[C4 PROBE] Full result: ${JSON.stringify(result, null, 2)}`);

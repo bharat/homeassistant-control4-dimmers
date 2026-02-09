@@ -40,7 +40,8 @@ except ImportError:
 # ─── MQTT helpers ────────────────────────────────────────────────────
 
 class DeviceProber:
-    def __init__(self, device_name, broker='localhost', port=1883):
+    def __init__(self, device_name, broker='localhost', port=1883,
+                 username=None, password=None):
         self.device = device_name
         self.base_topic = f'zigbee2mqtt/{device_name}'
         self.set_topic = f'{self.base_topic}/set'
@@ -49,6 +50,8 @@ class DeviceProber:
         self.response_event = threading.Event()
 
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        if username:
+            self.client.username_pw_set(username, password)
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
         self.client.connect(broker, port, keepalive=60)
@@ -277,12 +280,15 @@ def main():
     parser.add_argument('device', help='Z2M device friendly name (e.g. "Kitchen")')
     parser.add_argument('--broker', default='localhost', help='MQTT broker host (default: localhost)')
     parser.add_argument('--port', type=int, default=1883, help='MQTT broker port (default: 1883)')
+    parser.add_argument('--username', '-u', help='MQTT username')
+    parser.add_argument('--password', '-P', help='MQTT password')
     parser.add_argument('--interactive', '-i', action='store_true', help='Interactive command mode')
     parser.add_argument('--zcl-read', metavar='CLUSTER', help='Read all attributes from a ZCL cluster')
     parser.add_argument('--c4-query', metavar='CMD', help='Send a C4 GET query')
     args = parser.parse_args()
 
-    prober = DeviceProber(args.device, broker=args.broker, port=args.port)
+    prober = DeviceProber(args.device, broker=args.broker, port=args.port,
+                          username=args.username, password=args.password)
 
     try:
         if args.interactive:

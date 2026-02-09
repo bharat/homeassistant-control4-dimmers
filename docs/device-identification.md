@@ -8,13 +8,16 @@ How to identify and differentiate Control4 Zigbee devices (dimmers vs. keypads) 
 
 | Model | Type | Type Tag | Firmware | Endpoints | Load? | Buttons |
 |-------|------|----------|----------|-----------|-------|---------|
-| C4-APD120 | Adaptive Phase Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 | Yes (1 load) | 1 rocker (top/bottom) |
-| C4-KC120277 | Configurable Keypad | `control4_kp` | 4.4.16 | 1, 2 | No | Multiple (6+?) |
+| C4-APD120 | Adaptive Phase Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 | Yes (1 load) | 2 (top/bottom rocker) |
+| C4-KD120 | Keypad Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 (TBC) | Yes (1 load) | 4+ (rocker + keypad buttons) |
+| C4-KC120277 | Configurable Keypad | `control4_kp` | 4.4.16 | 1, 2 | No | 6 slots (configurable) |
 | C4-KP6-Z | 6-Button Keypad (older) | `control4_keypad` | 3.22.41 | 1, 2 | No | 6 |
 
 **Common to all:** Manufacturer ID 43981 (0xABCD), IEEE prefix `0x000fff`.
 
 **Note:** The C4-APD120 dimmer has a "Use as 2 Button Keypad" option in Composer Pro. When enabled, the dimmer hardware acts as a keypad (buttons send events but don't control the load). This means a dimmer's behavior can change at the software level — the endpoint structure remains the same.
+
+**Note:** The C4-KD120 (Keypad Dimmer) self-identifies as `control4_light` — the same type tag as the C4-APD120. The model string (`C4-KD120` vs `C4-APD120`) is the only differentiator in the self-ID broadcast. The KD120 uses the exact same C4 text protocol as the APD120, with the key difference being it has 4+ LED buttons (01–04) instead of just 2 (01, 04). Its endpoint structure is expected to match the APD120 (1/196/197) since the protocol is identical. This means Z2M fingerprinting alone cannot distinguish KD120 from APD120 — runtime button count detection (`c4.dmx.bp`) would be needed to differentiate.
 
 ---
 
@@ -134,6 +137,36 @@ Use `probe-device.py` with `--docker` to run these queries interactively.
 
 **Notable:** No `c4.dmx.ls`, no `c4.dm.tv`, no `c4.dmx.dim`, no `c4.dmx.pwr` — keypad has no load.
 
+### Keypad Dimmer Join (C4-KD120)
+
+**Source:** `000fff0000c9be0c.log`
+
+1. Device broadcasts self-identification: `c4:control4_light:C4-KD120` (profile 0xC25D)
+2. Director turns off load: `c4.dmx.off 0000`
+3. Device sends button events during 4-tap join:
+   - `c4.dmx.bp 00` (button 00 press — top rocker)
+   - `c4.dmx.sc 00` (scene change)
+   - `c4.dmx.cc 00 04` (4 clicks detected)
+4. Director sets ZigBee power mode: `c4.sy.zpw 00`
+5. Director sets power line mode: `c4.dmx.plm 00`
+6. Director sets LED colors (**4 buttons, all mode 05**):
+   - `c4.dmx.led 01 05 0000cc` (button 1 = blue)
+   - `c4.dmx.led 02 05 0000cc` (button 2 = blue)
+   - `c4.dmx.led 03 05 0000cc` (button 3 = blue)
+   - `c4.dmx.led 04 05 000000` (button 4 = off)
+7. Director queries device key: `c4.dmx.key`
+8. Director inits ALS: `c4.als.sra`
+9. Director reads/writes dimming table: `c4.dm.tv 00 00..0a` (same values as APD120)
+10. Device sends load status telemetry: `c4.dmx.ls 00 00 05 007c ...`
+11. Director queries ambient LED: `c4.dmx.amb 01` → `00`
+
+**Notable differences from C4-APD120:**
+- **4 LED buttons (01–04)** instead of 2 (01, 04) — the KD120 has additional keypad buttons
+- **All LEDs use mode 05** (coordinator-pushed override) instead of modes 03/04 (firmware-managed on/off)
+- **4-tap join uses button 00** (not button 01) — button 00 is likely the top rocker
+- **Same dimming table, load telemetry, power config** — identical load-control protocol
+- **New pre-join commands**: `c4.dmx.pwr` as GET (returns power data `007b 00eb 0004 001d 0088 0004 0000`), `c4.dm.sl` (returns `00`, meaning TBD — possibly dimmer slot/slave config)
+
 ---
 
 ## LED Button Numbering
@@ -144,6 +177,18 @@ Use `probe-device.py` with `--docker` to run these queries interactively.
 |-----------|----------|-----------------|-------------------|
 | `01` | Top rocker | `ffffff` (white) | `000000` (black/off) |
 | `04` | Bottom rocker | `000000` (black/off) | `0000ff` (blue) |
+
+### Keypad Dimmer (C4-KD120)
+
+| Button ID | Location | Default Color (Director) | Notes |
+|-----------|----------|-------------------------|-------|
+| `00` | Top rocker | (not set by Director) | 4-tap join button; likely load control |
+| `01` | Keypad button 1 | `0000cc` (blue) | |
+| `02` | Keypad button 2 | `0000cc` (blue) | |
+| `03` | Keypad button 3 | `0000cc` (blue) | |
+| `04` | Keypad button 4 / bottom | `000000` (off) | |
+
+All LEDs use mode 05 (coordinator-pushed). The Director manages LED state centrally rather than letting firmware auto-switch. In Composer Pro, the KD120 appears as a dimmer with a "Keypad" child component — the dimmer controls the load, and the keypad child manages button behavior and LED colors.
 
 ### Keypad (C4-KC120277)
 

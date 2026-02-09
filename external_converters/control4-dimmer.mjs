@@ -44,7 +44,7 @@
  */
 
 import {light} from 'zigbee-herdsman-converters/lib/modernExtend';
-import {Light, access} from 'zigbee-herdsman-converters/lib/exposes';
+import {Light, Enum, access} from 'zigbee-herdsman-converters/lib/exposes';
 
 // ─── Protocol Constants ──────────────────────────────────────────────
 
@@ -62,6 +62,22 @@ const LED_MODES = {
     on:  '03', // Color shown when the dimmer load is ON
     off: '04', // Color shown when the dimmer load is OFF
 };
+
+// ─── Keypad Button Layout ────────────────────────────────────────────
+//
+// The C4 keypad chassis has 6 physical slots. Button IDs are hex (00–05).
+// Dimmers use buttons 01 (top) and 04 (bottom).
+// Keypad dimmers (C4-KD120) use buttons 01–04.
+// Pure keypads (C4-KC120277) use buttons 00–05.
+
+const KEYPAD_BUTTONS = [
+    {idx: 0, id: '00'},
+    {idx: 1, id: '01'},
+    {idx: 2, id: '02'},
+    {idx: 3, id: '03'},
+    {idx: 4, id: '04'},
+    {idx: 5, id: '05'},
+];
 
 // ─── Color Conversion Utilities ─────────────────────────────────────
 //
@@ -308,6 +324,30 @@ function c4LedLight({endpointName, ledId, modeCode, description,
             await sendC4(meta.device, `c4.dmx.led ${ledId} ${modeCode} ${hexColor}`);
 
             return {state: result};
+        },
+    }];
+
+    return {exposes: [expose], fromZigbee: [], toZigbee, isModernExtend: true};
+}
+
+// ─── ModernExtend: C4 Button Config Select Entity ───────────────────
+//
+// Creates a Home Assistant select entity for button configuration.
+// Stores the value in Z2M state only — no device command is sent.
+// Used for button behavior (keypad/toggle/on/off) and LED mode
+// (follow_load/follow_connection/push_release/programmed).
+
+function c4ButtonConfig({endpointName, key, description, options, defaultValue}) {
+    const expose = new Enum(key, access.STATE_SET, options)
+        .withEndpoint(endpointName)
+        .withDescription(description);
+
+    const toZigbee = [{
+        key: [key],
+        endpoints: [endpointName],
+        convertSet: async (entity, k, value, meta) => {
+            console.error(`[C4 CONFIG] ${endpointName}.${key} = ${value}`);
+            return {state: {[key]: value}};
         },
     }];
 
@@ -588,7 +628,7 @@ const tzControl4Identify = {
 const fzControl4Response = {
     cluster: 1,
     type: ['raw'],
-    convert: (model, msg, publish, options, meta) => {
+    convert: async (model, msg, publish, options, meta) => {
         try {
             const text = Buffer.from(msg.data).toString('ascii').trim();
             if (!text) return;
@@ -596,7 +636,57 @@ const fzControl4Response = {
             const epId = msg.endpoint?.ID ?? '?';
             console.error(`[C4 RECV] EP ${epId}: ${text}`);
 
-            return {c4_response: text, c4_response_ep: epId};
+            const result = {c4_response: text, c4_response_ep: epId};
+
+            // ── Parse button press: 0t<seq> sa c4.dmx.bp <btn> ──
+            const bpMatch = text.match(/^0t\w+ sa c4\.dmx\.bp (\w+)/);
+            if (bpMatch) {
+                const btnId = parseInt(bpMatch[1], 16);
+                result.action = `button_${btnId}_press`;
+                console.error(`[C4 BUTTON] Button ${btnId} pressed`);
+
+                // Smart behavior: if button has a load-control behavior,
+                // send the genOnOff command to EP1 immediately.
+                const behavior = meta.state?.[`button_${btnId}_behavior`];
+                if (behavior && behavior !== 'keypad') {
+                    try {
+                        const ep1 = msg.device.getEndpoint(1);
+                        if (ep1) {
+                            const cmd = behavior === 'toggle_load' ? 'toggle'
+                                      : behavior === 'load_on'    ? 'on'
+                                      : behavior === 'load_off'   ? 'off'
+                                      : null;
+                            if (cmd) {
+                                console.error(`[C4 BUTTON] Smart behavior: genOnOff.${cmd}`);
+                                await ep1.command('genOnOff', cmd, {});
+                            }
+                        }
+                    } catch (err) {
+                        console.error(`[C4 BUTTON] Smart behavior failed: ${err.message}`);
+                    }
+                }
+                return result;
+            }
+
+            // ── Parse click count: 0t<seq> sa c4.dmx.cc <btn> <count> ──
+            const ccMatch = text.match(/^0t\w+ sa c4\.dmx\.cc (\w+) (\w+)/);
+            if (ccMatch) {
+                const btnId = parseInt(ccMatch[1], 16);
+                const count = parseInt(ccMatch[2], 16);
+                result.action = `button_${btnId}_click_${count}`;
+                console.error(`[C4 BUTTON] Button ${btnId} click count: ${count}`);
+                return result;
+            }
+
+            // ── Parse scene change: 0t<seq> sa c4.dmx.sc <btn> ──
+            const scMatch = text.match(/^0t\w+ sa c4\.dmx\.sc (\w+)/);
+            if (scMatch) {
+                const btnId = parseInt(scMatch[1], 16);
+                result.action = `button_${btnId}_scene`;
+                return result;
+            }
+
+            return result;
         } catch (e) {
             // Not ASCII data — ignore
             return;
@@ -607,7 +697,7 @@ const fzControl4Response = {
 // ─── Definition ──────────────────────────────────────────────────────
 
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
-const definition = {
+const dimmerDefinition = {
     zigbeeModel: [
         'C4-APD120',   // Adaptive phase dimmer 120V
         'C4-DIM',      // Standard in-wall dimmer
@@ -675,4 +765,117 @@ const definition = {
     },
 };
 
-export default definition;
+// ─── Keypad Definition: C4-KC120277 (Pure Keypad, No Load) ──────────
+//
+// 6 configurable button slots, each with:
+//   - LED On color (light entity, mode 03 = stored ON color)
+//   - LED Off color (light entity, mode 04 = stored OFF color)
+//   - Button behavior (select: keypad / toggle_load / load_on / load_off)
+//   - LED mode (select: follow_load / follow_connection / push_release / programmed)
+// Plus a single action sensor for button press events.
+//
+// The C4 Director uses mode 05 (immediate override) for keypad LEDs,
+// pushing state changes centrally. For initial setup, we store colors
+// via modes 03/04 which the device persists. HA automations can push
+// dynamic updates via c4_cmd with mode 05.
+//
+// Fingerprint: manufacturerID 43981 + endpoints 1, 2 (no 196/197).
+// This distinguishes pure keypads from dimmers (which have EP 196/197).
+
+const KEYPAD_ACTION_VALUES = KEYPAD_BUTTONS.flatMap(btn => [
+    `button_${btn.idx}_press`,
+    `button_${btn.idx}_scene`,
+    `button_${btn.idx}_click_1`,
+    `button_${btn.idx}_click_2`,
+    `button_${btn.idx}_click_3`,
+    `button_${btn.idx}_click_4`,
+]);
+
+/** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
+const keypadDefinition = {
+    fingerprint: [{
+        manufacturerID: 43981,
+        endpoints: [{ID: 1}, {ID: 2}],
+    }],
+    model: 'C4-KC120277',
+    vendor: 'Control4',
+    description: 'Control4 Configurable Keypad',
+    extend: [
+        // 6 buttons × 2 LED states = 12 light entities
+        ...KEYPAD_BUTTONS.flatMap(btn => [
+            c4LedLight({
+                endpointName: `button_${btn.idx}_on`,
+                ledId: btn.id,
+                modeCode: '03',
+                description: `Button ${btn.idx} LED color when active`,
+                defaultState: 'OFF',
+                defaultColor: {hue: 0, saturation: 0},
+            }),
+            c4LedLight({
+                endpointName: `button_${btn.idx}_off`,
+                ledId: btn.id,
+                modeCode: '04',
+                description: `Button ${btn.idx} LED color when inactive`,
+                defaultState: 'OFF',
+                defaultColor: {hue: 0, saturation: 0},
+            }),
+        ]),
+        // 6 buttons × 2 config selects = 12 select entities
+        ...KEYPAD_BUTTONS.flatMap(btn => [
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_behavior`,
+                description: `Button ${btn.idx} press behavior`,
+                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
+                defaultValue: 'keypad',
+            }),
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_led_mode`,
+                description: `Button ${btn.idx} LED update mode`,
+                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
+                defaultValue: 'follow_connection',
+            }),
+        ]),
+    ],
+    exposes: [
+        new Enum('action', access.STATE, KEYPAD_ACTION_VALUES)
+            .withDescription('Keypad button press events'),
+    ],
+    fromZigbee: [fzControl4Response],
+    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe, tzControl4Identify],
+    meta: {disableDefaultResponse: true, multiEndpoint: true},
+    endpoint: (device) => {
+        const map = {default: 1};
+        for (const btn of KEYPAD_BUTTONS) {
+            map[`button_${btn.idx}_on`] = 1;
+            map[`button_${btn.idx}_off`] = 1;
+            map[`button_${btn.idx}`] = 1;
+        }
+        return map;
+    },
+    configure: async (device, coordinatorEndpoint, definition) => {
+        // Pure keypads have no load — skip genOnOff/genLevelCtrl binding.
+        // Just set metadata that genBasic can't provide.
+        let changed = false;
+        if (!device.manufacturerName) {
+            device.manufacturerName = 'Control4';
+            changed = true;
+        }
+        if (!device.powerSource) {
+            device.powerSource = 'Mains (single phase)';
+            changed = true;
+        }
+        if (changed) device.save();
+    },
+};
+
+// ─── Export ──────────────────────────────────────────────────────────
+//
+// Export both definitions as an array. Z2M matches devices to the most
+// specific fingerprint. The keypad fingerprint requires endpoints 1+2
+// (present on KC120277 but not on dimmers). The dimmer fingerprint
+// matches any device with manufacturerID 43981 as a fallback — this
+// covers APD120 dimmers and KD120 keypad dimmers (same protocol).
+
+export default [dimmerDefinition, keypadDefinition];

@@ -128,10 +128,24 @@ Sent continuously by dimmers (every few seconds). Not sent by keypads. See [Appe
 #### Power Configuration (Dimmers Only)
 
 ```
-0s<seq> c4.dmx.pwr b5              — Power configuration (meaning of b5 TBD)
+0s<seq> c4.dmx.pwr b5              — Power configuration SET (meaning of b5 TBD)
+0g<seq> c4.dmx.pwr                 — Power configuration GET (returns live power data)
+→ 0r<seq> 000 c4.dmx.pwr 007b 00eb 0004 001d 0088 0004 0000
 0s<seq> c4.dmx.plm 00              — Power line mode (00 = auto-detect)
 0s<seq> c4.dmx.pmti 0007 0007      — Power measurement timer interval
 ```
+
+**`c4.dmx.pwr` GET response fields** (observed from C4-KD120):
+
+| Field | Hex | Decimal | Probable Meaning |
+|-------|-----|---------|-----------------|
+| 1 | 007b | 123 | Line voltage (V) |
+| 2 | 00eb | 235 | Current (mA?) |
+| 3 | 0004 | 4 | Power (W?) |
+| 4 | 001d | 29 | Temperature (°C?) |
+| 5 | 0088 | 136 | Unknown |
+| 6 | 0004 | 4 | Unknown |
+| 7 | 0000 | 0 | Flags |
 
 **Correlation with Composer Pro:**
 - `c4.dmx.plm 00` → Dimming Mode: "Auto-Detect" (Detected: Reverse Phase)
@@ -197,6 +211,17 @@ Keypads would return `n06` or similar for 6-button panels.
 
 All values are in milliseconds (for rates/times) or percentage (for levels).
 Var 07 was not written during the observed join — the device may already have the correct default.
+
+---
+
+### `c4.dm.sl` — Dimmer Slot/Slave Query (Dimmers Only)
+
+```
+0g<seq> c4.dm.sl
+→ 0r<seq> 000 c4.dm.sl 00
+```
+
+Observed during C4-KD120 pre-join polling. Exact meaning TBD — possibly dimmer slot configuration or slave/master status. Returns `00`.
 
 ---
 
@@ -281,20 +306,20 @@ c4:<device_type>:<model_number>
 
 The broadcast also contains firmware version and other attributes:
 
-| Attribute | Dimmer (C4-APD120) | Keypad (C4-KC120277) |
-|-----------|--------------------|----------------------|
-| Model | `c4:control4_light:C4-APD120` | `c4:control4_kp:C4-KC120277` |
-| Firmware | `5.1.1` | `4.4.16` |
+| Attribute | Dimmer (C4-APD120) | Keypad Dimmer (C4-KD120) | Keypad (C4-KC120277) |
+|-----------|--------------------|-----------------------------|----------------------|
+| Model | `c4:control4_light:C4-APD120` | `c4:control4_light:C4-KD120` | `c4:control4_kp:C4-KC120277` |
+| Firmware | `5.1.1` | `5.1.1` | `4.4.16` |
 
 ### Runtime Identification Queries
 
 If the broadcast isn't captured, these queries can differentiate at runtime:
 
-| Query | Dimmer Response | Keypad Response |
-|-------|----------------|-----------------|
-| `c4.dmx.dim` | `000 c4.dmx.dim 02` | No response / error |
-| `c4.dmx.ls` (telemetry) | Sent continuously | Never sent |
-| `c4.dmx.bp` (count) | `n01` (1 panel) | `n06`+ (multi-button) |
+| Query | Dimmer (APD120) | Keypad Dimmer (KD120) | Pure Keypad (KC120277) |
+|-------|----------------|----------------------|----------------------|
+| `c4.dmx.dim` | `000 c4.dmx.dim 02` | Responds (has load) | No response / error |
+| `c4.dmx.ls` (telemetry) | Sent continuously | Sent continuously | Never sent |
+| `c4.dmx.bp` (count) | `n01` (1 panel) | `n04`+ (multi-button) | `n06`+ (multi-button) |
 
 ---
 

@@ -41,14 +41,20 @@
 - [ ] Rename all HA entities for clean display names
 - [ ] Decommission Control4 Director once all dimmers are stable
 
-### Phase 5: Keypad Support 🔲 NOT STARTED (Protocol Fully Documented)
-- [ ] Pair a C4 keypad (C4-KC120277 or similar) with Z2M
-- [ ] Create separate converter definition with keypad-specific fingerprint (endpoints 1+2)
-- [ ] Handle button press events: `c4.dmx.bp`, `c4.dmx.sc`, `c4.dmx.cc` (same namespace as dimmer)
-- [ ] LED control per-button (buttons 00–05, modes 03/04/05)
-- [ ] Expose keypad button LEDs as HA light entities with color pickers
-- [ ] Expose button presses as HA actions/triggers
-- [ ] Test with both C4-KC120277 (newer, `c4.dmx.*`) and C4-KP6-Z (older, `c4.kp.*`) if available
+### Phase 5: Keypad Support 🟡 IN PROGRESS
+- [x] Protocol fully documented for all three device types (APD120, KD120, KC120277)
+- [x] Decoded C4-KD120 Director join log — confirmed identical protocol to APD120 with 4 LED buttons
+- [x] Created keypad definition (C4-KC120277) with per-button LED entities, config selects, button events
+- [x] Added `c4ButtonConfig()` factory for per-button behavior/LED-mode select entities
+- [x] Enhanced `fzControl4Response` with button event parsing (bp/sc/cc) and smart load control
+- [x] Export array: dimmer + keypad definitions in one converter file
+- [ ] Pair a C4-KC120277 keypad with Z2M and verify entity creation
+- [ ] Pair a C4-KD120 keypad dimmer with Z2M and verify endpoint structure
+- [ ] Add KD120-specific definition (or runtime button detection in dimmer def) once endpoints confirmed
+- [ ] Test button events (bp, sc, cc) reaching HA as action events
+- [ ] Test LED color control per-button (modes 03/04/05)
+- [ ] Test smart behavior: button press → genOnOff toggle on EP1
+- [ ] Test with C4-KP6-Z (older model, `c4.kp.*` namespace) if available
 
 ### Phase 6: Upstream Contribution 🔲 NOT STARTED
 - [ ] Clean up converter for general use (remove debug `console.error` calls)
@@ -57,6 +63,58 @@
 - [ ] Document `disableDefaultResponse` requirement and interview quirks
 - [ ] Reference existing community work (SmartThings/pstuart, Hubitat/iankberry, Z2M issue #160)
 - [ ] The `sendRequest()` hack to bypass ZCL framing may need a cleaner upstream approach
+
+---
+
+## Session 6: 2026-02-09 — Keypad Converter & KD120 Protocol Decode
+
+### Goal
+Build the Z2M keypad converter definition with per-button LED entities, configuration selects, and button event handling. Decode the C4-KD120 (Keypad Dimmer) Director join log to understand the three-device-type landscape.
+
+### Three Device Types Identified
+
+| Model | Type Tag | Has Load | Buttons | Z2M Fingerprint |
+|-------|----------|----------|---------|-----------------|
+| C4-APD120 | `control4_light` | Yes | 2 (rocker) | `{manufID: 43981}` (catch-all) |
+| C4-KD120 | `control4_light` | Yes | 4+ (rocker + keypad) | Same as APD120 (TBC) |
+| C4-KC120277 | `control4_kp` | No | 6 slots | `{manufID: 43981, EP: [1,2]}` |
+
+### KD120 Protocol Findings (from Director Log)
+- **Self-ID**: `c4:control4_light:C4-KD120`, firmware `5.1.1` — same type tag as APD120
+- **Join sequence**: Nearly identical to APD120 — same commands, same order
+- **LED buttons**: 01, 02, 03, 04 (4 buttons vs APD120's 2). Button 00 is the top rocker.
+- **LED mode**: Director uses mode 05 (override) for ALL KD120 LEDs, not 03/04 like APD120
+- **New commands**: `c4.dm.sl` (returns `00`, meaning TBD), `c4.dmx.pwr` as GET (returns power data)
+- **Load**: Has load — sends `c4.dmx.ls` telemetry and has full dimming table
+
+### What Was Built
+
+1. **Keypad definition** (`keypadDefinition` in `control4-dimmer.mjs`):
+   - Fingerprint: `{manufacturerID: 43981, endpoints: [{ID:1}, {ID:2}]}`
+   - 12 light entities (6 buttons × on/off LED colors)
+   - 12 select entities (6 buttons × behavior + LED mode)
+   - 1 action sensor (button press events: press, scene, click_N)
+   - Shared fromZigbee handler with enhanced button event parsing
+
+2. **`c4ButtonConfig()` factory**: Creates per-button select entities (behavior, LED mode) stored in Z2M state.
+
+3. **Enhanced `fzControl4Response`**: Now parses button events (`c4.dmx.bp`, `c4.dmx.cc`, `c4.dmx.sc`) and publishes them as `action` values. Includes smart behavior — if button's behavior select is `toggle_load`/`load_on`/`load_off`, sends genOnOff command to EP1.
+
+4. **Two-definition export**: `export default [dimmerDefinition, keypadDefinition]` — Z2M picks the most specific fingerprint match.
+
+5. **Updated documentation**: Device identification and protocol docs updated with KD120 data, three-device comparison tables, and KD120 join sequence.
+
+### Architecture Decision: Two Definitions, Not Three
+The C4-KD120 uses the same protocol and likely the same endpoints as the C4-APD120. Rather than creating a third definition, the plan is to:
+1. Keep the dimmer definition as a catch-all for `control4_light` devices (APD120 + KD120)
+2. Add runtime button detection later (query `c4.dmx.bp` during configure)
+3. Use dynamic exposes `exposes: (device) => [...]` to show the right number of button entities
+
+### Next Steps
+- Pair a C4-KD120 to Z2M to confirm endpoint structure (1/196/197 expected)
+- Pair a C4-KC120277 to Z2M to test the keypad definition
+- Test button events reaching HA
+- Test per-button LED color control
 
 ---
 

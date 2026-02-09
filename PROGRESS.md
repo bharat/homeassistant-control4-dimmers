@@ -22,14 +22,16 @@
 - [ ] LED color restore on Z2M restart — Z2M persists state, but doesn't re-send to device on startup. Need to verify if C4 dimmer firmware remembers LED colors across power cycles.
 
 ### Phase 3: Streamlined Onboarding ✅ COMPLETE
-- [x] Idempotent Python script (`scripts/fix-c4-database.py`) to fix interview state
+- [x] Idempotent Python script (`scripts/fix-c4-database.py`) to fix interview state (legacy fallback)
   - Matches on `manufId: 43981` (not model ID or device type)
   - Dry-run by default, `--apply` to write
   - Creates timestamped backup before writing
+- [x] **Live device metadata via MQTT** — `c4_identify` converter sets manufacturerName, powerSource, and interviewCompleted via `device.save()` while Z2M is running (no database patching needed)
+- [x] **Auto-configure on pair** — `configure()` sets manufacturerName and powerSource automatically on first pair
 - [x] Document end-to-end onboarding flow in README
 - [x] Custom device icon (hosted on postimg.cc)
 - [x] Root cause of interview failure identified: endpoints 196/197 refuse `simpleDescriptor` — cannot be fixed in converter, must patch database post-pairing
-- [x] Old manual `jq`/`grep` patching replaced by automated script
+- [x] Old manual `jq`/`grep` patching replaced by automated script, then largely superseded by `c4_identify`
 
 ### Phase 4: Batch Migration 🔲 NOT STARTED
 - [ ] Pair remaining ~29 dimmers (only Kitchen dimmer migrated so far)
@@ -118,6 +120,26 @@ Both dimmers and keypads (at least the C4-KC120277) use `c4.dmx.*` commands. The
 #### genBasic Attributes — Fully Locked Down
 All `genBasic` attributes return `UNSUPPORTED_ATTRIBUTE` on C4 devices. Device identification must use the proprietary C4 protocol, not standard ZCL.
 
+#### Live Device Metadata (`c4_identify`)
+Created `tzControl4Identify` toZigbee converter that sets device metadata via `device.save()` while Z2M is running:
+- `device.manufacturerName = 'Control4'`
+- `device.powerSource = 'Mains (single phase)'`
+- `device.interviewCompleted = true`
+
+Triggered via MQTT: `{"c4_identify": true}` on `zigbee2mqtt/<device>/set`. Values persist to `database.db` and show on the About page after one Z2M restart (frontend caches the devices list on startup).
+
+Also added auto-setup in `configure()` — sets manufacturerName and powerSource on first pair without any manual intervention.
+
+**Firmware ID** remains "Unknown" — the firmware version (e.g., "5.1.1") is only available from the 0xC25D self-ID broadcast, which herdsman doesn't route to converters. No known C4 text protocol command returns it. Accepted as cosmetic-only limitation.
+
+#### Composer Pro Property Correlation
+Decoded the full `c4.dm.tv` dimming table from Director logs and correlated with Composer Pro UI:
+- Var 01 = Default On Brightness, Var 02 = Click Rate Up, Var 03 = Click Rate Down
+- Var 04/05 = Hold Ramp Rate Up/Down, Var 06 = Max On, Var 08 = Min On
+- Var 09/0a = Cold Start Time/Level
+
+Also documented keypad modular button layout (6-slot chassis with configurable parts) and the "Use as 2 Button Keypad" mode for dimmers.
+
 ### Errors Encountered & Resolved
 
 | Error | Cause | Fix |
@@ -127,6 +149,7 @@ All `genBasic` attributes return `UNSUPPORTED_ATTRIBUTE` on C4 devices. Device i
 | `c4_query` shows "No response captured" | `fzControl4Response` not firing for profile 0xC25C frames | Added `DockerResponseCapture` class to tail Docker logs and extract responses directly |
 | Docker capture regex not matching | Pattern used `INCOMING_MESSAGE_HANDLER` (all caps) but actual log line is `ezspIncomingMessageHandler` (camelCase) | Fixed regex to match `profileId` + `messageContents` loosely |
 | Docker capture getting stale history | `docker logs --since 1s` replayed old lines | Changed to `--tail 0` (stream new only) |
+| Power shows `?` on About page after `c4_identify` | Z2M caches `bridge/devices` on startup; `device.save()` persists but frontend doesn't refresh | One Z2M restart after running `c4_identify` picks up the persisted values |
 
 ---
 

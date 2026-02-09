@@ -67,6 +67,19 @@ const LED_MODES = {
 //
 // HA sends colors as HS (hue/saturation) or XY (CIE 1931). We need to
 // convert to 6-digit hex RGB for the C4 text protocol.
+//
+// C4 LEDs have a non-linear response — low channel values (like 0x18)
+// produce disproportionately visible light, washing out saturated colors.
+// The C4 Director only sends pure colors (channels at 0x00 or 0xFF).
+// We apply gamma correction (γ=2.0) to compress low values, making
+// e.g. HSV(241°, 92%, 100%) → 0000ff instead of 1814ff.
+
+const C4_LED_GAMMA = 2.0;
+
+function applyGamma(value01) {
+    // Apply gamma to a 0–1 channel value, return 0–255 integer
+    return Math.round(255 * Math.pow(Math.max(0, Math.min(1, value01)), C4_LED_GAMMA));
+}
 
 function hsvToRgbHex(h, s, v = 1) {
     // h: 0–360, s: 0–100, v: 0–1
@@ -82,7 +95,7 @@ function hsvToRgbHex(h, s, v = 1) {
     else if (h < 300) { r = x; g = 0; b = c; }
     else              { r = c; g = 0; b = x; }
     return [r + m, g + m, b + m]
-        .map(ch => Math.round(ch * 255).toString(16).padStart(2, '0'))
+        .map(ch => applyGamma(ch).toString(16).padStart(2, '0'))
         .join('');
 }
 
@@ -94,7 +107,7 @@ function xyToRgbHex(x, y) {
     let g = X * -0.9689 + Y *  1.8758 + Z *  0.0415;
     let b = X *  0.0557 + Y * -0.2040 + Z *  1.0570;
     return [r, g, b]
-        .map(ch => Math.round(Math.max(0, Math.min(1, ch)) * 255).toString(16).padStart(2, '0'))
+        .map(ch => applyGamma(ch).toString(16).padStart(2, '0'))
         .join('');
 }
 

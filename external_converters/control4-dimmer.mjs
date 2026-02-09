@@ -142,13 +142,14 @@ function nextSeq() {
 // The C4 text protocol sends raw ASCII as the APS payload with NO ZCL
 // framing. We bypass endpoint.command() and call sendRequest() directly
 // with a fake frame whose toBuffer() returns just our raw text bytes.
+//
+// Two verbs: 0s = SET (write), 0g = GET (query). Both follow the same
+// transport framing — only the verb prefix differs.
 
-async function sendC4(device, cmdBody) {
+async function sendC4Raw(device, text) {
     const ep = device.getEndpoint(1);
     if (!ep) throw new Error('Endpoint 1 not found on device');
 
-    const seq = nextSeq();
-    const text = `0s${seq} ${cmdBody}\r\n`;
     const rawBytes = Buffer.from(text, 'ascii');
 
     const frame = {
@@ -175,6 +176,16 @@ async function sendC4(device, cmdBody) {
 
     await ep.sendRequest(frame, options);
     return text.trim();
+}
+
+async function sendC4(device, cmdBody) {
+    const seq = nextSeq();
+    return sendC4Raw(device, `0s${seq} ${cmdBody}\r\n`);
+}
+
+async function queryC4(device, cmdBody) {
+    const seq = nextSeq();
+    return sendC4Raw(device, `0g${seq} ${cmdBody}\r\n`);
 }
 
 // ─── ModernExtend: C4 LED Light Entity ──────────────────────────────
@@ -390,6 +401,162 @@ const tzControl4Cmd = {
     },
 };
 
+// ─── toZigbee: C4 GET Query ──────────────────────────────────────────
+//
+// Like c4_cmd but uses "0g" (GET) prefix instead of "0s" (SET).
+// Responses arrive asynchronously on endpoint 197 and are captured
+// by fzControl4Response (published as c4_response in device state).
+//
+//   {"c4_query": "c4.dmx.amb 01"}
+//   {"c4_query": "c4.dmx.ls"}
+
+const tzControl4Query = {
+    key: ['c4_query'],
+    convertSet: async (entity, key, value, meta) => {
+        if (typeof value !== 'string') {
+            throw new Error('c4_query expects a string, e.g. "c4.dmx.amb 01"');
+        }
+
+        const sent = await queryC4(meta.device, value);
+        console.error(`[C4 QUERY] sent: ${sent}`);
+        return {state: {c4_last_query: sent}};
+    },
+};
+
+// ─── toZigbee: Read ZCL Attributes ──────────────────────────────────
+//
+// Read arbitrary cluster attributes for device interrogation.
+// Results are returned in device state as probe_result.
+//
+//   {"zcl_read": {"cluster": "genBasic"}}                            — all standard genBasic attrs
+//   {"zcl_read": {"cluster": "genBasic", "attributes": ["modelId"]}} — specific named attrs
+//   {"zcl_read": {"cluster": 0, "attributes": [0,1,2,3,4,5,6,7]}}   — by numeric ID
+//   {"zcl_read": {"endpoint": 1, "cluster": "genBasic"}}             — specific endpoint
+
+const GENBASIC_ATTRS = [
+    'zclVersion',          // 0x0000
+    'applicationVersion',  // 0x0001
+    'stackVersion',        // 0x0002
+    'hwVersion',           // 0x0003
+    'manufacturerName',    // 0x0004
+    'modelId',             // 0x0005
+    'dateCode',            // 0x0006
+    'powerSource',         // 0x0007
+    'swBuildId',           // 0x4000
+];
+
+const tzControl4ZclRead = {
+    key: ['zcl_read'],
+    convertSet: async (entity, key, value, meta) => {
+        const epId = value.endpoint || 1;
+        const ep = meta.device.getEndpoint(epId);
+        if (!ep) throw new Error(`Endpoint ${epId} not found`);
+
+        const cluster = value.cluster ?? 'genBasic';
+        let attributes = value.attributes;
+
+        // Default: read all standard genBasic attributes
+        if (!attributes && (cluster === 'genBasic' || cluster === 0)) {
+            attributes = GENBASIC_ATTRS;
+        }
+
+        if (!attributes || attributes.length === 0) {
+            throw new Error('zcl_read requires "attributes" array (or use cluster "genBasic" for defaults)');
+        }
+
+        console.error(`[C4 PROBE] Reading EP ${epId} cluster ${cluster}: ${JSON.stringify(attributes)}`);
+
+        try {
+            const result = await ep.read(cluster, attributes, {timeout: 10000});
+            console.error(`[C4 PROBE] Result: ${JSON.stringify(result)}`);
+            return {state: {probe_result: {cluster: String(cluster), endpoint: epId, attributes: result}}};
+        } catch (err) {
+            const msg = err.message || String(err);
+            console.error(`[C4 PROBE] Error reading ${cluster}: ${msg}`);
+            return {state: {probe_result: {cluster: String(cluster), endpoint: epId, error: msg}}};
+        }
+    },
+};
+
+// ─── toZigbee: Comprehensive Device Probe ───────────────────────────
+//
+// Dumps everything we can learn about the device in one shot:
+//   - All endpoints with their profile, deviceID, and cluster lists
+//   - genBasic attributes from endpoint 1
+//
+//   {"c4_probe": true}
+
+const tzControl4Probe = {
+    key: ['c4_probe'],
+    convertSet: async (entity, key, value, meta) => {
+        const device = meta.device;
+        const result = {timestamp: new Date().toISOString()};
+
+        // ── Enumerate endpoints ──
+        result.device = {
+            ieeeAddr: device.ieeeAddr,
+            networkAddress: device.networkAddress,
+            manufacturerID: device.manufacturerID,
+            manufacturerName: device.manufacturerName,
+            modelID: device.modelID,
+            type: device.type,
+        };
+
+        result.endpoints = {};
+        for (const ep of device.endpoints) {
+            result.endpoints[ep.ID] = {
+                profileID: ep.profileID != null ? `0x${ep.profileID.toString(16).padStart(4, '0')}` : null,
+                deviceID: ep.deviceID != null ? `0x${ep.deviceID.toString(16).padStart(4, '0')}` : null,
+                inputClusters: ep.inputClusters || [],
+                outputClusters: ep.outputClusters || [],
+            };
+        }
+
+        // ── Read genBasic from EP 1 ──
+        const ep1 = device.getEndpoint(1);
+        if (ep1) {
+            try {
+                result.genBasic = await ep1.read('genBasic', GENBASIC_ATTRS, {timeout: 10000});
+                console.error(`[C4 PROBE] genBasic: ${JSON.stringify(result.genBasic)}`);
+            } catch (err) {
+                result.genBasic = {error: err.message || String(err)};
+                console.error(`[C4 PROBE] genBasic error: ${err.message}`);
+            }
+        }
+
+        console.error(`[C4 PROBE] Full result: ${JSON.stringify(result, null, 2)}`);
+        return {state: {probe_result: result}};
+    },
+};
+
+// ─── fromZigbee: Capture C4 Text Protocol Responses ─────────────────
+//
+// C4 devices send responses and telemetry as raw ASCII on endpoint 197
+// (0xC5), profile 0xC25C, cluster 1. Since there's no ZCL framing,
+// herdsman fires a 'raw' event that we capture here.
+//
+// Response format: "0r<seq> 000 [data]" (success) or "0r<seq> v01" (error)
+// Telemetry format: "0t<seq> sa <command> <data>"
+
+const fzControl4Response = {
+    cluster: 1,
+    type: ['raw'],
+    convert: (model, msg, publish, options, meta) => {
+        try {
+            const text = Buffer.from(msg.data).toString('ascii').trim();
+            if (!text) return;
+
+            const epId = msg.endpoint?.ID ?? '?';
+            console.error(`[C4 RECV] EP ${epId}: ${text}`);
+
+            return {c4_response: text, c4_response_ep: epId};
+        } catch (e) {
+            // Not ASCII data — ignore
+            return;
+        }
+    },
+};
+
 // ─── Definition ──────────────────────────────────────────────────────
 
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
@@ -427,7 +594,8 @@ const definition = {
         // Main dimmer — standard Zigbee HA on/off + brightness
         light({configureReporting: false}),
     ],
-    toZigbee: [tzControl4Led, tzControl4Cmd],
+    fromZigbee: [fzControl4Response],
+    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe],
     meta: {disableDefaultResponse: true, multiEndpoint: true},
     endpoint: (device) => ({
         default: 1,

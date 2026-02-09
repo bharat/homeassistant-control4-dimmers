@@ -335,10 +335,10 @@ const tzControl4Led = {
                 await sendC4(meta.device, `c4.dmx.led ${ledId} ${mode} ${colorHex}`);
             }
 
-            if (value.top_on) state.c4_led_top_on = value.top_on;
-            if (value.top_off) state.c4_led_top_off = value.top_off;
-            if (value.bottom_on) state.c4_led_bottom_on = value.bottom_on;
-            if (value.bottom_off) state.c4_led_bottom_off = value.bottom_off;
+            if (value.top_on) state.c4_top_on_led = value.top_on;
+            if (value.top_off) state.c4_top_off_led = value.top_off;
+            if (value.bottom_on) state.c4_bottom_on_led = value.bottom_on;
+            if (value.bottom_off) state.c4_bottom_off_led = value.bottom_off;
 
             return {state};
         }
@@ -405,13 +405,13 @@ const definition = {
         // LED light entities — MUST come before light() so endpoint-restricted
         // converters are checked first (they skip non-matching endpoints,
         // letting the unrestricted light() converter handle the main dimmer).
-        c4LedLight({endpointName: 'led_top_on',     ledId: '01', modeCode: '03',
+        c4LedLight({endpointName: 'top_on_led',     ledId: '01', modeCode: '03',
                     description: 'Top LED color when dimmer load is ON'}),
-        c4LedLight({endpointName: 'led_top_off',    ledId: '01', modeCode: '04',
+        c4LedLight({endpointName: 'top_off_led',    ledId: '01', modeCode: '04',
                     description: 'Top LED color when dimmer load is OFF'}),
-        c4LedLight({endpointName: 'led_bottom_on',  ledId: '04', modeCode: '03',
+        c4LedLight({endpointName: 'bottom_on_led',  ledId: '04', modeCode: '03',
                     description: 'Bottom LED color when dimmer load is ON'}),
-        c4LedLight({endpointName: 'led_bottom_off', ledId: '04', modeCode: '04',
+        c4LedLight({endpointName: 'bottom_off_led', ledId: '04', modeCode: '04',
                     description: 'Bottom LED color when dimmer load is OFF'}),
         // Main dimmer — standard Zigbee HA on/off + brightness
         light({configureReporting: false}),
@@ -420,10 +420,10 @@ const definition = {
     meta: {disableDefaultResponse: true},
     endpoint: (device) => ({
         default: 1,
-        led_top_on: 1,
-        led_top_off: 1,
-        led_bottom_on: 1,
-        led_bottom_off: 1,
+        top_on_led: 1,
+        top_off_led: 1,
+        bottom_on_led: 1,
+        bottom_off_led: 1,
     }),
     configure: async (device, coordinatorEndpoint, definition) => {
         // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.

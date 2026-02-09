@@ -44,6 +44,7 @@
  */
 
 import {light} from 'zigbee-herdsman-converters/lib/modernExtend';
+import {Light, access} from 'zigbee-herdsman-converters/lib/exposes';
 
 // ─── Protocol Constants ──────────────────────────────────────────────
 
@@ -61,6 +62,58 @@ const LED_MODES = {
     on:  '03', // Color shown when the dimmer load is ON
     off: '04', // Color shown when the dimmer load is OFF
 };
+
+// ─── Color Conversion Utilities ─────────────────────────────────────
+//
+// HA sends colors as HS (hue/saturation) or XY (CIE 1931). We need to
+// convert to 6-digit hex RGB for the C4 text protocol.
+
+function hsvToRgbHex(h, s, v = 1) {
+    // h: 0–360, s: 0–100, v: 0–1
+    s /= 100;
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    let r, g, b;
+    if      (h < 60)  { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else              { r = c; g = 0; b = x; }
+    return [r + m, g + m, b + m]
+        .map(ch => Math.round(ch * 255).toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function xyToRgbHex(x, y) {
+    // CIE 1931 XY → sRGB (D65 illuminant), assuming Y brightness = 1
+    if (y === 0) return '000000';
+    const Y = 1, X = (Y / y) * x, Z = (Y / y) * (1 - x - y);
+    let r = X *  3.2406 + Y * -1.5372 + Z * -0.4986;
+    let g = X * -0.9689 + Y *  1.8758 + Z *  0.0415;
+    let b = X *  0.0557 + Y * -0.2040 + Z *  1.0570;
+    return [r, g, b]
+        .map(ch => Math.round(Math.max(0, Math.min(1, ch)) * 255).toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function rgbHexToHs(hex) {
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d !== 0) {
+        if (max === r)      h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else                h = (r - g) / d + 4;
+        h = Math.round(h * 60);
+        if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : Math.round((d / max) * 100);
+    return {hue: h, saturation: s};
+}
 
 // ─── Sequence Counter ────────────────────────────────────────────────
 
@@ -109,6 +162,127 @@ async function sendC4(device, cmdBody) {
 
     await ep.sendRequest(frame, options);
     return text.trim();
+}
+
+// ─── ModernExtend: C4 LED Light Entity ──────────────────────────────
+//
+// Creates a Home Assistant light entity with color picker for one LED
+// state (e.g. "top LED when load is ON"). Each instance returns a
+// ModernExtend-compatible object with its own expose and toZigbee
+// converter, scoped to a specific endpoint name.
+//
+// The converter ordering matters: these must come BEFORE light() in the
+// extend array so the endpoint-restricted converters are checked first.
+// Commands to the default endpoint skip these (wrong endpoint) and fall
+// through to the unrestricted light() converter for the main dimmer.
+
+function c4LedLight({endpointName, ledId, modeCode, description}) {
+    const expose = new Light()
+        .withBrightness()
+        .withColor(['hs'])
+        .withEndpoint(endpointName)
+        .withDescription(description);
+
+    const toZigbee = [{
+        key: ['state', 'brightness', 'color', 'color_hs', 'color_xy', 'color_temp', 'color_mode'],
+        endpoints: [endpointName],
+        convertSet: async (entity, key, value, meta) => {
+            // DEBUG: trace every call so we can see what Z2M sends us
+            const msg = meta.message || {};
+            console.error(`[C4 LED ${endpointName}] convertSet key=${key} value=${JSON.stringify(value)} msg_keys=${Object.keys(msg)}`);
+
+            // Z2M auto-suffixes state keys with the endpoint name, so we
+            // READ from meta.state using suffixed keys but RETURN base keys.
+            const stKey  = `state_${endpointName}`;
+            const brKey  = `brightness_${endpointName}`;
+            const colKey = `color_${endpointName}`;
+
+            const cur = meta.state || {};
+            let state      = cur[stKey]  ?? 'ON';
+            let brightness = cur[brKey]  ?? 254;
+            let color      = cur[colKey] ?? {hue: 0, saturation: 0}; // default white
+
+            // When the same MQTT message contains both a color change AND
+            // a state/brightness change, Z2M calls convertSet for each key
+            // separately. The color handler hasn't updated meta.state yet,
+            // so the state/brightness handler would read the OLD color and
+            // send it to the device — overriding the correct color.
+            //
+            // Fix: if a color key is also present in the same message,
+            // pull the color from the message directly instead of meta.state.
+            const msgColor = msg.color || msg.color_hs;
+            if (msgColor && (key === 'state' || key === 'brightness')) {
+                const c = msgColor;
+                if (c.h !== undefined) color = {...color, hue: c.h};
+                else if (c.hue !== undefined) color = {...color, hue: c.hue};
+                if (c.s !== undefined) color = {...color, saturation: c.s};
+                else if (c.saturation !== undefined) color = {...color, saturation: c.saturation};
+                if (c.x !== undefined && c.y !== undefined) {
+                    color = rgbHexToHs(xyToRgbHex(c.x, c.y));
+                }
+            }
+
+            // Also pull brightness from the same message if present
+            if (msg.brightness !== undefined && key !== 'brightness') {
+                brightness = typeof msg.brightness === 'number' ? msg.brightness : parseInt(msg.brightness, 10);
+            }
+
+            const result = {};
+
+            if (key === 'state') {
+                if (value === 'TOGGLE') state = (state === 'ON') ? 'OFF' : 'ON';
+                else state = (value === 'ON' || value === true) ? 'ON' : 'OFF';
+                result.state = state;
+            } else if (key === 'brightness') {
+                brightness = typeof value === 'number' ? value : parseInt(value, 10);
+                result.brightness = brightness;
+                // Turning brightness up implies ON
+                if (brightness > 0 && state !== 'ON') {
+                    state = 'ON';
+                    result.state = 'ON';
+                }
+            } else if (key === 'color' || key === 'color_hs') {
+                const c = value || {};
+                // Z2M may send {hue, saturation} or {h, s} depending on path
+                if (c.hue !== undefined) color = {...color, hue: c.hue};
+                else if (c.h !== undefined) color = {...color, hue: c.h};
+                if (c.saturation !== undefined) color = {...color, saturation: c.saturation};
+                else if (c.s !== undefined) color = {...color, saturation: c.s};
+                // HA sometimes sends XY inside a 'color' key
+                if (c.x !== undefined && c.y !== undefined) {
+                    color = rgbHexToHs(xyToRgbHex(c.x, c.y));
+                }
+                result.color = color;
+                if (state !== 'ON') { state = 'ON'; result.state = 'ON'; }
+            } else if (key === 'color_xy') {
+                const c = value || {};
+                if (c.x !== undefined && c.y !== undefined) {
+                    color = rgbHexToHs(xyToRgbHex(c.x, c.y));
+                    result.color = color;
+                }
+                if (state !== 'ON') { state = 'ON'; result.state = 'ON'; }
+            } else if (key === 'color_temp' || key === 'color_mode') {
+                // Ignore color_temp and color_mode — we only support RGB LEDs
+                console.error(`[C4 LED ${endpointName}] ignoring key=${key}`);
+                return {};
+            }
+
+            // Compute final hex — brightness scales the HSV value channel
+            let hexColor;
+            if (state === 'OFF' || brightness === 0) {
+                hexColor = '000000';
+            } else {
+                hexColor = hsvToRgbHex(color.hue, color.saturation, brightness / 254);
+            }
+
+            console.error(`[C4 LED ${endpointName}] sending c4.dmx.led ${ledId} ${modeCode} ${hexColor}`);
+            await sendC4(meta.device, `c4.dmx.led ${ledId} ${modeCode} ${hexColor}`);
+
+            return {state: result};
+        },
+    }];
+
+    return {exposes: [expose], fromZigbee: [], toZigbee, isModernExtend: true};
 }
 
 // ─── toZigbee: Set LED Colors ────────────────────────────────────────
@@ -214,10 +388,30 @@ const definition = {
     model: 'C4-Dimmer',
     vendor: 'Control4',
     description: 'Control4 Zigbee In-Wall Dimmer',
-    extend: [light({configureReporting: false})],
+    extend: [
+        // LED light entities — MUST come before light() so endpoint-restricted
+        // converters are checked first (they skip non-matching endpoints,
+        // letting the unrestricted light() converter handle the main dimmer).
+        c4LedLight({endpointName: 'led_top_on',     ledId: '01', modeCode: '03',
+                    description: 'Top LED color when dimmer load is ON'}),
+        c4LedLight({endpointName: 'led_top_off',    ledId: '01', modeCode: '04',
+                    description: 'Top LED color when dimmer load is OFF'}),
+        c4LedLight({endpointName: 'led_bottom_on',  ledId: '04', modeCode: '03',
+                    description: 'Bottom LED color when dimmer load is ON'}),
+        c4LedLight({endpointName: 'led_bottom_off', ledId: '04', modeCode: '04',
+                    description: 'Bottom LED color when dimmer load is OFF'}),
+        // Main dimmer — standard Zigbee HA on/off + brightness
+        light({configureReporting: false}),
+    ],
     toZigbee: [tzControl4Led, tzControl4Cmd],
     meta: {disableDefaultResponse: true},
-    endpoint: (device) => ({default: 1}),
+    endpoint: (device) => ({
+        default: 1,
+        led_top_on: 1,
+        led_top_off: 1,
+        led_bottom_on: 1,
+        led_bottom_off: 1,
+    }),
     configure: async (device, coordinatorEndpoint, definition) => {
         // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.
         // Do NOT touch endpoints 196/197 (proprietary C4).

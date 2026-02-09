@@ -82,6 +82,8 @@ that those platforms never fully implemented.
   - Separate colors for ON state and OFF state
   - Batch mode to set all 4 LED states at once
   - Raw command interface for experimentation
+- **LED Color Pickers in Home Assistant** — each LED state is exposed as a
+  native HA light entity with a color wheel (see [HA Integration Architecture](#ha-integration-architecture))
 - **Clean Z2M dashboard** — custom icon, no interview warnings
 
 ---
@@ -224,8 +226,18 @@ Once one dimmer works:
 
 ### Phase 4: Home Assistant Integration
 
-With `homeassistant: true` in your Zigbee2MQTT config, devices
-automatically appear in Home Assistant as `light.*` entities.
+With `homeassistant: true` in your Zigbee2MQTT config, each dimmer
+automatically appears in Home Assistant as **5 entities**:
+
+- `light.<name>` — main dimmer (on/off + brightness)
+- `light.<name>_led_top_on` — top LED color when load is ON
+- `light.<name>_led_top_off` — top LED color when load is OFF
+- `light.<name>_led_bottom_on` — bottom LED color when load is ON
+- `light.<name>_led_bottom_off` — bottom LED color when load is OFF
+
+Each LED entity has a native HA color picker. Set LED colors using
+the color wheel, or use automations. See [HA Integration Architecture](#ha-integration-architecture)
+for details.
 
 Migrate your automations from Control4 to HA.
 
@@ -275,6 +287,130 @@ Once all dimmers are migrated and stable:
 | Standard C4 | `ffffff` | `000000` | `000000` | `0000ff` |
 | All white | `ffffff` | `ffffff` | `ffffff` | `ffffff` |
 | Status indicator | `00ff00` | `ff0000` | `000000` | `000000` |
+
+---
+
+## HA Integration Architecture
+
+Each Control4 dimmer exposes **5 light entities** in Home Assistant:
+
+| HA Entity | Purpose | Protocol |
+|-----------|---------|----------|
+| `light.<name>` | Main dimmer (on/off + brightness) | Standard Zigbee HA |
+| `light.<name>_led_top_on` | Top LED color when load is ON | C4 text protocol |
+| `light.<name>_led_top_off` | Top LED color when load is OFF | C4 text protocol |
+| `light.<name>_led_bottom_on` | Bottom LED color when dimmer is ON | C4 text protocol |
+| `light.<name>_led_bottom_off` | Bottom LED color when dimmer is OFF | C4 text protocol |
+
+The 4 LED entities each have a **color picker** (HS color wheel) and
+**brightness slider** in the HA UI. The original MQTT interfaces (`c4_led`,
+`c4_cmd`) remain available for scripting and automations.
+
+### How It Works
+
+The converter uses the Z2M `ModernExtend` extension system to register
+the LED entities as virtual endpoints on the same physical device:
+
+```
+                        ┌─────────────────────────────────┐
+                        │    Home Assistant                │
+                        │                                  │
+                        │  light.kitchen (main dimmer)     │
+                        │  light.kitchen_led_top_on        │──┐
+                        │  light.kitchen_led_top_off       │──┤
+                        │  light.kitchen_led_bottom_on     │──┤ Color pickers
+                        │  light.kitchen_led_bottom_off    │──┘
+                        └──────────────┬──────────────────┘
+                                       │ MQTT auto-discovery
+                                       ▼
+                        ┌─────────────────────────────────┐
+                        │    Zigbee2MQTT                   │
+                        │                                  │
+                        │  extend: [                       │
+                        │    c4LedLight('led_top_on')      │──┐
+                        │    c4LedLight('led_top_off')     │  │ Endpoint-scoped
+                        │    c4LedLight('led_bottom_on')   │  │ converters
+                        │    c4LedLight('led_bottom_off')  │──┘
+                        │    light()  ← main dimmer        │
+                        │  ]                               │
+                        │                                  │
+                        │  toZigbee: [tzControl4Led,       │──── MQTT raw
+                        │             tzControl4Cmd]       │     interface
+                        └──────────────┬──────────────────┘
+                                       │
+                      ┌────────────────┼────────────────┐
+                      │ Standard Zigbee│  C4 Text Proto  │
+                      │  (genOnOff,    │  (raw ASCII,    │
+                      │   genLevelCtrl)│   profile C25C) │
+                      └────────────────┼────────────────┘
+                                       ▼
+                        ┌─────────────────────────────────┐
+                        │    Control4 Dimmer (endpoint 1)  │
+                        └─────────────────────────────────┘
+```
+
+### Converter Routing
+
+The main challenge is that both the main dimmer and LED entities handle
+`state`, `brightness`, and `color` keys. Z2M resolves this using the
+`endpoints` property on toZigbee converters:
+
+- Each `c4LedLight` converter has `endpoints: ['led_top_on']` (etc.) —
+  it only matches commands targeting that specific virtual endpoint.
+- The `light()` modernExtend converter has no endpoint restriction —
+  it acts as a fallback for the default endpoint (main dimmer).
+- **Order matters**: LED extends are listed BEFORE `light()` in the
+  `extend` array. Endpoint-restricted converters are checked first;
+  when they don't match the target endpoint, Z2M falls through to
+  the next converter.
+
+Example routing:
+
+| MQTT topic | Target endpoint | Converter used |
+|------------|----------------|----------------|
+| `zigbee2mqtt/Kitchen/set {"state":"ON"}` | default | `light()` → standard Zigbee |
+| `zigbee2mqtt/Kitchen/led_top_on/set {"color":{"hue":0,"saturation":100}}` | led_top_on | `c4LedLight` → C4 text |
+| `zigbee2mqtt/Kitchen/set {"c4_led":{"top_on":"ff0000"}}` | default | `tzControl4Led` → C4 text |
+
+### Brightness Semantics for LEDs
+
+The C4 protocol only accepts a 6-digit hex color — there is no separate
+LED intensity parameter. Brightness is implemented by scaling the HSV
+value channel:
+
+- Brightness 254 (max) + red (H:0, S:100) → `ff0000`
+- Brightness 127 (half) + red → `800000`
+- Brightness 0 or state OFF → `000000`
+
+### Two Ways to Control LEDs
+
+Both interfaces work simultaneously and are available at all times:
+
+**1. HA Color Picker** (light entities):
+- Tap the LED light entity in HA → use the color wheel
+- Brightness slider dims the LED proportionally
+- ON/OFF toggle enables/disables the LED
+- State is persisted in Z2M across restarts
+
+**2. MQTT Direct** (raw hex, for scripting):
+```bash
+# Batch mode — set all 4 LED states at once
+mosquitto_pub -t zigbee2mqtt/Kitchen/set -m \
+  '{"c4_led": {"top_on": "ffffff", "top_off": "000000", "bottom_on": "000000", "bottom_off": "0000ff"}}'
+
+# Single LED
+mosquitto_pub -t zigbee2mqtt/Kitchen/set -m \
+  '{"c4_led": {"led": "top", "color": "ff0000", "mode": "on"}}'
+
+# Raw C4 command
+mosquitto_pub -t zigbee2mqtt/Kitchen/set -m \
+  '{"c4_cmd": "c4.dmx.led 01 03 ff0000"}'
+```
+
+> **Note**: The two interfaces use separate state keys. Changing an LED
+> via the color picker won't update the `c4_led_*` state, and vice versa.
+> This is a known limitation — both are sending the same C4 commands to
+> the device, just tracked independently.
 
 ---
 
@@ -431,6 +567,23 @@ needs raw ASCII with NO framing. The solution: call the private
 `endpoint.sendRequest()` directly with a fake frame object whose
 `toBuffer()` returns just the raw bytes. See the converter source for
 details.
+
+### Implementation Note: LED Light Entities
+
+The converter exposes LED colors as native HA light entities using the
+Z2M `ModernExtend` extension pattern. A factory function `c4LedLight()`
+creates one extension per LED state, each returning:
+
+- An `exposes` entry: a `Light` with brightness + HS color, tagged with
+  `.withEndpoint(name)` so HA creates a separate entity for it.
+- A `toZigbee` converter scoped to that endpoint via `endpoints: [name]`.
+  It converts HA color values (HS or XY) to 6-digit hex RGB and sends
+  the appropriate `c4.dmx.led` command via the raw text protocol.
+- Color conversion (HSV→RGB, XY→RGB) is done in the converter since
+  the C4 protocol only accepts hex RGB colors.
+
+See [HA Integration Architecture](#ha-integration-architecture) for the
+full routing and state management details.
 
 ---
 

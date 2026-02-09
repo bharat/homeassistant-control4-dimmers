@@ -4,39 +4,121 @@
 
 ## Roadmap
 
-### Phase 1: LED Control ✅ COMPLETE
+### Phase 1: Core Dimmer Support ✅ COMPLETE
 - [x] Reverse-engineer the proprietary commands that Control4 sends to set LED colors
-- [x] LED behavior: top LED white when light is on, bottom LED blue when off (matches prior C4 behavior)
+- [x] Decode protocol: raw ASCII over Profile 0xC25C, Cluster 1, Endpoint 1 (no ZCL framing)
 - [x] Add `toZigbee` converter to set LED color via C4 text protocol
 - [x] Expose LED control as Z2M MQTT commands (`c4_led` and `c4_cmd`)
-- [x] Decode protocol: raw ASCII over Profile 0xC25C, Cluster 1, Endpoint 1 (no ZCL framing)
-- [ ] Expose LED colors as proper Z2M `exposes` entries for Home Assistant UI integration
-- [ ] Handle LED color restore on Z2M startup (persist and re-apply after reboot)
+- [x] LED behavior: top LED white when light is on, bottom LED blue when off (matches prior C4 behavior)
 
-### Phase 2: Keypad Support
-- [ ] Test pairing a C4 keypad (C4-KD120 or similar) with Z2M using the existing converter
+### Phase 2: Home Assistant Integration ✅ COMPLETE
+- [x] Expose LED colors as native HA light entities with color pickers (4 entities per dimmer)
+- [x] Multi-endpoint architecture: 5 entities per dimmer (main + 4 LED states)
+- [x] Endpoint-scoped converter routing (LED converters before `light()` for correct dispatch)
+- [x] Gamma correction (γ=2.0) for accurate LED color reproduction
+- [x] Race condition fix: prioritize `meta.message` over stale `meta.state` for color presets
+- [x] Factory default colors pre-populated (top=white on, bottom=blue off)
+- [x] MQTT raw interface (`c4_led`, `c4_cmd`) retained alongside HA color pickers
+- [ ] LED color restore on Z2M restart — Z2M persists state, but doesn't re-send to device on startup. Need to verify if C4 dimmer firmware remembers LED colors across power cycles.
+
+### Phase 3: Streamlined Onboarding ✅ COMPLETE
+- [x] Idempotent Python script (`scripts/fix-c4-database.py`) to fix interview state
+  - Matches on `manufId: 43981` (not model ID or device type)
+  - Dry-run by default, `--apply` to write
+  - Creates timestamped backup before writing
+- [x] Document end-to-end onboarding flow in README
+- [x] Custom device icon (hosted on postimg.cc)
+- [x] Root cause of interview failure identified: endpoints 196/197 refuse `simpleDescriptor` — cannot be fixed in converter, must patch database post-pairing
+- [x] Old manual `jq`/`grep` patching replaced by automated script
+
+### Phase 4: Batch Migration 🔲 NOT STARTED
+- [ ] Pair remaining ~29 dimmers (only Kitchen dimmer migrated so far)
+- [ ] Verify `fix-c4-database.py` works at scale (batch of 5+ dimmers)
+- [ ] Test LED color restore after Z2M restart and after power cycle
+- [ ] Set LED colors for all dimmers (via HA automation or MQTT batch script)
+- [ ] Rename all HA entities for clean display names
+- [ ] Decommission Control4 Director once all dimmers are stable
+
+### Phase 5: Keypad Support 🔲 NOT STARTED
+- [ ] Test pairing a C4 keypad (C4-KD120 or similar) with Z2M
 - [ ] Map keypad button presses to Z2M actions (incoming `c4.dmx.key` / `c4.dmx.bp` events)
-- [ ] LED control per-button on keypads (different colors per button for room/scene identification)
-- [ ] Expose keypad LED colors to Home Assistant for dynamic control (e.g. set button 3 to green when scene is active)
+- [ ] LED control per-button on keypads (different colors per button)
+- [ ] Expose keypad LED colors to Home Assistant
 - [ ] May need a separate converter definition for keypads vs. plain dimmers
 
-### Phase 3: Streamlined Onboarding
-- [ ] Eliminate or minimize database patching — investigate why Z2M interview fails and whether we can make it succeed (or at least not corrupt clusters)
-- [ ] If patching remains necessary: create a single idempotent `patch-all.sh` script that:
-  - Finds all Control4 devices in `database.db` (by `manufId: 43981`)
-  - Patches each one with correct `inClusterList`, `outClusterList`, `modelID`, `manufacturerName`, `interviewCompleted`
-  - Is safe to re-run at any time (idempotent)
-  - Can be run after onboarding a batch of new dimmers
-- [ ] Document the end-to-end onboarding flow: disconnect from C4 → 13-4-13 → pair → (patch if needed) → set LEDs → verify
-- [ ] Update `README.md` with battle-tested instructions from real onboarding experience
+### Phase 6: Upstream Contribution 🔲 NOT STARTED
+- [ ] Clean up converter for general use (remove debug `console.error` calls)
+- [ ] Submit PR to [zigbee-herdsman-converters](https://github.com/Koenkk/zigbee-herdsman-converters)
+- [ ] Include `fingerprint: [{manufacturerID: 43981}]` matching strategy
+- [ ] Document `disableDefaultResponse` requirement and interview quirks
+- [ ] Reference existing community work (SmartThings/pstuart, Hubitat/iankberry, Z2M issue #160)
+- [ ] The `sendRequest()` hack to bypass ZCL framing may need a cleaner upstream approach
 
-### Phase 4: Upstream Contribution
-- [ ] Clean up converter for general use (remove any hardcoded paths, personal device references)
-- [ ] Submit PR to [zigbee-herdsman-converters](https://github.com/Koenkk/zigbee-herdsman-converters) to add built-in Control4 dimmer support
-- [ ] Include `fingerprint: [{manufacturerID: 43981}]` matching strategy (proven to work)
-- [ ] Document the `disableDefaultResponse` requirement and interview quirks
-- [ ] Reference existing community work (SmartThings driver by pstuart, Hubitat port, Z2M issue #160)
-- [ ] Include LED control in the PR (the `sendRequest` hack may need a cleaner upstream approach)
+---
+
+## Session 4: 2026-02-08 — Home Assistant Integration & Polish
+
+### Goal
+Expose LED colors as native Home Assistant light entities with color pickers, fix the Z2M interview warning, and polish the overall experience.
+
+### What Was Built
+
+#### 1. LED Light Entities for Home Assistant
+
+Each dimmer now exposes **5 entities** in HA via Z2M auto-discovery:
+
+| Entity | Endpoint | Purpose |
+|--------|----------|---------|
+| `light.<name>` | default | Main dimmer (on/off + brightness) |
+| `light.<name>_top_led_on` | top_led_on | Top LED color when load is ON |
+| `light.<name>_top_led_off` | top_led_off | Top LED color when load is OFF |
+| `light.<name>_bottom_led_on` | bottom_led_on | Bottom LED color when load is ON |
+| `light.<name>_bottom_led_off` | bottom_led_off | Bottom LED color when load is OFF |
+
+Architecture: a `c4LedLight()` factory function creates a `ModernExtend`-compatible object per LED state, each with its own `Light` expose (brightness + HS color) and endpoint-scoped `toZigbee` converter. These are listed before `light()` in the `extend` array so endpoint-restricted converters are checked first.
+
+#### 2. Gamma Correction
+
+C4 LEDs have a non-linear response — low RGB channel values produce disproportionate light, washing out saturated colors (e.g. blue appeared grayish-white). The C4 Director only ever sends pure channels (0x00 or 0xFF).
+
+Applied γ=2.0 gamma correction to all RGB channel values before sending to device. This compresses low values, making the full color range usable from HA's color picker.
+
+#### 3. Race Condition Fix
+
+HA color presets send `state`, `brightness`, and `color` in the same MQTT message. Z2M calls `convertSet` for each key separately, but the color handler hasn't updated `meta.state` by the time the state/brightness handler runs. Fix: check `meta.message` (the full incoming MQTT payload) for color values, prioritizing it over potentially stale `meta.state`.
+
+#### 4. Interview State Fix Script
+
+Created `scripts/fix-c4-database.py`:
+- Matches C4 devices by `manufId: 43981` (not model ID or device type)
+- Sets `interviewState: "SUCCESSFUL"` and `interviewCompleted: true`
+- Dry-run by default (`--apply` to actually write)
+- Creates timestamped backup before writing
+- Idempotent — safe to run repeatedly after each batch of pairings
+
+This replaced a broken bash script that was matching all 27 devices instead of just C4 dimmers (it matched on `type == 'Router'` OR empty `modelID`).
+
+#### 5. Entity Naming
+
+Z2M 2.7 derives HA entity names for `light` entities from the endpoint name (e.g. `top_led_on` → "Top_led_on"). The `withLabel()` API does **not** control light entity names — only generic exposes (binary/numeric/enum). Manual rename in HA is required for clean display names.
+
+Naming convention settled on: endpoint IDs use `top_led_on` / `bottom_led_off` pattern, which puts the meaningful part (position + state) first.
+
+#### 6. Device Icon
+
+The converter includes an `icon` field pointing to an externally hosted image (postimg.cc) since the GitHub repo is private and raw URLs contain expiring tokens.
+
+### Errors Encountered & Resolved
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| Double-suffixed state keys (`brightness_led_top_on_led_top_on`) | `convertSet` returning suffixed keys, Z2M adding suffix again | Return base keys (`state`, `brightness`, `color`); let Z2M suffix once |
+| HA presets turn LED white, color wheel works | Race condition: `meta.state` has old color when state/brightness handler runs | Read color from `meta.message` (full MQTT payload) instead of `meta.state` |
+| Blue appears grayish-white | C4 LED non-linear response; low channel values (0x18) too bright | Gamma correction γ=2.0 on all RGB channels |
+| `withLabel()` has no effect on light entities | Z2M 2.7 only uses `withLabel()` for generic exposes, not lights | Removed; documented as manual rename in HA |
+| Database fix script matched all 27 devices | Bash script matched `type==Router` OR empty `modelID` | Rewrote in Python, matching on `manufId == 43981` only |
+| Interview still shows "failed" after converter fix attempts | `device.interviewCompleted = true` in `configure()` doesn't persist | External Python script patches `database.db` directly |
+| GitHub raw URL for icon expires | Private repo, token in URL | Hosted on postimg.cc |
 
 ---
 
@@ -143,34 +225,6 @@ This sends raw bytes as the APS payload while still using herdsman's routing, re
 | Modes 00/01/02 rejected with `v01` | Invalid mode values | Only modes `03` (ON color) and `04` (OFF color) are valid |
 | LED command sent but "nothing happened" | Was looking at the wrong dimmer (Island vs Kitchen!) | Commands were working all along — verified with 4-command batch |
 
-### What's Working Now
-1. **On/Off control** via standard Zigbee HA (endpoint 1)
-2. **Dimming** via standard Zigbee HA (endpoint 1)
-3. **LED color control** via C4 text protocol:
-   - Set top/bottom LED colors for on/off states
-   - Batch mode (all 4 at once) and single LED mode
-   - Raw command interface for experimentation (`c4_cmd`)
-4. **Clean Z2M dashboard** (no warnings, custom icon)
-
-### MQTT Interface
-
-**Set all 4 LEDs at once (recommended):**
-```json
-{"c4_led": {"top_on": "ffffff", "top_off": "000000", "bottom_on": "000000", "bottom_off": "0000ff"}}
-```
-
-**Set a single LED:**
-```json
-{"c4_led": {"led": "top", "color": "ffffff", "mode": "on"}}
-{"c4_led": {"led": "bottom", "color": "0000ff", "mode": "off"}}
-```
-
-**Raw C4 text command (for experimentation):**
-```json
-{"c4_cmd": "c4.dmx.led 01 03 ff0000"}
-{"c4_cmd": "c4.dmx.pwr b5"}
-```
-
 ---
 
 ## Session 2: 2026-02-08 — Successful Prototype
@@ -191,11 +245,6 @@ This sends raw bytes as the APS payload while still using herdsman's routing, re
 6. **`modernExtend` with `light()`:** Provides clean exposes (state, brightness, color_temp) with minimal custom code
 7. **`disableDefaultResponse: true`:** Eliminates timeout errors — C4 devices don't send ZCL default responses
 8. **Custom `configure` function:** Only binds endpoint 1 clusters, avoids touching proprietary endpoints 196/197
-9. **Database patching for clean dashboard:**
-   - `interviewCompleted: true` + `interviewState: null` → green checkmark (no red warning triangle)
-   - Corrected `inClusterList: [0,3,4,5,6,8,10]` and `outClusterList: []` for endpoint 1
-   - Set `modelID: "C4-APD120"` and `manufacturerName: "Control4"` for display
-10. **Custom device icon:** Placed PNG in `device_icons/C4-APD120.png`, set in Z2M config
 
 ### Key Lessons Learned (across both sessions)
 1. **`modelID` is absent after failed interview** — not empty string, completely missing from database. `zigbeeModel` matching cannot work. Use `manufacturerID` fingerprint instead.
@@ -207,31 +256,8 @@ This sends raw bytes as the APS payload while still using herdsman's routing, re
 
 ### What Didn't Work / Still Open
 1. ~~**LEDs:** Top and bottom LEDs are dim blue instead of white. LED color control requires proprietary C4 commands~~ → **Resolved in Session 3**
-2. **Interview still fails** — endpoints 196/197 refuse simpleDescriptor requests, which aborts the interview. Database patching is still required.
+2. ~~**Interview still fails** — endpoints 196/197 refuse simpleDescriptor requests~~ → **Resolved in Session 4** with `fix-c4-database.py`
 3. **Firmware ID:** Shows "Unknown" in Z2M dashboard (cosmetic, non-blocking)
-
-### Current Converter (working)
-See `external_converters/control4-dimmer.mjs` — uses `modernExtend` `light()`, fingerprint on `manufacturerID: 43981`, custom configure for endpoint 1 only, plus C4 text protocol for LED control.
-
-### Database Patch Required After Pairing
-Stop Z2M, then patch the device entry (replace `XXXXXX` with device IEEE suffix):
-```bash
-grep 'XXXXXX' database.db | jq -c '
-  .interviewCompleted = true |
-  .interviewState = null |
-  .modelID = "C4-APD120" |
-  .manufacturerName = "Control4" |
-  .endpoints."1".inClusterList = [0,3,4,5,6,8,10] |
-  .endpoints."1".outClusterList = []
-' > /tmp/patched_line.json
-
-python3 -c "
-old = open('database.db').readlines()
-patch = open('/tmp/patched_line.json').read().strip()
-out = [patch + '\n' if 'XXXXXX' in l else l for l in old]
-open('database.db', 'w').writelines(out)
-"
-```
 
 ---
 

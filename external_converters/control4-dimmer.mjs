@@ -406,7 +406,7 @@ const definition = {
     model: 'C4-Dimmer',
     vendor: 'Control4',
     description: 'Control4 Zigbee In-Wall Dimmer',
-    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA5NiI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQwIiBoZWlnaHQ9Ijg4IiByeD0iNiIgZmlsbD0iI2YwZjBmMCIgc3Ryb2tlPSIjODg4IiBzdHJva2Utd2lkdGg9IjIiLz48cmVjdCB4PSIxMCIgeT0iMTIiIHdpZHRoPSIyOCIgaGVpZ2h0PSIzMCIgcng9IjMiIGZpbGw9IiNlOGU4ZTgiIHN0cm9rZT0iI2FhYSIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjI3IiByPSIzIiBmaWxsPSIjNENBRjUwIi8+PHJlY3QgeD0iMTAiIHk9IjUwIiB3aWR0aD0iMjgiIGhlaWdodD0iMzAiIHJ4PSIzIiBmaWxsPSIjZThlOGU4IiBzdHJva2U9IiNhYWEiIHN0cm9rZS13aWR0aD0iMS41Ii8+PGNpcmNsZSBjeD0iMjQiIGN5PSI2NSIgcj0iMyIgZmlsbD0iIzIxOTZGMyIvPjwvc3ZnPg==',
+    icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
         // LED light entities — MUST come before light() so endpoint-restricted
         // converters are checked first (they skip non-matching endpoints,

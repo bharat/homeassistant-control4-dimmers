@@ -189,7 +189,12 @@ async function sendC4(device, cmdBody) {
 // Commands to the default endpoint skip these (wrong endpoint) and fall
 // through to the unrestricted light() converter for the main dimmer.
 
-function c4LedLight({endpointName, ledId, modeCode, description}) {
+function c4LedLight({endpointName, ledId, modeCode, description,
+                     defaultState = 'ON', defaultColor = {hue: 0, saturation: 0}}) {
+    // NOTE: Z2M 2.7 derives HA entity names for light entities from the
+    // endpoint name (e.g. "top_led_on" → "Top_led_on").  The withLabel() API
+    // only affects generic exposes (binary/numeric/enum), not lights.
+    // Users can rename entities in HA: Settings → Devices → entity → Name.
     const expose = new Light()
         .withBrightness()
         .withColor(['hs'])
@@ -211,9 +216,9 @@ function c4LedLight({endpointName, ledId, modeCode, description}) {
             const colKey = `color_${endpointName}`;
 
             const cur = meta.state || {};
-            let state      = cur[stKey]  ?? 'ON';
-            let brightness = cur[brKey]  ?? 254;
-            let color      = cur[colKey] ?? {hue: 0, saturation: 0}; // default white
+            let state      = cur[stKey]  ?? defaultState;
+            let brightness = cur[brKey]  ?? (defaultState === 'ON' ? 254 : 0);
+            let color      = cur[colKey] ?? defaultColor;
 
             // When the same MQTT message contains both a color change AND
             // a state/brightness change, Z2M calls convertSet for each key
@@ -335,10 +340,10 @@ const tzControl4Led = {
                 await sendC4(meta.device, `c4.dmx.led ${ledId} ${mode} ${colorHex}`);
             }
 
-            if (value.top_on) state.c4_top_on_led = value.top_on;
-            if (value.top_off) state.c4_top_off_led = value.top_off;
-            if (value.bottom_on) state.c4_bottom_on_led = value.bottom_on;
-            if (value.bottom_off) state.c4_bottom_off_led = value.bottom_off;
+            if (value.top_on) state.c4_top_led_on = value.top_on;
+            if (value.top_off) state.c4_top_led_off = value.top_off;
+            if (value.bottom_on) state.c4_bottom_led_on = value.bottom_on;
+            if (value.bottom_off) state.c4_bottom_led_off = value.bottom_off;
 
             return {state};
         }
@@ -401,33 +406,44 @@ const definition = {
     model: 'C4-Dimmer',
     vendor: 'Control4',
     description: 'Control4 Zigbee In-Wall Dimmer',
+    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA5NiI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjQwIiBoZWlnaHQ9Ijg4IiByeD0iNiIgZmlsbD0iI2YwZjBmMCIgc3Ryb2tlPSIjODg4IiBzdHJva2Utd2lkdGg9IjIiLz48cmVjdCB4PSIxMCIgeT0iMTIiIHdpZHRoPSIyOCIgaGVpZ2h0PSIzMCIgcng9IjMiIGZpbGw9IiNlOGU4ZTgiIHN0cm9rZT0iI2FhYSIgc3Ryb2tlLXdpZHRoPSIxLjUiLz48Y2lyY2xlIGN4PSIyNCIgY3k9IjI3IiByPSIzIiBmaWxsPSIjNENBRjUwIi8+PHJlY3QgeD0iMTAiIHk9IjUwIiB3aWR0aD0iMjgiIGhlaWdodD0iMzAiIHJ4PSIzIiBmaWxsPSIjZThlOGU4IiBzdHJva2U9IiNhYWEiIHN0cm9rZS13aWR0aD0iMS41Ii8+PGNpcmNsZSBjeD0iMjQiIGN5PSI2NSIgcj0iMyIgZmlsbD0iIzIxOTZGMyIvPjwvc3ZnPg==',
     extend: [
         // LED light entities — MUST come before light() so endpoint-restricted
         // converters are checked first (they skip non-matching endpoints,
         // letting the unrestricted light() converter handle the main dimmer).
-        c4LedLight({endpointName: 'top_on_led',     ledId: '01', modeCode: '03',
-                    description: 'Top LED color when dimmer load is ON'}),
-        c4LedLight({endpointName: 'top_off_led',    ledId: '01', modeCode: '04',
-                    description: 'Top LED color when dimmer load is OFF'}),
-        c4LedLight({endpointName: 'bottom_on_led',  ledId: '04', modeCode: '03',
-                    description: 'Bottom LED color when dimmer load is ON'}),
-        c4LedLight({endpointName: 'bottom_off_led', ledId: '04', modeCode: '04',
-                    description: 'Bottom LED color when dimmer load is OFF'}),
+        // C4 factory defaults: top=white when on, bottom=blue when off
+        c4LedLight({endpointName: 'top_led_on',     ledId: '01', modeCode: '03',
+                    description: 'Top LED color when dimmer load is ON',
+                    defaultState: 'ON',  defaultColor: {hue: 0, saturation: 0}}),
+        c4LedLight({endpointName: 'top_led_off',    ledId: '01', modeCode: '04',
+                    description: 'Top LED color when dimmer load is OFF',
+                    defaultState: 'OFF'}),
+        c4LedLight({endpointName: 'bottom_led_on',  ledId: '04', modeCode: '03',
+                    description: 'Bottom LED color when dimmer load is ON',
+                    defaultState: 'OFF'}),
+        c4LedLight({endpointName: 'bottom_led_off', ledId: '04', modeCode: '04',
+                    description: 'Bottom LED color when dimmer load is OFF',
+                    defaultState: 'ON',  defaultColor: {hue: 240, saturation: 100}}),
         // Main dimmer — standard Zigbee HA on/off + brightness
         light({configureReporting: false}),
     ],
     toZigbee: [tzControl4Led, tzControl4Cmd],
-    meta: {disableDefaultResponse: true},
+    meta: {disableDefaultResponse: true, multiEndpoint: true},
     endpoint: (device) => ({
         default: 1,
-        top_on_led: 1,
-        top_off_led: 1,
-        bottom_on_led: 1,
-        bottom_off_led: 1,
+        top_led_on: 1,
+        top_led_off: 1,
+        bottom_led_on: 1,
+        bottom_led_off: 1,
     }),
     configure: async (device, coordinatorEndpoint, definition) => {
         // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.
         // Do NOT touch endpoints 196/197 (proprietary C4).
+        //
+        // NOTE: The Z2M interview always shows as "failed" because
+        // endpoints 196/197 refuse simpleDescriptor requests.  This is
+        // cosmetic — use scripts/fix-c4-database.py to patch the database
+        // and clear the warning.
         const endpoint = device.getEndpoint(1);
         if (!endpoint) return;
 

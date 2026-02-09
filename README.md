@@ -230,10 +230,10 @@ With `homeassistant: true` in your Zigbee2MQTT config, each dimmer
 automatically appears in Home Assistant as **5 entities**:
 
 - `light.<name>` — main dimmer (on/off + brightness)
-- `light.<name>_top_on_led` — top LED color when load is ON
-- `light.<name>_top_off_led` — top LED color when load is OFF
-- `light.<name>_bottom_on_led` — bottom LED color when load is ON
-- `light.<name>_bottom_off_led` — bottom LED color when load is OFF
+- `light.<name>_top_led_on` — top LED color when load is ON
+- `light.<name>_top_led_off` — top LED color when load is OFF
+- `light.<name>_bottom_led_on` — bottom LED color when load is ON
+- `light.<name>_bottom_led_off` — bottom LED color when load is OFF
 
 Each LED entity has a native HA color picker. Set LED colors using
 the color wheel, or use automations. See [HA Integration Architecture](#ha-integration-architecture)
@@ -297,10 +297,10 @@ Each Control4 dimmer exposes **5 light entities** in Home Assistant:
 | HA Entity | Purpose | Protocol |
 |-----------|---------|----------|
 | `light.<name>` | Main dimmer (on/off + brightness) | Standard Zigbee HA |
-| `light.<name>_top_on_led` | Top LED color when load is ON | C4 text protocol |
-| `light.<name>_top_off_led` | Top LED color when load is OFF | C4 text protocol |
-| `light.<name>_bottom_on_led` | Bottom LED color when dimmer is ON | C4 text protocol |
-| `light.<name>_bottom_off_led` | Bottom LED color when dimmer is OFF | C4 text protocol |
+| `light.<name>_top_led_on` | Top LED color when load is ON | C4 text protocol |
+| `light.<name>_top_led_off` | Top LED color when load is OFF | C4 text protocol |
+| `light.<name>_bottom_led_on` | Bottom LED color when dimmer is ON | C4 text protocol |
+| `light.<name>_bottom_led_off` | Bottom LED color when dimmer is OFF | C4 text protocol |
 
 The 4 LED entities each have a **color picker** (HS color wheel) and
 **brightness slider** in the HA UI. The original MQTT interfaces (`c4_led`,
@@ -316,10 +316,10 @@ the LED entities as virtual endpoints on the same physical device:
                         │    Home Assistant                │
                         │                                  │
                         │  light.kitchen (main dimmer)     │
-                        │  light.kitchen_top_on_led        │──┐
-                        │  light.kitchen_top_off_led       │──┤
-                        │  light.kitchen_bottom_on_led     │──┤ Color pickers
-                        │  light.kitchen_bottom_off_led    │──┘
+                        │  light.kitchen_top_led_on        │──┐
+                        │  light.kitchen_top_led_off       │──┤
+                        │  light.kitchen_bottom_led_on     │──┤ Color pickers
+                        │  light.kitchen_bottom_led_off    │──┘
                         └──────────────┬──────────────────┘
                                        │ MQTT auto-discovery
                                        ▼
@@ -327,10 +327,10 @@ the LED entities as virtual endpoints on the same physical device:
                         │    Zigbee2MQTT                   │
                         │                                  │
                         │  extend: [                       │
-                        │    c4LedLight('top_on_led')      │──┐
-                        │    c4LedLight('top_off_led')     │  │ Endpoint-scoped
-                        │    c4LedLight('bottom_on_led')   │  │ converters
-                        │    c4LedLight('bottom_off_led')  │──┘
+                        │    c4LedLight('top_led_on')      │──┐
+                        │    c4LedLight('top_led_off')     │  │ Endpoint-scoped
+                        │    c4LedLight('bottom_led_on')   │  │ converters
+                        │    c4LedLight('bottom_led_off')  │──┘
                         │    light()  ← main dimmer        │
                         │  ]                               │
                         │                                  │
@@ -355,7 +355,7 @@ The main challenge is that both the main dimmer and LED entities handle
 `state`, `brightness`, and `color` keys. Z2M resolves this using the
 `endpoints` property on toZigbee converters:
 
-- Each `c4LedLight` converter has `endpoints: ['top_on_led']` (etc.) —
+- Each `c4LedLight` converter has `endpoints: ['top_led_on']` (etc.) —
   it only matches commands targeting that specific virtual endpoint.
 - The `light()` modernExtend converter has no endpoint restriction —
   it acts as a fallback for the default endpoint (main dimmer).
@@ -369,7 +369,7 @@ Example routing:
 | MQTT topic | Target endpoint | Converter used |
 |------------|----------------|----------------|
 | `zigbee2mqtt/Kitchen/set {"state":"ON"}` | default | `light()` → standard Zigbee |
-| `zigbee2mqtt/Kitchen/top_on_led/set {"color":{"hue":0,"saturation":100}}` | top_on_led | `c4LedLight` → C4 text |
+| `zigbee2mqtt/Kitchen/top_led_on/set {"color":{"hue":0,"saturation":100}}` | top_led_on | `c4LedLight` → C4 text |
 | `zigbee2mqtt/Kitchen/set {"c4_led":{"top_on":"ff0000"}}` | default | `tzControl4Led` → C4 text |
 
 ### Brightness Semantics for LEDs

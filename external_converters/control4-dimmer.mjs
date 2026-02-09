@@ -544,6 +544,38 @@ const tzControl4Probe = {
     },
 };
 
+// ─── toZigbee: Live Device Identification ────────────────────────────
+//
+// Sets device metadata that genBasic can't provide (C4 locks it down).
+// Triggered via MQTT while Z2M is running — no restart or database
+// patching required.
+//
+//   {"c4_identify": true}
+
+const tzControl4Identify = {
+    key: ['c4_identify'],
+    convertSet: async (entity, key, value, meta) => {
+        const device = meta.device;
+
+        // Set metadata that genBasic can't provide (C4 locks it down)
+        device.manufacturerName = 'Control4';
+        device.powerSource = 'Mains (single phase)';
+        device.interviewCompleted = true;
+        device.save();
+
+        const result = {
+            ieee_address: device.ieeeAddr,
+            manufacturer_name: device.manufacturerName,
+            manufacturer_id: device.manufacturerID,
+            power_source: device.powerSource,
+            interview_completed: device.interviewCompleted,
+        };
+
+        console.error(`[C4 IDENTIFY] ${device.ieeeAddr}: ${JSON.stringify(result)}`);
+        return {state: {c4_identify_result: result}};
+    },
+};
+
 // ─── fromZigbee: Capture C4 Text Protocol Responses ─────────────────
 //
 // C4 devices send responses and telemetry as raw ASCII on endpoint 197
@@ -610,7 +642,7 @@ const definition = {
         light({configureReporting: false}),
     ],
     fromZigbee: [fzControl4Response],
-    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe],
+    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe, tzControl4Identify],
     meta: {disableDefaultResponse: true, multiEndpoint: true},
     endpoint: (device) => ({
         default: 1,
@@ -622,16 +654,24 @@ const definition = {
     configure: async (device, coordinatorEndpoint, definition) => {
         // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.
         // Do NOT touch endpoints 196/197 (proprietary C4).
-        //
-        // NOTE: The Z2M interview always shows as "failed" because
-        // endpoints 196/197 refuse simpleDescriptor requests.  This is
-        // cosmetic — use scripts/fix-c4-database.py to patch the database
-        // and clear the warning.
         const endpoint = device.getEndpoint(1);
         if (!endpoint) return;
 
         await endpoint.bind('genOnOff', coordinatorEndpoint);
         await endpoint.bind('genLevelCtrl', coordinatorEndpoint);
+
+        // Set metadata that genBasic can't provide (C4 locks it down).
+        // This runs automatically on first pair / reconfigure.
+        let changed = false;
+        if (!device.manufacturerName) {
+            device.manufacturerName = 'Control4';
+            changed = true;
+        }
+        if (!device.powerSource) {
+            device.powerSource = 'Mains (single phase)';
+            changed = true;
+        }
+        if (changed) device.save();
     },
 };
 

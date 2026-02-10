@@ -414,9 +414,12 @@ def detect_device(prober):
     print(f'  DETECTING DEVICE TYPE: {prober.device}')
     print(f'{"="*60}\n')
 
-    # Enable debug for Docker log capture
-    prober.set_debug(True)
-    time.sleep(0.3)
+    # Enable debug for Docker log capture + warmup
+    print('Warming up Docker log capture...')
+    if warm_up_capture(prober):
+        print('  → Capture OK')
+    else:
+        print('  → WARNING: Capture may not be working. Proceeding anyway...')
 
     try:
         # ── Single-command detection: c4.dmx.dim ──
@@ -665,6 +668,19 @@ def print_survey_summary(results):
     print(f'  {ok_count} OK, {err_count} errors, {no_count} no response')
 
 
+def warm_up_capture(prober):
+    """Enable debug and verify Docker log capture is receiving responses."""
+    prober.set_debug(True)
+    time.sleep(0.5)
+    warmup = c4_query_sync(prober, 'c4.dmx.amb 01', timeout=4.0)
+    if warmup:
+        return True
+    # Retry
+    time.sleep(1.0)
+    warmup = c4_query_sync(prober, 'c4.dmx.amb 01', timeout=5.0)
+    return warmup is not None
+
+
 def survey_device(prober):
     """Run a comprehensive C4 command survey for device fingerprinting."""
     if not prober.docker or not prober.docker.available:
@@ -675,8 +691,11 @@ def survey_device(prober):
     print(f'  C4 COMMAND SURVEY: {prober.device}')
     print(f'{"="*60}\n')
 
-    prober.set_debug(True)
-    time.sleep(0.3)
+    print('Warming up Docker log capture...')
+    if warm_up_capture(prober):
+        print('  → Capture OK')
+    else:
+        print('  → WARNING: Capture may not be working. Proceeding anyway...')
 
     try:
         results = run_survey(prober)
@@ -709,10 +728,11 @@ def survey_diff(prober, other_device):
     print(f'  SURVEY-DIFF: {original_device} vs {other_device}')
     print(f'{"="*60}')
 
-    print(f'\n  Surveying {original_device}...')
-    prober.set_debug(True)
-    time.sleep(0.3)
+    print(f'\n  Warming up...')
+    if not warm_up_capture(prober):
+        print('  → WARNING: Capture may not be working. Proceeding anyway...')
 
+    print(f'  Surveying {original_device}...')
     try:
         results_a = run_survey(prober, quiet=True)
         print_survey_summary(results_a)

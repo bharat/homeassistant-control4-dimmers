@@ -20,8 +20,13 @@ Usage:
   # One-shot detect (no interactive mode needed)
   python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass --docker --detect
 
+  # Compare two devices side-by-side
+  python3 probe-device.py Kitchen --survey-diff 0x000fff0000c9be0c --broker 192.168.1.54 -u ha -P pass --docker
+
 Commands in interactive mode:
   detect                        — detect device type + read stored LED colors
+  survey                        — comprehensive C4 query survey
+  survey-diff <device>          — survey both devices and show diff
   probe                         — full device probe (endpoints + genBasic)
   read [cluster] [attr ...]     — read ZCL attributes
   query <c4_command>            — send C4 GET query, capture response
@@ -243,6 +248,16 @@ class DeviceProber:
         self.client.publish(self.bridge_topic,
                             json.dumps({'options': {'advanced': {'log_level': level}}}))
         time.sleep(0.3)
+
+    def switch_device(self, device_name):
+        """Switch to a different device (resubscribes to new topic)."""
+        self.client.unsubscribe(self.base_topic)
+        self.device = device_name
+        self.base_topic = f'zigbee2mqtt/{device_name}'
+        self.set_topic = f'{self.base_topic}/set'
+        self.state = {}
+        self.last_response = None
+        self.client.subscribe(self.base_topic)
 
     def close(self):
         self.client.loop_stop()
@@ -554,13 +569,104 @@ def detect_device(prober):
         prober.set_debug(False)
 
 
-def survey_device(prober):
-    """Run a comprehensive C4 command survey for device fingerprinting.
+# Standard survey query list — shared by survey and survey-diff
+SURVEY_QUERIES = [
+    # ── Device info ──
+    ('c4.dm.GD', 'Get Device (model info?)'),
+    ('c4.dm.GD 01', 'Get Device param 01'),
+    ('c4.dm.MN', 'Manufacturer Name'),
+    ('c4.dm.FW', 'Firmware Version'),
+    ('c4.dm.PD', 'Product Data'),
+    ('c4.dm.sl', 'Device Slot/Type?'),
+    ('c4.dm.tv', 'Table Values'),
 
-    Sends many C4 queries and records all responses. Run this on different
-    device types (APD120, KD120, KC120277) and diff the output to find
-    distinguishing commands.
-    """
+    # ── Dimmer / load ──
+    ('c4.dmx.dim', 'Dimmer type'),
+    ('c4.dmx.dim 01', 'Dimmer param 01'),
+    ('c4.dmx.pwr', 'Power state'),
+    ('c4.dmx.ls', 'Load status'),
+    ('c4.dmx.ls 01', 'Load status param 01'),
+
+    # ── Ambient / ALS ──
+    ('c4.dmx.amb 01', 'Ambient color mode 01'),
+    ('c4.dmx.amb 02', 'Ambient color mode 02'),
+    ('c4.als.sra', 'Ambient light sensor'),
+
+    # ── Button config ──
+    ('c4.dmx.bp', 'Button press config'),
+    ('c4.dmx.bp 00', 'Button press btn 00'),
+    ('c4.dmx.bp 01', 'Button press btn 01'),
+    ('c4.dmx.bp 02', 'Button press btn 02'),
+    ('c4.dmx.bp 04', 'Button press btn 04'),
+    ('c4.dmx.cc', 'Click count config'),
+    ('c4.dmx.cc 00', 'Click count btn 00'),
+    ('c4.dmx.cc 01', 'Click count btn 01'),
+    ('c4.dmx.sc', 'Scene config'),
+    ('c4.dmx.sc 00', 'Scene btn 00'),
+    ('c4.dmx.sc 01', 'Scene btn 01'),
+
+    # ── LED colors (sample) ──
+    ('c4.dmx.led 00 03', 'LED 00 ON color'),
+    ('c4.dmx.led 00 04', 'LED 00 OFF color'),
+    ('c4.dmx.led 00 05', 'LED 00 active color'),
+    ('c4.dmx.led 01 03', 'LED 01 ON color'),
+    ('c4.dmx.led 01 04', 'LED 01 OFF color'),
+    ('c4.dmx.led 01 05', 'LED 01 active color'),
+    ('c4.dmx.led 02 03', 'LED 02 ON color'),
+    ('c4.dmx.led 04 03', 'LED 04 ON color'),
+    ('c4.dmx.led 04 04', 'LED 04 OFF color'),
+    ('c4.dmx.led 05 03', 'LED 05 ON color'),
+
+    # ── System ──
+    ('c4.sy.zpw', 'Zigbee power'),
+    ('c4.sy.zpw 01', 'Zigbee power param 01'),
+
+    # ── Keypad-specific (may not exist on dimmers) ──
+    ('c4.kp.bc', 'Keypad button count?'),
+    ('c4.kp.bt', 'Keypad button type?'),
+    ('c4.kp.cfg', 'Keypad config?'),
+    ('c4.kp.sl', 'Keypad slot?'),
+]
+
+
+def run_survey(prober, quiet=False):
+    """Run survey queries and return results list. Debug must already be on."""
+    results = []
+    for cmd, desc in SURVEY_QUERIES:
+        resp = c4_query_sync(prober, cmd, timeout=2.0)
+        if resp:
+            clean = re.sub(r'^0r[0-9a-f]+ ', '', resp)
+            status = 'OK' if '000 ' in resp else 'ERR'
+        else:
+            clean = '(no response)'
+            status = '---'
+        results.append((cmd, desc, status, clean))
+        if not quiet:
+            indicator = {'OK': '+', 'ERR': 'x', '---': '.'}[status]
+            print(f'  [{indicator}] {cmd:25s} {clean}')
+    return results
+
+
+def save_survey(device_name, results):
+    """Save survey results to file, return filename."""
+    filename = f'survey-{device_name.replace(" ", "_").lower()}.txt'
+    with open(filename, 'w') as f:
+        f.write(f'# C4 Survey: {device_name}\n')
+        f.write(f'# Date: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
+        for cmd, desc, status, clean in results:
+            f.write(f'{status:3s}  {cmd:25s}  {clean:40s}  # {desc}\n')
+    return filename
+
+
+def print_survey_summary(results):
+    ok_count = sum(1 for _, _, s, _ in results if s == 'OK')
+    err_count = sum(1 for _, _, s, _ in results if s == 'ERR')
+    no_count = sum(1 for _, _, s, _ in results if s == '---')
+    print(f'  {ok_count} OK, {err_count} errors, {no_count} no response')
+
+
+def survey_device(prober):
+    """Run a comprehensive C4 command survey for device fingerprinting."""
     if not prober.docker or not prober.docker.available:
         print('  ERROR: survey requires --docker flag for response capture')
         return
@@ -572,101 +678,72 @@ def survey_device(prober):
     prober.set_debug(True)
     time.sleep(0.3)
 
-    # Commands to probe — organized by category
-    queries = [
-        # ── Device info ──
-        ('c4.dm.GD', 'Get Device (model info?)'),
-        ('c4.dm.GD 01', 'Get Device param 01'),
-        ('c4.dm.MN', 'Manufacturer Name'),
-        ('c4.dm.FW', 'Firmware Version'),
-        ('c4.dm.PD', 'Product Data'),
-        ('c4.dm.sl', 'Device Slot/Type?'),
-        ('c4.dm.tv', 'Table Values'),
-
-        # ── Dimmer / load ──
-        ('c4.dmx.dim', 'Dimmer type'),
-        ('c4.dmx.dim 01', 'Dimmer param 01'),
-        ('c4.dmx.pwr', 'Power state'),
-        ('c4.dmx.ls', 'Load status'),
-        ('c4.dmx.ls 01', 'Load status param 01'),
-
-        # ── Ambient / ALS ──
-        ('c4.dmx.amb 01', 'Ambient color mode 01'),
-        ('c4.dmx.amb 02', 'Ambient color mode 02'),
-        ('c4.als.sra', 'Ambient light sensor'),
-
-        # ── Button config ──
-        ('c4.dmx.bp', 'Button press config'),
-        ('c4.dmx.bp 00', 'Button press btn 00'),
-        ('c4.dmx.bp 01', 'Button press btn 01'),
-        ('c4.dmx.bp 02', 'Button press btn 02'),
-        ('c4.dmx.bp 04', 'Button press btn 04'),
-        ('c4.dmx.cc', 'Click count config'),
-        ('c4.dmx.cc 00', 'Click count btn 00'),
-        ('c4.dmx.cc 01', 'Click count btn 01'),
-        ('c4.dmx.sc', 'Scene config'),
-        ('c4.dmx.sc 00', 'Scene btn 00'),
-        ('c4.dmx.sc 01', 'Scene btn 01'),
-
-        # ── LED colors (sample) ──
-        ('c4.dmx.led 00 03', 'LED 00 ON color'),
-        ('c4.dmx.led 00 04', 'LED 00 OFF color'),
-        ('c4.dmx.led 00 05', 'LED 00 active color'),
-        ('c4.dmx.led 01 03', 'LED 01 ON color'),
-        ('c4.dmx.led 01 04', 'LED 01 OFF color'),
-        ('c4.dmx.led 01 05', 'LED 01 active color'),
-        ('c4.dmx.led 02 03', 'LED 02 ON color'),
-        ('c4.dmx.led 04 03', 'LED 04 ON color'),
-        ('c4.dmx.led 04 04', 'LED 04 OFF color'),
-        ('c4.dmx.led 05 03', 'LED 05 ON color'),
-
-        # ── System ──
-        ('c4.sy.zpw', 'Zigbee power'),
-        ('c4.sy.zpw 01', 'Zigbee power param 01'),
-
-        # ── Keypad-specific (may not exist on dimmers) ──
-        ('c4.kp.bc', 'Keypad button count?'),
-        ('c4.kp.bt', 'Keypad button type?'),
-        ('c4.kp.cfg', 'Keypad config?'),
-        ('c4.kp.sl', 'Keypad slot?'),
-    ]
-
-    results = []
     try:
-        for cmd, desc in queries:
-            resp = c4_query_sync(prober, cmd, timeout=2.0)
-            if resp:
-                # Trim the sequence prefix for cleaner output
-                clean = re.sub(r'^0r[0-9a-f]+ ', '', resp)
-                status = 'OK' if '000 ' in resp else 'ERR'
-            else:
-                clean = '(no response)'
-                status = '---'
-            results.append((cmd, desc, status, clean))
-            # Show progress
-            indicator = {'OK': '+', 'ERR': 'x', '---': '.'}[status]
-            print(f'  [{indicator}] {cmd:25s} {clean}')
-
+        results = run_survey(prober)
     finally:
         prober.set_debug(False)
 
-    # Summary
-    ok_count = sum(1 for _, _, s, _ in results if s == 'OK')
-    err_count = sum(1 for _, _, s, _ in results if s == 'ERR')
-    no_count = sum(1 for _, _, s, _ in results if s == '---')
     print(f'\n{"─"*60}')
-    print(f'  Survey complete: {ok_count} OK, {err_count} errors, {no_count} no response')
+    print_survey_summary(results)
     print(f'{"─"*60}')
 
-    # Save to file for diffing
-    filename = f'survey-{prober.device.replace(" ", "_").lower()}.txt'
-    with open(filename, 'w') as f:
-        f.write(f'# C4 Survey: {prober.device}\n')
-        f.write(f'# Date: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
-        for cmd, desc, status, clean in results:
-            f.write(f'{status:3s}  {cmd:25s}  {clean:40s}  # {desc}\n')
+    filename = save_survey(prober.device, results)
     print(f'\n  Results saved to {filename}')
-    print(f'  Run on another device and diff: diff survey-kitchen.txt survey-other.txt')
+
+
+def survey_diff(prober, other_device):
+    """Run survey on current device and another, then show diff.
+
+    Switches the prober to the other device, runs the survey there,
+    then switches back and shows a side-by-side comparison highlighting
+    only the differences.
+    """
+    if not prober.docker or not prober.docker.available:
+        print('  ERROR: survey-diff requires --docker flag for response capture')
+        return
+
+    original_device = prober.device
+
+    # Survey device A
+    print(f'\n{"="*60}')
+    print(f'  SURVEY-DIFF: {original_device} vs {other_device}')
+    print(f'{"="*60}')
+
+    print(f'\n  Surveying {original_device}...')
+    prober.set_debug(True)
+    time.sleep(0.3)
+
+    try:
+        results_a = run_survey(prober, quiet=True)
+        print_survey_summary(results_a)
+
+        # Switch to device B
+        print(f'  Surveying {other_device}...')
+        prober.switch_device(other_device)
+        results_b = run_survey(prober, quiet=True)
+        print_survey_summary(results_b)
+    finally:
+        prober.set_debug(False)
+        prober.switch_device(original_device)
+
+    # Save both
+    file_a = save_survey(original_device, results_a)
+    file_b = save_survey(other_device, results_b)
+
+    # Show diff
+    print(f'\n{"─"*60}')
+    print(f'  {"Command":25s}  {"< " + original_device:28s}  {"> " + other_device:28s}')
+    print(f'{"─"*60}')
+    diff_count = 0
+    for (cmd, desc, st_a, val_a), (_, _, st_b, val_b) in zip(results_a, results_b):
+        if val_a != val_b:
+            diff_count += 1
+            print(f'  {cmd:25s}  {val_a:28s}  {val_b:28s}')
+    if diff_count == 0:
+        print('  (no differences found)')
+    print(f'{"─"*60}')
+    print(f'  {diff_count} difference(s) out of {len(results_a)} queries')
+    print(f'  Saved: {file_a}, {file_b}')
 
 
 def interactive_mode(prober):
@@ -681,7 +758,8 @@ def interactive_mode(prober):
     print()
     print('Commands:')
     print('  detect                        — detect device type + read LED colors')
-    print('  survey                        — comprehensive C4 query survey (for diffing)')
+    print('  survey                        — comprehensive C4 query survey')
+    print('  survey-diff <device>          — survey both devices and show diff')
     print('  probe                         — full device probe')
     print('  read [cluster] [attr ...]     — read ZCL attributes')
     print('  query <c4_command>            — send C4 GET query, capture response')
@@ -712,8 +790,14 @@ def interactive_mode(prober):
                 break
             elif cmd == 'detect':
                 detect_device(prober)
-            elif cmd == 'survey':
+            elif cmd == 'survey' and not args:
                 survey_device(prober)
+            elif cmd == 'survey-diff' or (cmd == 'survey' and args):
+                other = args if args else None
+                if not other:
+                    print('  Usage: survey-diff <other_device>')
+                    continue
+                survey_diff(prober, other)
             elif cmd == 'probe':
                 probe_full(prober)
             elif cmd == 'read':
@@ -820,6 +904,8 @@ def main():
     parser.add_argument('--interactive', '-i', action='store_true', help='Interactive command mode')
     parser.add_argument('--detect', action='store_true',
                         help='Detect device type + read stored LED colors (requires --docker)')
+    parser.add_argument('--survey-diff', metavar='OTHER_DEVICE',
+                        help='Survey both devices and show diff (requires --docker)')
     parser.add_argument('--zcl-read', metavar='CLUSTER', help='Read all attributes from a ZCL cluster')
     parser.add_argument('--c4-query', metavar='CMD', help='Send a C4 GET query')
     args = parser.parse_args()
@@ -833,6 +919,8 @@ def main():
             interactive_mode(prober)
         elif args.detect:
             detect_device(prober)
+        elif args.survey_diff:
+            survey_diff(prober, args.survey_diff)
         elif args.zcl_read:
             zcl_read(prober, args.zcl_read)
         elif args.c4_query:

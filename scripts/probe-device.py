@@ -11,17 +11,24 @@ Requires: paho-mqtt  (pip install paho-mqtt)
 Usage:
   python3 probe-device.py <device_name> [--broker HOST] [--port PORT]
 
-  # Interactive mode (recommended)
-  python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass -i
+  Connection settings are loaded from .env.local (in the project root):
+    MQTT_BROKER=192.168.1.54
+    MQTT_PORT=1883
+    MQTT_USERNAME=ha
+    MQTT_PASSWORD=yourpassword
+    DOCKER_CONTAINER=zigbee2mqtt
 
-  # With Docker response capture (auto-decodes C4 query responses)
-  python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass -i --docker zigbee2mqtt
+  # Interactive mode (recommended) — no flags needed with .env.local
+  python3 probe-device.py Kitchen -i
+
+  # With explicit connection args (override .env.local)
+  python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass -i --docker
 
   # One-shot detect (no interactive mode needed)
-  python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass --docker --detect
+  python3 probe-device.py Kitchen --detect
 
   # Compare two devices side-by-side
-  python3 probe-device.py Kitchen --survey-diff 0x000fff0000c9be0c --broker 192.168.1.54 -u ha -P pass --docker
+  python3 probe-device.py Kitchen --survey-diff 0x000fff0000c9be0c
 
 Commands in interactive mode:
   detect                        — detect device type + read stored LED colors
@@ -39,12 +46,14 @@ Commands in interactive mode:
 
 import argparse
 import json
+import os
 import re
 import readline  # noqa: F401 — enables arrow-key history in input()
 import subprocess
 import sys
 import time
 import threading
+from pathlib import Path
 
 try:
     import paho.mqtt.client as mqtt
@@ -907,20 +916,54 @@ def interactive_mode(prober):
             print(f'  Error: {e}')
 
 
+# ─── .env.local loader ───────────────────────────────────────────────
+
+def load_env_local():
+    """Load .env.local from the project root (script's parent dir).
+
+    Looks for .env.local next to the scripts/ folder. Values set in the
+    environment or passed as CLI args take precedence.
+    """
+    # Try: repo_root/.env.local (script is in repo_root/scripts/)
+    script_dir = Path(__file__).resolve().parent
+    for candidate in [script_dir.parent / '.env.local', Path.cwd() / '.env.local']:
+        if candidate.is_file():
+            with open(candidate) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key, _, val = line.partition('=')
+                    key, val = key.strip(), val.strip()
+                    # Don't override existing env vars
+                    if key and val and key not in os.environ:
+                        os.environ[key] = val
+            return str(candidate)
+    return None
+
+
 # ─── Main ────────────────────────────────────────────────────────────
 
 def main():
+    env_file = load_env_local()
+
     parser = argparse.ArgumentParser(
         description='Probe a Control4 device via Zigbee2MQTT',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     parser.add_argument('device', help='Z2M device friendly name (e.g. "Kitchen")')
-    parser.add_argument('--broker', default='localhost', help='MQTT broker host (default: localhost)')
-    parser.add_argument('--port', type=int, default=1883, help='MQTT broker port (default: 1883)')
-    parser.add_argument('--username', '-u', help='MQTT username')
-    parser.add_argument('--password', '-P', help='MQTT password')
-    parser.add_argument('--docker', metavar='CONTAINER', nargs='?', const='zigbee2mqtt',
-                        help='Docker container name for response capture (default: zigbee2mqtt)')
+    parser.add_argument('--broker', default=os.environ.get('MQTT_BROKER', 'localhost'),
+                        help='MQTT broker host (default: from .env.local or localhost)')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('MQTT_PORT', '1883')),
+                        help='MQTT broker port (default: from .env.local or 1883)')
+    parser.add_argument('--username', '-u', default=os.environ.get('MQTT_USERNAME'),
+                        help='MQTT username (default: from .env.local)')
+    parser.add_argument('--password', '-P', default=os.environ.get('MQTT_PASSWORD'),
+                        help='MQTT password (default: from .env.local)')
+    parser.add_argument('--docker', metavar='CONTAINER', nargs='?',
+                        const=os.environ.get('DOCKER_CONTAINER', 'zigbee2mqtt'),
+                        default=os.environ.get('DOCKER_CONTAINER'),
+                        help='Docker container name for response capture (default: from .env.local)')
     parser.add_argument('--interactive', '-i', action='store_true', help='Interactive command mode')
     parser.add_argument('--detect', action='store_true',
                         help='Detect device type + read stored LED colors (requires --docker)')
@@ -929,6 +972,9 @@ def main():
     parser.add_argument('--zcl-read', metavar='CLUSTER', help='Read all attributes from a ZCL cluster')
     parser.add_argument('--c4-query', metavar='CMD', help='Send a C4 GET query')
     args = parser.parse_args()
+
+    if env_file:
+        print(f'  [config] Loaded {env_file}')
 
     prober = DeviceProber(args.device, broker=args.broker, port=args.port,
                           username=args.username, password=args.password,

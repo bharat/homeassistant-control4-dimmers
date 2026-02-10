@@ -257,19 +257,15 @@ def c4_query(prober, command):
     """Send a C4 GET query and capture the response."""
     if prober.docker and prober.docker.available:
         # Docker capture mode: enable debug, send, capture, disable debug
-        prober.docker.flush()
         prober.set_debug(True)
         time.sleep(0.2)
 
         print(f'  Sending: 0g<seq> {command}')
-        prober.send({'c4_query': command}, wait=2.0)
-
-        responses = prober.docker.collect(timeout=3.0)
+        resp = c4_query_sync(prober, command, timeout=3.0)
         prober.set_debug(False)
 
-        if responses:
-            for r in responses:
-                print(f'  Response: {r}')
+        if resp:
+            print(f'  Response: {resp}')
         else:
             print('  No C4 response captured (device may not support this query)')
     else:
@@ -371,7 +367,8 @@ def zcl_read(prober, cluster, attributes=None, endpoint=1):
 def c4_query_sync(prober, command, timeout=3.0):
     """Send a C4 GET query and return the response text (or None).
 
-    Requires Docker capture. Returns the first response line or None on timeout.
+    Requires Docker capture AND debug mode to be enabled (caller's responsibility).
+    Returns the first successful response line or None on timeout.
     """
     if not prober.docker or not prober.docker.available:
         return None
@@ -388,9 +385,10 @@ def c4_query_sync(prober, command, timeout=3.0):
 def detect_device(prober):
     """Detect device type and read stored LED colors via Docker log capture.
 
-    This is the probe-device.py equivalent of the converter's c4_detect,
-    but works reliably because it uses Docker log capture instead of
-    Z2M's fromZigbee response queue (which doesn't fire during toZigbee).
+    Detection uses a single C4 command — c4.dmx.dim — which returns:
+      01 → APD120 (Adaptive Phase Dimmer, 2 buttons)
+      02 → KD120  (Keypad Dimmer, 6 buttons + load)
+      n01/error → KC120277 (Configurable Keypad, 6 buttons, no load)
     """
     if not prober.docker or not prober.docker.available:
         print('  ERROR: detect requires --docker flag for response capture')
@@ -406,55 +404,49 @@ def detect_device(prober):
     time.sleep(0.3)
 
     try:
-        # ── Probe 1: Does button 02 exist? ──
-        print('Probe 1: Checking for button 02 (c4.dmx.led 02 03)...')
-        resp = c4_query_sync(prober, 'c4.dmx.led 02 03', timeout=3.0)
-        has_btn02 = False
-        btn02_color = None
-        if resp and '000 c4.dmx.led' in resp:
-            m = re.search(r'000 c4\.dmx\.led (\w{6})', resp)
-            if m:
-                has_btn02 = True
-                btn02_color = m.group(1).lower()
-                print(f'  → Button 02 EXISTS (stored color: #{btn02_color})')
-            else:
-                print(f'  → Got response but unexpected format: {resp}')
-        else:
-            print(f'  → Button 02 NOT FOUND (no response or error)')
-            if resp:
-                print(f'     Raw: {resp}')
-
-        # ── Probe 2: Does it have a load? ──
-        print('\nProbe 2: Checking for load (c4.dmx.dim)...')
+        # ── Single-command detection: c4.dmx.dim ──
+        # Returns dimmer type code:
+        #   01 = forward-phase dimmer (APD120, 2-button rocker)
+        #   02 = reverse-phase dimmer (KD120, 6-button keypad + load)
+        #   n01 = not supported (KC120277, pure keypad, no load)
+        print('Querying dimmer type (c4.dmx.dim)...')
         resp = c4_query_sync(prober, 'c4.dmx.dim', timeout=3.0)
-        has_load = False
         dim_type = None
+        has_load = False
         if resp and '000 c4.dmx.dim' in resp:
             m = re.search(r'000 c4\.dmx\.dim (\w+)', resp)
             if m:
                 has_load = True
                 dim_type = m.group(1)
-                print(f'  → Has LOAD (dimmer type: {dim_type})')
+                print(f'  → Response: c4.dmx.dim {dim_type}')
             else:
                 print(f'  → Got response but unexpected format: {resp}')
         else:
-            print(f'  → NO LOAD (no response or error)')
-            if resp:
-                print(f'     Raw: {resp}')
+            print(f'  → No load (response: {resp or "timeout"})')
 
-        # ── Determine device type ──
-        if not has_btn02 and has_load:
-            device_type = 'dimmer'
-            model = 'C4-APD120'
-            desc = 'Adaptive Phase Dimmer (2 buttons)'
-            buttons = [('01', 'top'), ('04', 'bottom')]
-        elif has_btn02 and has_load:
-            device_type = 'keypaddim'
-            model = 'C4-KD120'
-            desc = 'Keypad Dimmer (6 buttons + load)'
+        # ── Determine device type from dim_type ──
+        # dim_type mapping (empirically determined):
+        #   "01" = APD120 (Adaptive Phase Dimmer) — 2-button rocker
+        #   "02" = KD120 (Keypad Dimmer) — 6-button keypad with load
+        #   None = KC120277 (Configurable Keypad) — 6-button, no load
+        DIM_TYPE_MAP = {
+            '01': ('dimmer',    'C4-APD120',   'Adaptive Phase Dimmer (2 buttons)',
+                   [('01', 'top'), ('04', 'bottom')]),
+            '02': ('keypaddim', 'C4-KD120',    'Keypad Dimmer (6 buttons + load)',
+                   [('00', 'slot 0'), ('01', 'slot 1'), ('02', 'slot 2'),
+                    ('03', 'slot 3'), ('04', 'slot 4'), ('05', 'slot 5')]),
+        }
+
+        if dim_type and dim_type in DIM_TYPE_MAP:
+            device_type, model, desc, buttons = DIM_TYPE_MAP[dim_type]
+        elif dim_type and dim_type not in DIM_TYPE_MAP:
+            # Unknown dim_type but has load — treat as generic dimmer with 6 slots
+            device_type = 'dimmer_unknown'
+            model = f'C4-Unknown (dim={dim_type})'
+            desc = f'Unknown dimmer type {dim_type} (6 buttons assumed)'
             buttons = [('00', 'slot 0'), ('01', 'slot 1'), ('02', 'slot 2'),
                        ('03', 'slot 3'), ('04', 'slot 4'), ('05', 'slot 5')]
-        elif has_btn02 and not has_load:
+        elif not has_load:
             device_type = 'keypad'
             model = 'C4-KC120277'
             desc = 'Configurable Keypad (6 buttons, no load)'
@@ -463,13 +455,14 @@ def detect_device(prober):
         else:
             device_type = 'unknown'
             model = 'unknown'
-            desc = 'Unknown device (no buttons, no load)'
+            desc = 'Unknown device'
             buttons = []
 
         print(f'\n{"─"*60}')
         print(f'  Device type: {device_type}')
         print(f'  Model:       {model}')
         print(f'  Description: {desc}')
+        print(f'  Dim type:    {dim_type or "n/a"}')
         print(f'{"─"*60}\n')
 
         # ── Read stored LED colors ──
@@ -515,7 +508,6 @@ def detect_device(prober):
             'model': model,
             'description': desc,
             'has_load': has_load,
-            'has_btn02': has_btn02,
             'dim_type': dim_type,
             'colors': colors,
         }

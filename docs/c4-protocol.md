@@ -84,14 +84,15 @@ GET: 0g<seq> c4.dmx.led <button_id> <mode>
 0g<seq> c4.dmx.led 01 03           — read top LED ON color
 → 0r<seq> 000 c4.dmx.led ffffff   — stored color is white
 
-0g<seq> c4.dmx.led 02 03           — read slot 2 ON color (device probing)
-→ 0r<seq> 000 c4.dmx.led 0000cc   — stored color is blue (KD120/KC120277)
-→ (no response / timeout)          — button doesn't exist (APD120)
+0g<seq> c4.dmx.led 02 03           — read slot 2 ON color
+→ 0r<seq> 000 c4.dmx.led cc6633   — stored color (KD120 with configured button)
+→ 0r<seq> 000 c4.dmx.led 000000   — unused slot (APD120 returns black)
 ```
+**Note:** ALL C4 devices respond to LED queries for all 6 slots (00–05), even the 2-button APD120 (unused slots return `000000`). This means LED queries cannot be used for device-type detection.
 
 **Color persistence:** LED colors are stored in device firmware and survive power cycles and network migrations. When migrating from C4 to Z2M, stored colors can be read to auto-populate HA state without user reconfiguration.
 
-**Device probing via GET:** Querying `c4.dmx.led 02 03` is the primary method for distinguishing APD120 (2 buttons) from KD120/KC120277 (6 buttons). Devices with button 02 respond with a color; devices without it do not respond.
+**Device probing via GET:** ~~Querying `c4.dmx.led 02 03` was originally thought to distinguish APD120 from KD120/KC120277.~~ **CORRECTED:** All C4 devices respond to LED queries for all 6 slots (00–05), including the 2-button APD120 (which stores `000000` for unused slots). Use `c4.dmx.dim` instead for device identification (see Dimmer Type Query above).
 
 #### Ambient LED
 
@@ -167,15 +168,27 @@ Sent continuously by dimmers (every few seconds). Not sent by keypads. See [Appe
 - `c4.dmx.plm 00` → Dimming Mode: "Auto-Detect" (Detected: Reverse Phase)
 - `c4.dmx.pmti` → Configures the energy monitoring refresh interval shown in Composer Pro "Energy Information" panel
 
-#### Dimmer Query (Dimmers Only)
+#### Dimmer Type Query — PRIMARY DEVICE IDENTIFIER
 
 ```
 0g<seq> c4.dmx.dim                 — Query dimmer type
-→ 0r<seq> 000 c4.dmx.dim 02       — Type 02 (Reverse Phase)
+→ 0r<seq> 000 c4.dmx.dim XX       — Dimmer type code
+→ 0r<seq> n01                      — No load (pure keypad)
 ```
 
-Likely maps to detected dimming mode: `01` = Forward Phase, `02` = Reverse Phase.
-Keypads do not respond to this query.
+**This is the single most important command for device identification.** The response code uniquely identifies all three newer C4 device types:
+
+| Response | Dimmer Type | Device | Description |
+|----------|-------------|--------|-------------|
+| `01` | Forward Phase | C4-APD120 | Adaptive Phase Dimmer (2-button rocker) |
+| `02` | Reverse Phase | C4-KD120 | Keypad Dimmer (6 buttons + load) |
+| `n01` | (no load) | C4-KC120277 | Configurable Keypad (6 buttons, no load) |
+
+**Correlation with Composer Pro:**
+- `01` (Forward Phase) → Auto-Detect resolves to Forward Phase dimming
+- `02` (Reverse Phase) → Auto-Detect resolves to Reverse Phase dimming
+
+**Note:** The earlier assumption that `c4.dmx.led 02 03` could detect button count was incorrect. All C4 devices (including the 2-button APD120) respond to LED queries for all 6 slots (00–05), returning `000000` for unused slots.
 
 #### Device Crypto Key
 
@@ -329,13 +342,17 @@ The broadcast also contains firmware version and other attributes:
 
 ### Runtime Identification Queries
 
-If the broadcast isn't captured, these queries can differentiate at runtime:
+If the broadcast isn't captured, a single query differentiates all three types at runtime:
 
 | Query | Dimmer (APD120) | Keypad Dimmer (KD120) | Pure Keypad (KC120277) |
 |-------|----------------|----------------------|----------------------|
-| `c4.dmx.dim` | `000 c4.dmx.dim 02` | Responds (has load) | No response / error |
-| `c4.dmx.ls` (telemetry) | Sent continuously | Sent continuously | Never sent |
-| `c4.dmx.bp` (count) | `n01` (1 panel) | `n04`+ (multi-button) | `n06`+ (multi-button) |
+| **`c4.dmx.dim`** | **`000 c4.dmx.dim 01`** | **`000 c4.dmx.dim 02`** | **`n01` (error)** |
+| `c4.dm.sl` | `000 c4.dm.sl 00` | `000 c4.dm.sl 00` | `n01` (error) |
+| `c4.dmx.pwr` | `000 c4.dmx.pwr ...` | `000 c4.dmx.pwr ...` | `n01` (error) |
+| `c4.dmx.led 02 03` | `000 c4.dmx.led 000000` | `000 c4.dmx.led RRGGBB` | `000 c4.dmx.led RRGGBB` |
+| `c4.dmx.bp` | `n01` | `n01` | `n01` |
+
+**Key finding:** `c4.dmx.dim` is the **only** single command that provides three-way differentiation. `c4.dm.sl` only distinguishes load/no-load (both APD120 and KD120 return `00`). `c4.dmx.led 02 03` does NOT work — all devices respond (APD120 returns `000000` for unused slots).
 
 ---
 
@@ -392,7 +409,7 @@ Correlated from C4 Director join logs and Composer Pro UI for a C4-APD120 (MAC: 
 | Composer Pro Property | Protocol Command | Notes |
 |-----------------------|-----------------|-------|
 | Dimming Mode: Auto-Detect | `c4.dmx.plm 00` | `00` = auto-detect |
-| Detected: Reverse Phase | `c4.dmx.dim` → `02` | `02` = reverse phase |
+| Detected: Reverse Phase | `c4.dmx.dim` → `02` | `01` = forward phase (APD120), `02` = reverse phase (KD120) |
 | Backlight Color: black | `c4.dmx.amb 01` → `00` | `00` = off/black |
 | Ambient Light Profiles | `c4.als.sra` | Init ALS reporting |
 

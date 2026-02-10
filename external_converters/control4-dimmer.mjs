@@ -266,31 +266,42 @@ function parseDimResponse(responseText) {
 
 // ─── Device Type Detection ──────────────────────────────────────────
 //
-// Probes the device via C4 text protocol to determine its type.
-// Uses two queries:
-//   1. c4.dmx.led 02 03 — does button 02 exist? (APD120 only has 01, 04)
-//   2. c4.dmx.dim — does it have a load? (pure keypads don't respond)
+// Uses a SINGLE C4 command to identify all three device types:
+//   c4.dmx.dim response:
+//     "01" → APD120 (forward-phase dimmer, 2-button rocker)
+//     "02" → KD120  (reverse-phase keypad dimmer, 6 buttons + load)
+//     error/n01 → KC120277 (configurable keypad, 6 buttons, no load)
+//
+// NOTE: The earlier approach of probing c4.dmx.led 02 03 (button 02
+// existence) does NOT work — all C4 devices respond to LED queries for
+// all 6 slots, including the 2-button APD120 (unused slots = 000000).
 //
 // Returns: 'dimmer' | 'keypaddim' | 'keypad' | 'unknown'
+
+const DIM_TYPE_MAP = {
+    '01': 'dimmer',    // C4-APD120 (forward-phase, 2 buttons)
+    '02': 'keypaddim', // C4-KD120  (reverse-phase, 6 buttons + load)
+};
 
 async function detectDeviceType(device) {
     console.error(`[C4 DETECT] Probing device ${device.ieeeAddr}...`);
 
-    // Probe 1: Does button 02 exist?
-    const btn02resp = await queryC4WithResponse(device, 'c4.dmx.led 02 03', 3000);
-    const hasBtn02 = parseLedColorResponse(btn02resp) !== null;
-    console.error(`[C4 DETECT] Button 02: ${hasBtn02 ? 'EXISTS (' + btn02resp + ')' : 'NOT FOUND'}`);
-
-    // Probe 2: Does it have a load?
+    // Single command, three-way detection
     const dimResp = await queryC4WithResponse(device, 'c4.dmx.dim', 3000);
-    const hasLoad = parseDimResponse(dimResp) !== null;
-    console.error(`[C4 DETECT] Load (c4.dmx.dim): ${hasLoad ? 'YES (' + dimResp + ')' : 'NO'}`);
+    const dimType = parseDimResponse(dimResp);
+    console.error(`[C4 DETECT] c4.dmx.dim response: ${dimResp || '(timeout)'}, parsed: ${dimType || '(none)'}`);
 
     let deviceType;
-    if (!hasBtn02 && hasLoad)       deviceType = 'dimmer';    // C4-APD120
-    else if (hasBtn02 && hasLoad)   deviceType = 'keypaddim'; // C4-KD120
-    else if (hasBtn02 && !hasLoad)  deviceType = 'keypad';    // C4-KC120277
-    else                            deviceType = 'unknown';
+    if (dimType && DIM_TYPE_MAP[dimType]) {
+        deviceType = DIM_TYPE_MAP[dimType];
+    } else if (dimType) {
+        // Unknown dim type but has load — treat as generic dimmer
+        console.error(`[C4 DETECT] Unknown dim type "${dimType}", treating as keypaddim`);
+        deviceType = 'keypaddim';
+    } else {
+        // No response = no load = pure keypad
+        deviceType = 'keypad'; // C4-KC120277
+    }
 
     console.error(`[C4 DETECT] Device type: ${deviceType}`);
     return deviceType;

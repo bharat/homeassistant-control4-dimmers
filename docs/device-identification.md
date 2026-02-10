@@ -65,41 +65,48 @@ The older C4-KP6-Z model also reports this via `genPowerCfg` attribute 7 on endp
 
 ### 3. Runtime C4 Query (REQUIRED for Device-Type Detection)
 
-Since endpoint fingerprinting cannot differentiate newer C4 devices, runtime probing via C4 text protocol is the **primary identification method**. These queries run during `configure()` to determine device type.
+Since endpoint fingerprinting cannot differentiate newer C4 devices, runtime probing via C4 text protocol is the **primary identification method**.
 
-**Primary detection: `0g c4.dmx.led 02 03` (probe button 02 for stored ON color)**
+**Single-command detection: `0g c4.dmx.dim` (query dimmer type)**
 
-| Device | Response | Has Button 02? |
-|--------|----------|----------------|
-| APD120 (2 buttons: 01, 04) | No response / error | No |
-| KD120 (6 buttons: 00–05) | `000 c4.dmx.led RRGGBB` | Yes |
-| KC120277 (6 buttons: 00–05) | `000 c4.dmx.led RRGGBB` | Yes |
+This single command provides complete three-way device identification:
 
-**Secondary detection: `0g c4.dmx.dim` (has load?)**
+| Device | `c4.dmx.dim` Response | Dim Type |
+|--------|----------------------|----------|
+| APD120 (Adaptive Phase Dimmer) | `000 c4.dmx.dim 01` | `01` = Forward Phase |
+| KD120 (Keypad Dimmer) | `000 c4.dmx.dim 02` | `02` = Reverse Phase |
+| KC120277 (Pure Keypad) | `n01` (error — no load) | n/a |
 
-| Device | Response | Has Load? |
-|--------|----------|-----------|
-| APD120 | `000 c4.dmx.dim 02` | Yes |
-| KD120 | `000 c4.dmx.dim XX` | Yes |
-| KC120277 | No response / error | No |
+**Detection matrix:**
 
-**Combined detection matrix:**
+| `c4.dmx.dim` | Device Type | Buttons | Load |
+|--------------|-------------|---------|------|
+| `01` | APD120 (dimmer) | 2 (top=01, bottom=04) | Yes |
+| `02` | KD120 (keypad dimmer) | 6 (slots 00–05) | Yes |
+| error/`n01` | KC120277 (pure keypad) | 6 (slots 00–05) | No |
 
-| Has button 02? | Has load? | Device Type |
-|----------------|-----------|-------------|
-| No | Yes | APD120 (dimmer, 2 buttons) |
-| Yes | Yes | KD120 (keypad dimmer, 6 buttons) |
-| Yes | No | KC120277 (pure keypad, 6 buttons) |
+**IMPORTANT (corrected):** The earlier approach of probing `c4.dmx.led 02 03` (button 02 existence) does NOT work. All C4 devices — including the 2-button APD120 — respond to LED queries for all 6 button slots (00–05). The APD120 simply stores `000000` for its unused slots. The `c4.dmx.dim` response code is the **only** reliable three-way differentiator discovered so far.
 
-**Other queries (informational, NOT useful for differentiation):**
+**Supplementary queries (confirmed via `survey` command):**
 
-| Query | All Devices |
-|-------|-------------|
-| `c4.dmx.bp` (panel count) | `n01` — all report 1 panel, cannot differentiate |
+| Query | APD120 | KD120 | KC120277 |
+|-------|--------|-------|----------|
+| `c4.dm.sl` | `000 c4.dm.sl 00` | `000 c4.dm.sl 00` | `n01` (unsupported) |
+| `c4.dm.tv` | `e00` | `e00` | `n01` |
+| `c4.dmx.pwr` | `000 c4.dmx.pwr ...` | `000 c4.dmx.pwr ...` | `n01` |
+| `c4.als.sra` | `e00` | `e00` | `n01` |
+| `c4.dmx.bp` | `n01` | `n01` | `n01` |
+| `c4.kp.*` | `n01` | `n01` | `n01` |
 
-**LED color persistence:** All C4 devices store LED colors in firmware across power cycles and network migrations. Use `0g c4.dmx.led <btn> <mode>` to read stored colors (see Protocol Reference).
+Note: `c4.dm.sl` distinguishes load/no-load but not APD120 from KD120 (both return `00`). Only `c4.dmx.dim` provides full three-way differentiation.
 
-Use `probe-device.py` with `--docker` to run these queries interactively.
+**LED color persistence:** All C4 devices store LED colors in firmware across power cycles and network migrations. All devices respond to `0g c4.dmx.led <btn> <mode>` for all 6 slots (00–05), even the 2-button APD120 (unused slots store `000000`). Use this to auto-populate HA state during migration.
+
+**Tool:** Use `probe-device.py` with `--docker` to run these queries interactively:
+```bash
+python3 probe-device.py <device> --docker -i   # then type "detect" or "survey"
+python3 probe-device.py <device> --docker --detect  # one-shot detection
+```
 
 ---
 
@@ -251,26 +258,31 @@ All newer C4 devices share identical endpoint structures (1/196/197), identical 
 
 ```
 1. Z2M pairs device → catch-all fingerprint matches (manufID: 43981)
-2. configure() runs → probes device via C4 text protocol:
-   a. Query c4.dmx.led 02 03 → has button 02?
-   b. Query c4.dmx.dim → has load?
-3. Stores detected type in meta.state (c4_device_type)
-4. Dynamic exposes based on device type:
-   - APD120: 2 LED lights (top/bottom × on/off = 4), main dimmer light, power telemetry
-   - KD120: 6 LED lights (slot × on/off = 12), main dimmer light, button events, button config
-   - KC120277: 6 LED lights (slot × on/off = 12), button events, button config (no main light)
+2. probe-device.py runs "detect" → single C4 query: c4.dmx.dim
+   - "01" → APD120 (forward-phase dimmer, 2 buttons)
+   - "02" → KD120 (reverse-phase keypad dimmer, 6 buttons)
+   - error → KC120277 (pure keypad, 6 buttons, no load)
+3. Reads all stored LED colors (6 slots × 2 modes = 12 queries)
+4. Publishes device type + LED colors to Z2M state via MQTT
+5. Exposes: all 6 button slots (users disable unused ones in HA)
+   - APD120: main dimmer light + 2 relevant LED entities (top/bottom)
+   - KD120: main dimmer light + 6 LED entities + button events
+   - KC120277: 6 LED entities + button events (no main light)
 ```
 
 ### Runtime Detection Flow
 
-```javascript
-// In configure():
-const hasBtn02 = await queryC4(device, 'c4.dmx.led 02 03'); // returns color or timeout
-const hasDim  = await queryC4(device, 'c4.dmx.dim');         // returns type or timeout
+Detection uses `probe-device.py --docker --detect` (Docker log capture), which is more
+reliable than the in-converter `c4_detect` mechanism (which suffers from Z2M's single-threaded
+message processing preventing fromZigbee responses during toZigbee execution).
 
-if (!hasBtn02 && hasDim)  → deviceType = 'dimmer'     (APD120)
-if (hasBtn02 && hasDim)   → deviceType = 'keypaddim'  (KD120)
-if (hasBtn02 && !hasDim)  → deviceType = 'keypad'     (KC120277)
+```python
+# Single command, three-way detection:
+response = c4_query_sync('c4.dmx.dim')
+
+if response contains "000 c4.dmx.dim 01" → deviceType = 'dimmer'     (APD120)
+if response contains "000 c4.dmx.dim 02" → deviceType = 'keypaddim'  (KD120)
+if response is error/n01/timeout         → deviceType = 'keypad'     (KC120277)
 ```
 
 ### LED Color Auto-Population
@@ -283,6 +295,11 @@ C4 devices persistently store LED colors in firmware. During `configure()`, the 
 
 - **Dimmer log:** `/private/tmp/000fff0000cabd8d.log` (C4-APD120 joining C4 network)
 - **Keypad log:** `/private/tmp/0x000fff0000ce96a4.log` (C4-KC120277 joining C4 network)
+- **Keypad Dimmer log:** `/private/tmp/000fff0000c9be0c.log` (C4-KD120 joining C4 network)
 - **GitHub Issue:** [Z2M #15361 — Control4 6-button keypad](https://github.com/Koenkk/zigbee2mqtt/issues/15361) by @ArcadeMachinist
 - **SmartThings Thread:** [Control4 Keypad Zigbee Driver](https://community.smartthings.com/t/control4-keypad-zigbee-driver/3563)
-- **Live probing:** `scripts/probe-device.py` with `--docker` flag against Kitchen dimmer (0x000fff0000c55f83)
+- **Live probing:** `scripts/probe-device.py` with `--docker` flag
+  - Kitchen (0x000fff0000c55f83) — APD120 dimmer: `c4.dmx.dim` → `01`
+  - Downstairs Hall (0x000fff0000c9be0c) — KD120 keypad dimmer: `c4.dmx.dim` → `02`
+  - 0x000fff0000ce30c7 — KC120277 pure keypad: `c4.dmx.dim` → `n01`
+- **Survey diffs:** `survey-kitchen.txt` vs `survey-0x000fff0000ce30c7.txt` vs `survey-0x000fff0000c9be0c.txt`

@@ -60,22 +60,38 @@ Both dimmers and keypads use this namespace. All commands confirmed via Director
 #### LED Control
 
 ```
-c4.dmx.led <button_id> <mode> <RRGGBB>
+SET: 0s<seq> c4.dmx.led <button_id> <mode> <RRGGBB>
+GET: 0g<seq> c4.dmx.led <button_id> <mode>
+ →   0r<seq> 000 c4.dmx.led <RRGGBB>
 ```
 
 | Parameter | Values |
 |-----------|--------|
-| `button_id` | Dimmer: `01`=top, `04`=bottom. Keypad: `00`–`05` (6 buttons) |
+| `button_id` | Dimmer: `01`=top, `04`=bottom. KD120/KC120277: `00`–`05` (6 slots) |
 | `mode` | `03`=ON color (shown when active), `04`=OFF color (shown when inactive), `05`=current/override |
 | `RRGGBB` | 6-digit hex RGB color |
 
-**Examples:**
+**SET examples:**
 ```
-0s<seq> c4.dmx.led 01 03 ffffff    — top LED white when ON
-0s<seq> c4.dmx.led 01 04 000000    — top LED dark when OFF
-0s<seq> c4.dmx.led 04 03 000000    — bottom LED dark when ON
-0s<seq> c4.dmx.led 04 04 0000ff    — bottom LED blue when OFF
+0s<seq> c4.dmx.led 01 03 ffffff    — set top LED white when ON
+0s<seq> c4.dmx.led 01 04 000000    — set top LED dark when OFF
+0s<seq> c4.dmx.led 04 03 000000    — set bottom LED dark when ON
+0s<seq> c4.dmx.led 04 04 0000ff    — set bottom LED blue when OFF
 ```
+
+**GET examples (read stored colors from firmware):**
+```
+0g<seq> c4.dmx.led 01 03           — read top LED ON color
+→ 0r<seq> 000 c4.dmx.led ffffff   — stored color is white
+
+0g<seq> c4.dmx.led 02 03           — read slot 2 ON color (device probing)
+→ 0r<seq> 000 c4.dmx.led 0000cc   — stored color is blue (KD120/KC120277)
+→ (no response / timeout)          — button doesn't exist (APD120)
+```
+
+**Color persistence:** LED colors are stored in device firmware and survive power cycles and network migrations. When migrating from C4 to Z2M, stored colors can be read to auto-populate HA state without user reconfiguration.
+
+**Device probing via GET:** Querying `c4.dmx.led 02 03` is the primary method for distinguishing APD120 (2 buttons) from KD120/KC120277 (6 buttons). Devices with button 02 respond with a color; devices without it do not respond.
 
 #### Ambient LED
 

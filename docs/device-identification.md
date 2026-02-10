@@ -9,52 +9,41 @@ How to identify and differentiate Control4 Zigbee devices (dimmers vs. keypads) 
 | Model | Type | Type Tag | Firmware | Endpoints | Load? | Buttons |
 |-------|------|----------|----------|-----------|-------|---------|
 | C4-APD120 | Adaptive Phase Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 | Yes (1 load) | 2 (top/bottom rocker) |
-| C4-KD120 | Keypad Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 (TBC) | Yes (1 load) | 4+ (rocker + keypad buttons) |
-| C4-KC120277 | Configurable Keypad | `control4_kp` | 4.4.16 | 1, 2 | No | 6 slots (configurable) |
+| C4-KD120 | Keypad Dimmer | `control4_light` | 5.1.1 | 1, 196, 197 | Yes (1 load) | 6 (rocker + 4 keypad buttons) |
+| C4-KC120277 | Configurable Keypad | `control4_kp` | 4.4.16 | 1, 196, 197 | No | 6 slots (configurable) |
 | C4-KP6-Z | 6-Button Keypad (older) | `control4_keypad` | 3.22.41 | 1, 2 | No | 6 |
+
+**IMPORTANT: All newer C4 devices (APD120, KD120, KC120277) share IDENTICAL endpoint structures (1, 196, 197).** Only the older C4-KP6-Z has a different structure (endpoints 1, 2). Endpoint-based Z2M fingerprinting CANNOT differentiate newer C4 device types. Runtime probing via C4 text protocol is required.
 
 **Common to all:** Manufacturer ID 43981 (0xABCD), IEEE prefix `0x000fff`.
 
 **Note:** The C4-APD120 dimmer has a "Use as 2 Button Keypad" option in Composer Pro. When enabled, the dimmer hardware acts as a keypad (buttons send events but don't control the load). This means a dimmer's behavior can change at the software level — the endpoint structure remains the same.
 
-**Note:** The C4-KD120 (Keypad Dimmer) self-identifies as `control4_light` — the same type tag as the C4-APD120. The model string (`C4-KD120` vs `C4-APD120`) is the only differentiator in the self-ID broadcast. The KD120 uses the exact same C4 text protocol as the APD120, with the key difference being it has 4+ LED buttons (01–04) instead of just 2 (01, 04). Its endpoint structure is expected to match the APD120 (1/196/197) since the protocol is identical. This means Z2M fingerprinting alone cannot distinguish KD120 from APD120 — runtime button count detection (`c4.dmx.bp`) would be needed to differentiate.
+**Note:** The C4-KD120 (Keypad Dimmer) self-identifies as `control4_light` — the same type tag as the C4-APD120. The model string (`C4-KD120` vs `C4-APD120`) is the only differentiator in the self-ID broadcast. The KD120 uses the exact same C4 text protocol as the APD120, with the key difference being it has 6 LED button slots (00–05) instead of just 2 (01, 04). Its endpoint structure matches all newer C4 devices (1/196/197). Z2M fingerprinting alone cannot distinguish ANY newer C4 devices — runtime probing is required.
 
 ---
 
 ## Identification Methods
 
-### 1. Endpoint Fingerprint (Best for Z2M Converter Routing)
+### 1. Endpoint Fingerprint — NOT USABLE for Newer Devices
 
-The most reliable method — available immediately from Z2M's `database.db` after pairing, no probing required.
+**CORRECTED:** All newer C4 devices (APD120, KD120, KC120277) report identical endpoints:
 
 | Device | Endpoints | EP1 deviceID |
 |--------|-----------|--------------|
-| Dimmer | 1, **196**, **197** | 0x0101 (Dimmable Light) |
-| Keypad | 1, **2** | 0x0000 |
+| Dimmer (C4-APD120) | 1, 196, 197 | 0x0101 (Dimmable Light) |
+| Keypad Dimmer (C4-KD120) | 1, 196, 197 | 0x0101 (Dimmable Light) |
+| Pure Keypad (C4-KC120277) | 1, 196, 197 | 0x0101 (Dimmable Light) |
+| Older Keypad (C4-KP6-Z) | 1, **2** | 0x0000 |
 
-**Key differentiator:** Presence of endpoint 196/197 = dimmer. Presence of endpoint 2 (without 196/197) = keypad.
+**All newer devices are endpoint-identical.** The earlier assumption that KC120277 had endpoints 1, 2 was based on the C4-KP6-Z (older EM250-based model, from GitHub issue #15361). Live testing of the KC120277 confirmed it uses 1/196/197.
 
-Z2M fingerprint example:
+Z2M fingerprint: single catch-all for all newer C4 devices:
 ```javascript
-// Dimmer: match on endpoints 1/196/197
-fingerprint: [{
-    manufacturerID: 43981,
-    endpoints: [
-        {ID: 1, profileID: 0x0104, deviceID: 0x0101},
-        {ID: 196},
-        {ID: 197},
-    ],
-}]
-
-// Keypad: match on endpoints 1/2 (no 196/197)
-fingerprint: [{
-    manufacturerID: 43981,
-    endpoints: [
-        {ID: 1},
-        {ID: 2},
-    ],
-}]
+fingerprint: [{manufacturerID: 43981}]
 ```
+
+Device-type differentiation requires **runtime probing** (see section 3 below).
 
 ### 2. Self-Identification Broadcast (Most Definitive)
 
@@ -74,15 +63,41 @@ c4:control4_kp:C4-KC120277       → keypad
 
 The older C4-KP6-Z model also reports this via `genPowerCfg` attribute 7 on endpoint 2.
 
-### 3. Runtime C4 Query (For Probing)
+### 3. Runtime C4 Query (REQUIRED for Device-Type Detection)
 
-If the broadcast isn't captured, send C4 text protocol queries:
+Since endpoint fingerprinting cannot differentiate newer C4 devices, runtime probing via C4 text protocol is the **primary identification method**. These queries run during `configure()` to determine device type.
 
-| Query | Dimmer | Keypad |
-|-------|--------|--------|
-| `c4.dmx.dim` | `000 c4.dmx.dim 02` | No response / not recognized |
-| `c4.dmx.ls` telemetry | Sent continuously | Never sent |
-| `c4.dmx.bp` (count query) | `n01` (1 rocker) | `n06` or higher |
+**Primary detection: `0g c4.dmx.led 02 03` (probe button 02 for stored ON color)**
+
+| Device | Response | Has Button 02? |
+|--------|----------|----------------|
+| APD120 (2 buttons: 01, 04) | No response / error | No |
+| KD120 (6 buttons: 00–05) | `000 c4.dmx.led RRGGBB` | Yes |
+| KC120277 (6 buttons: 00–05) | `000 c4.dmx.led RRGGBB` | Yes |
+
+**Secondary detection: `0g c4.dmx.dim` (has load?)**
+
+| Device | Response | Has Load? |
+|--------|----------|-----------|
+| APD120 | `000 c4.dmx.dim 02` | Yes |
+| KD120 | `000 c4.dmx.dim XX` | Yes |
+| KC120277 | No response / error | No |
+
+**Combined detection matrix:**
+
+| Has button 02? | Has load? | Device Type |
+|----------------|-----------|-------------|
+| No | Yes | APD120 (dimmer, 2 buttons) |
+| Yes | Yes | KD120 (keypad dimmer, 6 buttons) |
+| Yes | No | KC120277 (pure keypad, 6 buttons) |
+
+**Other queries (informational, NOT useful for differentiation):**
+
+| Query | All Devices |
+|-------|-------------|
+| `c4.dmx.bp` (panel count) | `n01` — all report 1 panel, cannot differentiate |
+
+**LED color persistence:** All C4 devices store LED colors in firmware across power cycles and network migrations. Use `0g c4.dmx.led <btn> <mode>` to read stored colors (see Protocol Reference).
 
 Use `probe-device.py` with `--docker` to run these queries interactively.
 
@@ -182,13 +197,14 @@ Use `probe-device.py` with `--docker` to run these queries interactively.
 
 | Button ID | Location | Default Color (Director) | Notes |
 |-----------|----------|-------------------------|-------|
-| `00` | Top rocker | (not set by Director) | 4-tap join button; likely load control |
-| `01` | Keypad button 1 | `0000cc` (blue) | |
-| `02` | Keypad button 2 | `0000cc` (blue) | |
-| `03` | Keypad button 3 | `0000cc` (blue) | |
-| `04` | Keypad button 4 / bottom | `000000` (off) | |
+| `00` | Top rocker / slot 0 | (not set by Director) | 4-tap join button; likely load control |
+| `01` | Slot 1 | `0000cc` (blue) | |
+| `02` | Slot 2 | `0000cc` (blue) | |
+| `03` | Slot 3 | `0000cc` (blue) | |
+| `04` | Slot 4 | `000000` (off) | |
+| `05` | Slot 5 (bottom) | (not set by Director in log) | May be unused in this config |
 
-All LEDs use mode 05 (coordinator-pushed). The Director manages LED state centrally rather than letting firmware auto-switch. In Composer Pro, the KD120 appears as a dimmer with a "Keypad" child component — the dimmer controls the load, and the keypad child manages button behavior and LED colors.
+All LEDs use mode 05 (coordinator-pushed). The Director manages LED state centrally rather than letting firmware auto-switch. In Composer Pro, the KD120 appears as a dimmer with a "Keypad" child component — the dimmer controls the load, and the keypad child manages button behavior and LED colors. The KD120 has the same 6-slot chassis as the KC120277 keypad, plus a load.
 
 ### Keypad (C4-KC120277)
 
@@ -222,6 +238,44 @@ Each button has per-button settings in Composer Pro:
 Button IDs correspond to **physical slot positions** (0–5 top to bottom), not the logical button count. A 2-slot-high button occupies two consecutive IDs.
 
 The C4-KP6-Z (older model) uses buttons `00`–`05` for a fixed 6-button layout.
+
+---
+
+## Z2M Converter Architecture
+
+### Why One Definition, Not Three
+
+All newer C4 devices share identical endpoint structures (1/196/197), identical manufacturer ID (43981), and the same `c4.dmx.*` text protocol namespace. Z2M fingerprinting cannot distinguish them. The older C4-KP6-Z (endpoints 1/2, `c4.kp.*` namespace) is a separate case.
+
+**Architecture: Single catch-all definition with runtime detection.**
+
+```
+1. Z2M pairs device → catch-all fingerprint matches (manufID: 43981)
+2. configure() runs → probes device via C4 text protocol:
+   a. Query c4.dmx.led 02 03 → has button 02?
+   b. Query c4.dmx.dim → has load?
+3. Stores detected type in meta.state (c4_device_type)
+4. Dynamic exposes based on device type:
+   - APD120: 2 LED lights (top/bottom × on/off = 4), main dimmer light, power telemetry
+   - KD120: 6 LED lights (slot × on/off = 12), main dimmer light, button events, button config
+   - KC120277: 6 LED lights (slot × on/off = 12), button events, button config (no main light)
+```
+
+### Runtime Detection Flow
+
+```javascript
+// In configure():
+const hasBtn02 = await queryC4(device, 'c4.dmx.led 02 03'); // returns color or timeout
+const hasDim  = await queryC4(device, 'c4.dmx.dim');         // returns type or timeout
+
+if (!hasBtn02 && hasDim)  → deviceType = 'dimmer'     (APD120)
+if (hasBtn02 && hasDim)   → deviceType = 'keypaddim'  (KD120)
+if (hasBtn02 && !hasDim)  → deviceType = 'keypad'     (KC120277)
+```
+
+### LED Color Auto-Population
+
+C4 devices persistently store LED colors in firmware. During `configure()`, the converter can **read** all stored colors using `0g c4.dmx.led <btn> <mode>` and auto-populate the HA state with the existing C4 configuration. This means migrated devices will show their current colors in HA immediately — no manual reconfiguration needed.
 
 ---
 

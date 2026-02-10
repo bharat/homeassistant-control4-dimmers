@@ -1,7 +1,7 @@
-# Control4 Zigbee Dimmer Migration to Home Assistant / Zigbee2MQTT
+# Control4 Zigbee Migration to Home Assistant / Zigbee2MQTT
 
-Migrate ~30 Control4 Zigbee dimmers to Zigbee2MQTT without replacing hardware.
-Full on/off, dimming, and **LED color control** — matching the original Control4 behavior.
+Migrate Control4 Zigbee dimmers and keypads to Zigbee2MQTT without replacing hardware.
+Full on/off, dimming, **LED color control**, and **keypad button events** — matching the original Control4 behavior.
 
 ## TL;DR
 
@@ -59,17 +59,19 @@ that those platforms never fully implemented.
 
 ## Known Compatible Models
 
-| Model | Type | On/Off + Dimming | LED Control | Notes |
-|-------|------|:---:|:---:|-------|
-| C4-APD120 | Adaptive phase dimmer 120V | **Confirmed** | **Confirmed** | Primary test device |
-| C4-DIM / LDZ-102-x | In-wall dimmer | Confirmed (ST/HE) | Expected | Same protocol |
-| C4-KD120 | Keypad dimmer 120V | Expected | Expected | Untested with Z2M |
-| C4-KD277 | Keypad dimmer 277V | Expected | Expected | Untested with Z2M |
-| C4-FPD120 | Forward phase dimmer 120V | Expected | Expected | |
-| C4-SW | In-wall switch (on/off only) | Expected | Expected | Simpler (no dimming) |
+| Model | Type | On/Off + Dimming | LED Control | Button Events | Notes |
+|-------|------|:---:|:---:|:---:|-------|
+| C4-APD120 | Adaptive phase dimmer 120V | **Confirmed** | **Confirmed** | **Confirmed** | Primary test device |
+| C4-KD120 | Keypad dimmer 120V | **Confirmed** | **Confirmed** | **Confirmed** | 6 LED buttons + load |
+| C4-KC120277 | Configurable keypad 120V/277V | N/A (no load) | **Confirmed** | **Confirmed** | 6 LED buttons, no load |
+| C4-DIM / LDZ-102-x | In-wall dimmer | Confirmed (ST/HE) | Expected | Expected | Same protocol |
+| C4-KD277 | Keypad dimmer 277V | Expected | Expected | Expected | |
+| C4-FPD120 | Forward phase dimmer 120V | Expected | Expected | Expected | |
+| C4-SW | In-wall switch (on/off only) | Expected | Expected | Expected | Simpler (no dimming) |
 
-> **Note**: All Control4 Zigbee devices share manufacturer ID 43981 (0xABCD).
-> The converter matches on this ID, so it should work with any C4 dimmer model.
+> **Note**: All newer Control4 Zigbee devices share manufacturer ID 43981 (0xABCD)
+> and identical endpoint structures (1, 196, 197). The converter matches on the
+> manufacturer ID and uses runtime probing to detect the specific device type.
 
 ---
 
@@ -78,14 +80,21 @@ that those platforms never fully implemented.
 - **On/Off** — standard Zigbee HA, rock-solid
 - **Dimming** — standard Zigbee HA, smooth transitions
 - **LED Colors** — proprietary C4 protocol, fully decoded:
-  - Set top/bottom LED colors independently
-  - Separate colors for ON state and OFF state
-  - Batch mode to set all 4 LED states at once
-  - Raw command interface for experimentation
+  - Set per-button LED colors (up to 6 buttons per device)
+  - Separate colors for ON state and OFF state per button
+  - Batch mode and raw command interface for scripting
+  - **Auto-read stored colors** from firmware during device detection
 - **LED Color Pickers in Home Assistant** — each LED state is exposed as a
-  native HA light entity with a color wheel (see [HA Integration Architecture](#ha-integration-architecture))
-- **Clean Z2M dashboard** — custom device icon, interview warnings
-  fixed via included database patch script
+  native HA light entity with a color wheel
+- **Button Events** — keypad button presses published as HA actions
+  (press, click count, scene change)
+- **Per-Button Configuration** — behavior (keypad/toggle/on/off) and LED mode
+  exposed as HA select entities
+- **Smart Load Control** — buttons configured as toggle/on/off automatically
+  send genOnOff commands to EP1
+- **Runtime Device Detection** — single converter auto-identifies device type
+  (dimmer, keypad dimmer, pure keypad) via C4 text protocol probing
+- **Clean Z2M dashboard** — custom device icon, auto-metadata on pair
 
 ---
 
@@ -192,7 +201,26 @@ The script finds all C4 devices by manufacturer ID (43981 / 0xABCD) and
 sets `interviewState` to `SUCCESSFUL`. It's idempotent — safe to run
 multiple times. Run it after each new dimmer pairing.
 
-#### Step 6: Test Commands
+#### Step 6: Detect Device Type
+
+Run device detection to identify the device type and auto-read stored LED colors:
+
+```bash
+mosquitto_pub -t zigbee2mqtt/DEVICE_NAME/set -m '{"c4_detect": true}'
+```
+
+This probes the device to determine its type (dimmer, keypad dimmer, or pure
+keypad) and reads all stored LED colors from firmware. The results appear in
+the device state:
+
+- `c4_device_type`: `dimmer`, `keypaddim`, or `keypad`
+- `c4_detect_result`: detection details (model, colors read count)
+- LED entity states: auto-populated with colors from the device firmware
+
+**This is a one-time step per device.** The device type and colors are
+persisted in Z2M state.
+
+#### Step 7: Test Commands
 
 In the Zigbee2MQTT web UI, select the device and try:
 
@@ -200,13 +228,17 @@ In the Zigbee2MQTT web UI, select the device and try:
 - **Off**: Set state to OFF
 - **Brightness**: Set brightness slider to ~50%
 
-#### Step 7: Set LED Colors
+#### Step 8: Set LED Colors (Optional)
 
-Set the standard C4 dimmer look (white top when on, blue bottom when off):
+If the device already had colors from Control4, they were auto-populated in
+Step 6. To set new colors:
 
 ```bash
+# Batch mode for dimmers (buttons 1=top, 4=bottom)
 mosquitto_pub -t zigbee2mqtt/DEVICE_NAME/set -m \
   '{"c4_led": {"top_on": "ffffff", "top_off": "000000", "bottom_on": "000000", "bottom_off": "0000ff"}}'
+
+# Or use the HA color pickers on individual LED entities
 ```
 
 ### Phase 3: Batch Migration
@@ -224,14 +256,25 @@ Once one dimmer works:
 
 ### Phase 4: Home Assistant Integration
 
-With `homeassistant: true` in your Zigbee2MQTT config, each dimmer
-automatically appears in Home Assistant as **5 entities**:
+With `homeassistant: true` in your Zigbee2MQTT config, each device
+automatically appears in Home Assistant with up to **26 entities**:
 
-- `light.<name>` — main dimmer (on/off + brightness)
-- `light.<name>_top_led_on` — top LED color when load is ON
-- `light.<name>_top_led_off` — top LED color when load is OFF
-- `light.<name>_bottom_led_on` — bottom LED color when load is ON
-- `light.<name>_bottom_led_off` — bottom LED color when load is OFF
+- `light.<name>` — main dimmer (on/off + brightness, dimmers only)
+- `light.<name>_button_N_on` — button N LED color when active (×6 buttons)
+- `light.<name>_button_N_off` — button N LED color when inactive (×6 buttons)
+- `select.<name>_button_N_behavior` — button N press behavior (×6 buttons)
+- `select.<name>_button_N_led_mode` — button N LED update mode (×6 buttons)
+- `sensor.<name>_action` — button press events
+
+**Which buttons are relevant per device type:**
+
+| Device | Active Buttons | Has Load? |
+|--------|---------------|-----------|
+| APD120 (dimmer) | 1 (top), 4 (bottom) | Yes |
+| KD120 (keypad dimmer) | 0–5 (all 6) | Yes |
+| KC120277 (pure keypad) | 0–5 (all 6) | No |
+
+Disable unused button entities in HA: Settings → Devices → entity → Disable.
 
 Each LED entity has a native HA color picker. Set LED colors using
 the color wheel, or use automations. See [HA Integration Architecture](#ha-integration-architecture)
@@ -291,8 +334,8 @@ pairings. See [Step 5](#step-5-fix-interview-state) for details.
 
 | Parameter | Values |
 |-----------|--------|
-| LED ID | `01` = top button, `04` = bottom button |
-| Mode | `03` = ON color (load is on), `04` = OFF color (load is off) |
+| LED ID | `00`–`05` = button slot (dimmer: `01`=top, `04`=bottom; keypad: `00`–`05`) |
+| Mode | `03` = ON color (active), `04` = OFF color (inactive), `05` = immediate override |
 | Color | 6-digit hex RGB: `ffffff`=white, `000000`=off, `ff0000`=red, `0000ff`=blue |
 
 ### Common LED Configurations
@@ -307,51 +350,55 @@ pairings. See [Step 5](#step-5-fix-interview-state) for details.
 
 ## HA Integration Architecture
 
-Each Control4 dimmer exposes **5 light entities** in Home Assistant:
+Each Control4 device exposes up to **26 entities** in Home Assistant:
 
-| HA Entity | Purpose | Protocol |
-|-----------|---------|----------|
-| `light.<name>` | Main dimmer (on/off + brightness) | Standard Zigbee HA |
-| `light.<name>_top_led_on` | Top LED color when load is ON | C4 text protocol |
-| `light.<name>_top_led_off` | Top LED color when load is OFF | C4 text protocol |
-| `light.<name>_bottom_led_on` | Bottom LED color when dimmer is ON | C4 text protocol |
-| `light.<name>_bottom_led_off` | Bottom LED color when dimmer is OFF | C4 text protocol |
+| HA Entity | Count | Purpose | Protocol |
+|-----------|-------|---------|----------|
+| `light.<name>` | 1 | Main dimmer (on/off + brightness) | Standard Zigbee HA |
+| `light.<name>_button_N_on` | 6 | Button N LED color when active | C4 text protocol |
+| `light.<name>_button_N_off` | 6 | Button N LED color when inactive | C4 text protocol |
+| `select.<name>_button_N_behavior` | 6 | Button press action (keypad/toggle/on/off) | Z2M state |
+| `select.<name>_button_N_led_mode` | 6 | LED update mode | Z2M state |
+| `sensor.<name>_action` | 1 | Button press events | C4 text protocol |
 
-The 4 LED entities each have a **color picker** (HS color wheel) and
+The LED entities each have a **color picker** (HS color wheel) and
 **brightness slider** in the HA UI. The original MQTT interfaces (`c4_led`,
 `c4_cmd`) remain available for scripting and automations.
 
 ### How It Works
 
-The converter uses the Z2M `ModernExtend` extension system to register
-the LED entities as virtual endpoints on the same physical device:
+The converter uses a unified definition for all device types, with a
+`ModernExtend` extension system for LED entities and config selects:
 
 ```
-                        ┌─────────────────────────────────┐
-                        │    Home Assistant                │
-                        │                                  │
-                        │  light.kitchen (main dimmer)     │
-                        │  light.kitchen_top_led_on        │──┐
-                        │  light.kitchen_top_led_off       │──┤
-                        │  light.kitchen_bottom_led_on     │──┤ Color pickers
-                        │  light.kitchen_bottom_led_off    │──┘
-                        └──────────────┬──────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │    Home Assistant                     │
+                        │                                       │
+                        │  light.kitchen (main dimmer)          │
+                        │  light.kitchen_button_1_on   ──┐     │
+                        │  light.kitchen_button_1_off  ──┤     │
+                        │  light.kitchen_button_4_on   ──┤ LED │
+                        │  light.kitchen_button_4_off  ──┘     │
+                        │  select.kitchen_button_1_behavior    │
+                        │  sensor.kitchen_action               │
+                        └──────────────┬───────────────────────┘
                                        │ MQTT auto-discovery
                                        ▼
-                        ┌─────────────────────────────────┐
-                        │    Zigbee2MQTT                   │
-                        │                                  │
-                        │  extend: [                       │
-                        │    c4LedLight('top_led_on')      │──┐
-                        │    c4LedLight('top_led_off')     │  │ Endpoint-scoped
-                        │    c4LedLight('bottom_led_on')   │  │ converters
-                        │    c4LedLight('bottom_led_off')  │──┘
-                        │    light()  ← main dimmer        │
-                        │  ]                               │
-                        │                                  │
-                        │  toZigbee: [tzControl4Led,       │──── MQTT raw
-                        │             tzControl4Cmd]       │     interface
-                        └──────────────┬──────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │    Zigbee2MQTT                        │
+                        │                                       │
+                        │  extend: [                            │
+                        │    c4LedLight('button_0_on') ×12     │── LED converters
+                        │    c4ButtonConfig('btn_0') ×12       │── Config selects
+                        │    light()  ← main dimmer             │
+                        │  ]                                    │
+                        │                                       │
+                        │  toZigbee: [c4_detect,               │── Runtime detection
+                        │    c4_led, c4_cmd, c4_query, ...]    │── Raw MQTT interface
+                        │                                       │
+                        │  fromZigbee: [fzControl4Response]    │── Button events +
+                        │    + response queue for sync Q/R      │   query responses
+                        └──────────────┬───────────────────────┘
                                        │
                       ┌────────────────┼────────────────┐
                       │ Standard Zigbee│  C4 Text Proto  │
@@ -359,9 +406,10 @@ the LED entities as virtual endpoints on the same physical device:
                       │   genLevelCtrl)│   profile C25C) │
                       └────────────────┼────────────────┘
                                        ▼
-                        ┌─────────────────────────────────┐
-                        │    Control4 Dimmer (endpoint 1)  │
-                        └─────────────────────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │    Control4 Device (endpoint 1)       │
+                        │    (Dimmer / Keypad / Keypad Dimmer)  │
+                        └──────────────────────────────────────┘
 ```
 
 ### Converter Routing
@@ -370,7 +418,7 @@ The main challenge is that both the main dimmer and LED entities handle
 `state`, `brightness`, and `color` keys. Z2M resolves this using the
 `endpoints` property on toZigbee converters:
 
-- Each `c4LedLight` converter has `endpoints: ['top_led_on']` (etc.) —
+- Each `c4LedLight` converter has `endpoints: ['button_1_on']` (etc.) —
   it only matches commands targeting that specific virtual endpoint.
 - The `light()` modernExtend converter has no endpoint restriction —
   it acts as a fallback for the default endpoint (main dimmer).
@@ -384,8 +432,9 @@ Example routing:
 | MQTT topic | Target endpoint | Converter used |
 |------------|----------------|----------------|
 | `zigbee2mqtt/Kitchen/set {"state":"ON"}` | default | `light()` → standard Zigbee |
-| `zigbee2mqtt/Kitchen/top_led_on/set {"color":{"hue":0,"saturation":100}}` | top_led_on | `c4LedLight` → C4 text |
+| `zigbee2mqtt/Kitchen/button_1_on/set {"color":{"hue":0,"saturation":100}}` | button_1_on | `c4LedLight` → C4 text |
 | `zigbee2mqtt/Kitchen/set {"c4_led":{"top_on":"ff0000"}}` | default | `tzControl4Led` → C4 text |
+| `zigbee2mqtt/Kitchen/set {"c4_detect": true}` | default | `tzControl4Detect` → C4 probing |
 
 ### Brightness Semantics for LEDs
 
@@ -590,7 +639,8 @@ details.
 
 The converter exposes LED colors as native HA light entities using the
 Z2M `ModernExtend` extension pattern. A factory function `c4LedLight()`
-creates one extension per LED state, each returning:
+creates one extension per LED state (6 buttons × 2 modes = 12 total),
+each returning:
 
 - An `exposes` entry: a `Light` with brightness + HS color, tagged with
   `.withEndpoint(name)` so HA creates a separate entity for it.
@@ -605,8 +655,36 @@ creates one extension per LED state, each returning:
   channel values (e.g. 0x18) produce disproportionate light output.
   The C4 Director only ever sends pure channels (0x00 or 0xFF); gamma
   correction lets us support the full color range.
-- Factory default colors are pre-populated: top=white when on,
-  bottom=blue when off (matching C4 Director behavior out of the box).
+
+### Implementation Note: Runtime Device Detection
+
+All newer C4 devices (APD120, KD120, KC120277) share identical endpoint
+structures (1, 196, 197), so Z2M fingerprinting cannot differentiate them.
+The converter uses a single catch-all definition with runtime detection:
+
+1. **Single fingerprint** matches all C4 devices: `{manufacturerID: 43981}`
+2. **After pairing**, the user triggers `{"c4_detect": true}` which:
+   - Probes `c4.dmx.led 02 03` (does button 02 exist?)
+   - Probes `c4.dmx.dim` (does it have a load?)
+   - Reads all stored LED colors from firmware
+   - Populates HA state with device type + actual colors
+3. **Response queue** enables synchronous query/response within Z2M's
+   async converter framework
+
+### Implementation Note: Response Queue
+
+The C4 text protocol is inherently asynchronous — queries are sent on
+EP 1 and responses arrive on EP 197. The response queue mechanism bridges
+this gap:
+
+1. `queryC4WithResponse()` registers a Promise keyed by sequence number
+2. The query is sent to the device
+3. `fzControl4Response` (fromZigbee handler) checks `pendingQueries` map
+4. When the matching seq arrives, the Promise is resolved with the response
+5. Timeout (3s default) resolves as `null` (device doesn't support the query)
+
+This enables `c4_detect` to run detection probes and LED color reads as
+sequential await calls — critical for the runtime detection flow.
 
 See [HA Integration Architecture](#ha-integration-architecture) for the
 full routing and state management details.

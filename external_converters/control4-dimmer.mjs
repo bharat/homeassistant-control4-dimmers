@@ -1,5 +1,14 @@
 /**
- * Zigbee2MQTT External Converter for Control4 Zigbee Dimmers
+ * Zigbee2MQTT External Converter for Control4 Zigbee Devices
+ *
+ * Unified converter supporting all newer C4 in-wall devices:
+ *   - C4-APD120 (Adaptive Phase Dimmer) — 2 LED buttons, 1 load
+ *   - C4-KD120 (Keypad Dimmer) — 6 LED buttons, 1 load
+ *   - C4-KC120277 (Configurable Keypad) — 6 LED buttons, no load
+ *
+ * All newer C4 devices share identical endpoint structures (1, 196, 197)
+ * and the same `c4.dmx.*` text protocol. Device type differentiation
+ * occurs at runtime via C4 text protocol probing.
  *
  * Standard Zigbee HA control (endpoint 1, profile 0x0104):
  *   - Cluster 0x0006 (genOnOff) for on/off
@@ -13,33 +22,15 @@
  *   - Telemetry:      "0t<seq_hex> sa <command> <data>\r\n"
  *   - Responses/events arrive on endpoint 197 (0xC5), profile 0xC25C
  *
- * Known C4 text commands:
- *   c4.dmx.led <led_id> <mode> <rrggbb>  — Set LED color
- *     led_id: 01=top, 04=bottom
- *     mode:   03=ON color (shown when load is on)
- *             04=OFF color (shown when load is off)
- *     rrggbb: hex RGB (ff0000=red, 00ff00=green, ffffff=white, 000000=off)
+ * Runtime device detection (probed during c4_detect):
+ *   - Query c4.dmx.led 02 03 → has button 02? (APD120 has only 01, 04)
+ *   - Query c4.dmx.dim → has load? (pure keypads don't respond)
+ *   - Detection matrix:
+ *       No btn02 + load → dimmer (APD120)
+ *       btn02 + load → keypaddim (KD120)
+ *       btn02 + no load → keypad (KC120277)
  *
- *   c4.dmx.pwr <hex_level>   — Set power level (e.g. "b5" ≈ 71%)
- *   c4.dmx.off <param>       — Turn off (e.g. "0000")
- *   c4.dmx.amb <led_id>      — Query/set ambient LED (0g to query, 0s to set)
- *   c4.dmx.ls                — Light status telemetry (incoming only, 0t prefix)
- *   c4.dmx.key               — Button/key events (incoming only)
- *   c4.dmx.bp                — Button press events
- *   c4.dmx.cc                — Config change?
- *   c4.dmx.hc / c4.dmx.he   — Unknown
- *   c4.dmx.plm / c4.dmx.pmti / c4.dmx.sc — Unknown
- *
- * Known quirks:
- *   - modelId returned as empty string from genBasic (breaks auto-discovery)
- *   - Endpoints 196/197 refuse simpleDescriptor requests (interview failures)
- *   - Device does NOT send ZCL default responses (must use disableDefaultResponse)
- *   - manufId (43981 / 0xABCD) IS available even after failed interview
- *   - Text commands use profile 0xC25C, NOT 0x0104 or 0xC25D
- *   - Responses arrive on endpoint 0xC5 (197), not the sending endpoint
- *   - C4 Director always sends all 4 LED commands as a group (top+bottom × on+off)
- *
- * Matching: fingerprint on manufacturerID since modelID is often absent.
+ * Matching: single catch-all fingerprint on manufacturerID 43981.
  * Factory reset: Press top 13x, bottom 4x, top 13x (13-4-13)
  */
 
@@ -51,26 +42,18 @@ import {Light, Enum, access} from 'zigbee-herdsman-converters/lib/exposes';
 const C4_MIB_PROFILE = 0xC25C; // 49756 — C4 "MIB" profile for text commands
 const C4_CLUSTER     = 1;      // Proprietary cluster (NOT genPowerCfg)
 
-// ─── LED Mapping ─────────────────────────────────────────────────────
-
-const LED_IDS = {
-    top:    '01',
-    bottom: '04',
-};
-
-const LED_MODES = {
-    on:  '03', // Color shown when the dimmer load is ON
-    off: '04', // Color shown when the dimmer load is OFF
-};
-
-// ─── Keypad Button Layout ────────────────────────────────────────────
+// ─── Button Layout ──────────────────────────────────────────────────
 //
-// The C4 keypad chassis has 6 physical slots. Button IDs are hex (00–05).
-// Dimmers use buttons 01 (top) and 04 (bottom).
-// Keypad dimmers (C4-KD120) use buttons 01–04.
-// Pure keypads (C4-KC120277) use buttons 00–05.
+// All newer C4 devices have a 6-slot chassis. Button IDs are hex (00–05).
+//
+// APD120 dimmer uses only: 01 (top rocker), 04 (bottom rocker)
+// KD120 keypad dimmer uses: 00–05 (rocker + 4 keypad buttons)
+// KC120277 pure keypad uses: 00–05 (6 configurable slots)
+//
+// The unified converter exposes all 6 slots for all devices.
+// Users disable unused slots in HA based on their device type.
 
-const KEYPAD_BUTTONS = [
+const BUTTONS = [
     {idx: 0, id: '00'},
     {idx: 1, id: '01'},
     {idx: 2, id: '02'},
@@ -78,6 +61,27 @@ const KEYPAD_BUTTONS = [
     {idx: 4, id: '04'},
     {idx: 5, id: '05'},
 ];
+
+// Legacy name map for the raw c4_led interface
+const LED_IDS = {
+    top: '01', bottom: '04',
+    '0': '00', '1': '01', '2': '02', '3': '03', '4': '04', '5': '05',
+};
+
+const LED_MODES = {
+    on:  '03', // Color shown when the dimmer load is ON
+    off: '04', // Color shown when the dimmer load is OFF
+};
+
+// Action values for button events
+const ACTION_VALUES = BUTTONS.flatMap(btn => [
+    `button_${btn.idx}_press`,
+    `button_${btn.idx}_scene`,
+    `button_${btn.idx}_click_1`,
+    `button_${btn.idx}_click_2`,
+    `button_${btn.idx}_click_3`,
+    `button_${btn.idx}_click_4`,
+]);
 
 // ─── Color Conversion Utilities ─────────────────────────────────────
 //
@@ -204,10 +208,132 @@ async function queryC4(device, cmdBody) {
     return sendC4Raw(device, `0g${seq} ${cmdBody}\r\n`);
 }
 
+// ─── Response Queue for Synchronous Query/Response ──────────────────
+//
+// The C4 text protocol is asynchronous: queries are sent on EP 1 and
+// responses arrive on EP 197. This response queue enables awaitable
+// query/response patterns used during device detection and LED reading.
+//
+// How it works:
+// 1. queryC4WithResponse() registers a Promise resolver keyed by seq
+// 2. The query is sent to the device
+// 3. fzControl4Response receives the response, checks pendingQueries
+// 4. If the seq matches, the Promise is resolved with the response text
+// 5. If timeout expires, the Promise resolves with null
+
+const pendingQueries = new Map();
+
+async function queryC4WithResponse(device, cmdBody, timeoutMs = 3000) {
+    const seq = nextSeq();
+
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            pendingQueries.delete(seq);
+            console.error(`[C4 Q/R] Timeout for seq ${seq}: ${cmdBody}`);
+            resolve(null);
+        }, timeoutMs);
+
+        pendingQueries.set(seq, (responseText) => {
+            clearTimeout(timer);
+            pendingQueries.delete(seq);
+            resolve(responseText);
+        });
+
+        sendC4Raw(device, `0g${seq} ${cmdBody}\r\n`).catch((err) => {
+            clearTimeout(timer);
+            pendingQueries.delete(seq);
+            console.error(`[C4 Q/R] Send failed for seq ${seq}: ${err.message}`);
+            resolve(null);
+        });
+    });
+}
+
+// ─── Response Parsers ───────────────────────────────────────────────
+
+function parseLedColorResponse(responseText) {
+    // Parse: "0r<seq> 000 c4.dmx.led <RRGGBB>"
+    if (!responseText) return null;
+    const match = responseText.match(/000 c4\.dmx\.led (\w{6})/);
+    return match ? match[1].toLowerCase() : null;
+}
+
+function parseDimResponse(responseText) {
+    // Parse: "0r<seq> 000 c4.dmx.dim <XX>"
+    if (!responseText) return null;
+    const match = responseText.match(/000 c4\.dmx\.dim (\w+)/);
+    return match ? match[1] : null;
+}
+
+// ─── Device Type Detection ──────────────────────────────────────────
+//
+// Probes the device via C4 text protocol to determine its type.
+// Uses two queries:
+//   1. c4.dmx.led 02 03 — does button 02 exist? (APD120 only has 01, 04)
+//   2. c4.dmx.dim — does it have a load? (pure keypads don't respond)
+//
+// Returns: 'dimmer' | 'keypaddim' | 'keypad' | 'unknown'
+
+async function detectDeviceType(device) {
+    console.error(`[C4 DETECT] Probing device ${device.ieeeAddr}...`);
+
+    // Probe 1: Does button 02 exist?
+    const btn02resp = await queryC4WithResponse(device, 'c4.dmx.led 02 03', 3000);
+    const hasBtn02 = parseLedColorResponse(btn02resp) !== null;
+    console.error(`[C4 DETECT] Button 02: ${hasBtn02 ? 'EXISTS (' + btn02resp + ')' : 'NOT FOUND'}`);
+
+    // Probe 2: Does it have a load?
+    const dimResp = await queryC4WithResponse(device, 'c4.dmx.dim', 3000);
+    const hasLoad = parseDimResponse(dimResp) !== null;
+    console.error(`[C4 DETECT] Load (c4.dmx.dim): ${hasLoad ? 'YES (' + dimResp + ')' : 'NO'}`);
+
+    let deviceType;
+    if (!hasBtn02 && hasLoad)       deviceType = 'dimmer';    // C4-APD120
+    else if (hasBtn02 && hasLoad)   deviceType = 'keypaddim'; // C4-KD120
+    else if (hasBtn02 && !hasLoad)  deviceType = 'keypad';    // C4-KC120277
+    else                            deviceType = 'unknown';
+
+    console.error(`[C4 DETECT] Device type: ${deviceType}`);
+    return deviceType;
+}
+
+// ─── Read Stored LED Colors ─────────────────────────────────────────
+//
+// C4 devices store LED colors in firmware (persisted across power cycles
+// and network migrations). This reads all stored colors for the device's
+// button set and returns them as a state update object.
+
+async function readStoredColors(device, deviceType) {
+    // Which buttons to read based on device type
+    const buttons = (deviceType === 'dimmer')
+        ? BUTTONS.filter(b => b.idx === 1 || b.idx === 4)
+        : BUTTONS; // keypaddim and keypad use all 6 slots
+
+    const state = {};
+    for (const btn of buttons) {
+        for (const [mode, suffix] of [['03', 'on'], ['04', 'off']]) {
+            const resp = await queryC4WithResponse(device, `c4.dmx.led ${btn.id} ${mode}`, 2000);
+            const hex = parseLedColorResponse(resp);
+            if (hex) {
+                const epName = `button_${btn.idx}_${suffix}`;
+                const isBlack = hex === '000000';
+                const hs = rgbHexToHs(hex);
+                state[`state_${epName}`] = isBlack ? 'OFF' : 'ON';
+                state[`brightness_${epName}`] = isBlack ? 0 : 254;
+                state[`color_${epName}`] = hs;
+                state[`color_mode_${epName}`] = 'hs';
+                console.error(`[C4 DETECT] LED ${btn.id} mode ${mode}: #${hex} → ${JSON.stringify(hs)}`);
+            } else {
+                console.error(`[C4 DETECT] LED ${btn.id} mode ${mode}: no response`);
+            }
+        }
+    }
+    return state;
+}
+
 // ─── ModernExtend: C4 LED Light Entity ──────────────────────────────
 //
 // Creates a Home Assistant light entity with color picker for one LED
-// state (e.g. "top LED when load is ON"). Each instance returns a
+// state (e.g. "button 1 LED when load is ON"). Each instance returns a
 // ModernExtend-compatible object with its own expose and toZigbee
 // converter, scoped to a specific endpoint name.
 //
@@ -216,35 +342,29 @@ async function queryC4(device, cmdBody) {
 // Commands to the default endpoint skip these (wrong endpoint) and fall
 // through to the unrestricted light() converter for the main dimmer.
 
-function c4LedLight({endpointName, ledId, modeCode, description,
-                     defaultState = 'ON', defaultColor = {hue: 0, saturation: 0}}) {
-    // NOTE: Z2M 2.7 derives HA entity names for light entities from the
-    // endpoint name (e.g. "top_led_on" → "Top_led_on").  The withLabel() API
-    // only affects generic exposes (binary/numeric/enum), not lights.
-    // Users can rename entities in HA: Settings → Devices → entity → Name.
+function c4LedLight({endpointName, ledId, modeCode, description}) {
     const expose = new Light()
         .withBrightness()
         .withColor(['hs'])
         .withEndpoint(endpointName)
         .withDescription(description);
 
+    const defaultColor = {hue: 0, saturation: 0};
+
     const toZigbee = [{
         key: ['state', 'brightness', 'color', 'color_hs', 'color_xy', 'color_temp', 'color_mode'],
         endpoints: [endpointName],
         convertSet: async (entity, key, value, meta) => {
-            // DEBUG: trace every call so we can see what Z2M sends us
             const msg = meta.message || {};
             console.error(`[C4 LED ${endpointName}] convertSet key=${key} value=${JSON.stringify(value)} msg_keys=${Object.keys(msg)}`);
 
-            // Z2M auto-suffixes state keys with the endpoint name, so we
-            // READ from meta.state using suffixed keys but RETURN base keys.
             const stKey  = `state_${endpointName}`;
             const brKey  = `brightness_${endpointName}`;
             const colKey = `color_${endpointName}`;
 
             const cur = meta.state || {};
-            let state      = cur[stKey]  ?? defaultState;
-            let brightness = cur[brKey]  ?? (defaultState === 'ON' ? 254 : 0);
+            let state      = cur[stKey]  ?? 'OFF';
+            let brightness = cur[brKey]  ?? 0;
             let color      = cur[colKey] ?? defaultColor;
 
             // When the same MQTT message contains both a color change AND
@@ -281,19 +401,16 @@ function c4LedLight({endpointName, ledId, modeCode, description,
             } else if (key === 'brightness') {
                 brightness = typeof value === 'number' ? value : parseInt(value, 10);
                 result.brightness = brightness;
-                // Turning brightness up implies ON
                 if (brightness > 0 && state !== 'ON') {
                     state = 'ON';
                     result.state = 'ON';
                 }
             } else if (key === 'color' || key === 'color_hs') {
                 const c = value || {};
-                // Z2M may send {hue, saturation} or {h, s} depending on path
                 if (c.hue !== undefined) color = {...color, hue: c.hue};
                 else if (c.h !== undefined) color = {...color, hue: c.h};
                 if (c.saturation !== undefined) color = {...color, saturation: c.saturation};
                 else if (c.s !== undefined) color = {...color, saturation: c.s};
-                // HA sometimes sends XY inside a 'color' key
                 if (c.x !== undefined && c.y !== undefined) {
                     color = rgbHexToHs(xyToRgbHex(c.x, c.y));
                 }
@@ -307,7 +424,6 @@ function c4LedLight({endpointName, ledId, modeCode, description,
                 }
                 if (state !== 'ON') { state = 'ON'; result.state = 'ON'; }
             } else if (key === 'color_temp' || key === 'color_mode') {
-                // Ignore color_temp and color_mode — we only support RGB LEDs
                 console.error(`[C4 LED ${endpointName}] ignoring key=${key}`);
                 return {};
             }
@@ -337,7 +453,7 @@ function c4LedLight({endpointName, ledId, modeCode, description,
 // Used for button behavior (keypad/toggle/on/off) and LED mode
 // (follow_load/follow_connection/push_release/programmed).
 
-function c4ButtonConfig({endpointName, key, description, options, defaultValue}) {
+function c4ButtonConfig({endpointName, key, description, options}) {
     const expose = new Enum(key, access.STATE_SET, options)
         .withEndpoint(endpointName)
         .withDescription(description);
@@ -354,16 +470,16 @@ function c4ButtonConfig({endpointName, key, description, options, defaultValue})
     return {exposes: [expose], fromZigbee: [], toZigbee, isModernExtend: true};
 }
 
-// ─── toZigbee: Set LED Colors ────────────────────────────────────────
+// ─── toZigbee: Set LED Colors (Raw MQTT) ─────────────────────────────
 //
-// Sets LED colors for a single LED+mode, or all 4 at once.
+// Sets LED colors for a single LED+mode, or all 4 dimmer LEDs at once.
 //
 // Single LED:
-//   {"c4_led": {"led": "top", "color": "ff0000"}}
+//   {"c4_led": {"led": "1", "color": "ff0000"}}
 //   {"c4_led": {"led": "top", "color": "ff0000", "mode": "on"}}
-//   {"c4_led": {"led": "bottom", "color": "0000ff", "mode": "off"}}
+//   {"c4_led": {"led": "04", "color": "0000ff", "mode": "off"}}
 //
-// All 4 at once (matches C4 Director behavior):
+// All 4 dimmer LEDs at once:
 //   {"c4_led": {"top_on": "ffffff", "top_off": "000000",
 //               "bottom_on": "000000", "bottom_off": "0000ff"}}
 
@@ -372,7 +488,7 @@ const tzControl4Led = {
     convertSet: async (entity, key, value, meta) => {
         const state = {};
 
-        // Batch mode: set all 4 LED states at once
+        // Batch mode: set all 4 dimmer LED states at once
         if (value.top_on !== undefined || value.top_off !== undefined ||
             value.bottom_on !== undefined || value.bottom_off !== undefined) {
             const commands = [
@@ -468,10 +584,10 @@ const tzControl4Query = {
 // Read arbitrary cluster attributes for device interrogation.
 // Results are returned in device state as probe_result.
 //
-//   {"zcl_read": {"cluster": "genBasic"}}                            — all standard genBasic attrs
-//   {"zcl_read": {"cluster": "genBasic", "attributes": ["modelId"]}} — specific named attrs
-//   {"zcl_read": {"cluster": 0, "attributes": [0,1,2,3,4,5,6,7]}}   — by numeric ID
-//   {"zcl_read": {"endpoint": 1, "cluster": "genBasic"}}             — specific endpoint
+//   {"zcl_read": {"cluster": "genBasic"}}
+//   {"zcl_read": {"cluster": "genBasic", "attributes": ["modelId"]}}
+//   {"zcl_read": {"cluster": 0, "attributes": [0,1,2,3,4,5,6,7]}}
+//   {"zcl_read": {"endpoint": 1, "cluster": "genBasic"}}
 
 const GENBASIC_ATTRS = [
     'zclVersion',          // 0x0000
@@ -495,7 +611,6 @@ const tzControl4ZclRead = {
         const cluster = value.cluster ?? 'genBasic';
         let attributes = value.attributes;
 
-        // Default: read all standard genBasic attributes
         if (!attributes && (cluster === 'genBasic' || cluster === 0)) {
             attributes = GENBASIC_ATTRS;
         }
@@ -506,8 +621,6 @@ const tzControl4ZclRead = {
 
         console.error(`[C4 PROBE] Reading EP ${epId} cluster ${cluster}: ${JSON.stringify(attributes)}`);
 
-        // Try reading all at once first; if that fails (UNSUPPORTED_ATTRIBUTE),
-        // fall back to reading one at a time to get everything the device supports.
         try {
             const result = await ep.read(cluster, attributes, {timeout: 10000});
             console.error(`[C4 PROBE] Result: ${JSON.stringify(result)}`);
@@ -544,7 +657,6 @@ const tzControl4Probe = {
         const device = meta.device;
         const result = {timestamp: new Date().toISOString()};
 
-        // ── Enumerate endpoints ──
         result.device = {
             ieeeAddr: device.ieeeAddr,
             networkAddress: device.networkAddress,
@@ -564,7 +676,6 @@ const tzControl4Probe = {
             };
         }
 
-        // ── Read genBasic from EP 1 (one-by-one for resilience) ──
         const ep1 = device.getEndpoint(1);
         if (ep1) {
             result.genBasic = {};
@@ -597,7 +708,6 @@ const tzControl4Identify = {
     convertSet: async (entity, key, value, meta) => {
         const device = meta.device;
 
-        // Set metadata that genBasic can't provide (C4 locks it down)
         device.manufacturerName = 'Control4';
         device.powerSource = 'Mains (single phase)';
         device.interviewCompleted = true;
@@ -613,6 +723,69 @@ const tzControl4Identify = {
 
         console.error(`[C4 IDENTIFY] ${device.ieeeAddr}: ${JSON.stringify(result)}`);
         return {state: {c4_identify_result: result}};
+    },
+};
+
+// ─── toZigbee: Device Type Detection + LED Color Reading ─────────────
+//
+// Runtime detection: probes the device to determine type (dimmer,
+// keypaddim, or keypad), then reads all stored LED colors from firmware
+// and populates HA state.
+//
+// Run once after pairing:
+//   {"c4_detect": true}
+//
+// Also reads stored LED colors and auto-populates HA state, so migrated
+// devices show their existing C4 colors without manual reconfiguration.
+
+const tzControl4Detect = {
+    key: ['c4_detect'],
+    convertSet: async (entity, key, value, meta) => {
+        const device = meta.device;
+
+        // Step 1: Detect device type
+        const deviceType = await detectDeviceType(device);
+
+        // Step 2: Read stored LED colors from firmware
+        const colorState = await readStoredColors(device, deviceType);
+
+        // Step 3: Build the full state update
+        const state = {
+            c4_device_type: deviceType,
+            ...colorState,
+        };
+
+        // Step 4: Update device metadata
+        device.manufacturerName = 'Control4';
+        device.powerSource = 'Mains (single phase)';
+        device.interviewCompleted = true;
+
+        // Store device type in device.meta for use by other converters
+        if (!device.meta) device.meta = {};
+        device.meta.c4_device_type = deviceType;
+        device.save();
+
+        const modelNames = {
+            dimmer: 'C4-APD120',
+            keypaddim: 'C4-KD120',
+            keypad: 'C4-KC120277',
+        };
+        const descriptions = {
+            dimmer: 'Control4 Adaptive Phase Dimmer',
+            keypaddim: 'Control4 Keypad Dimmer',
+            keypad: 'Control4 Configurable Keypad',
+        };
+
+        state.c4_detect_result = {
+            ieee_address: device.ieeeAddr,
+            device_type: deviceType,
+            model: modelNames[deviceType] ?? 'unknown',
+            description: descriptions[deviceType] ?? 'Unknown Control4 device',
+            colors_read: Object.keys(colorState).length,
+        };
+
+        console.error(`[C4 DETECT] Complete: ${JSON.stringify(state.c4_detect_result)}`);
+        return {state};
     },
 };
 
@@ -635,6 +808,17 @@ const fzControl4Response = {
 
             const epId = msg.endpoint?.ID ?? '?';
             console.error(`[C4 RECV] EP ${epId}: ${text}`);
+
+            // ── Check for pending query responses (response queue) ──
+            const respMatch = text.match(/^0r(\w{4})\s/);
+            if (respMatch) {
+                const handler = pendingQueries.get(respMatch[1]);
+                if (handler) {
+                    console.error(`[C4 Q/R] Resolved pending query seq ${respMatch[1]}`);
+                    handler(text);
+                    // Continue to also publish as c4_response for visibility
+                }
+            }
 
             const result = {c4_response: text, c4_response_ep: epId};
 
@@ -694,61 +878,111 @@ const fzControl4Response = {
     },
 };
 
-// ─── Definition ──────────────────────────────────────────────────────
+// ─── Unified Definition ──────────────────────────────────────────────
+//
+// Single definition for all newer Control4 in-wall devices:
+//   - C4-APD120 (dimmer): uses buttons 1 and 4
+//   - C4-KD120 (keypad dimmer): uses buttons 0–5
+//   - C4-KC120277 (pure keypad): uses buttons 0–5
+//
+// All 6 button slots are always exposed. Users disable unused slots in
+// HA based on their device type (identified via c4_detect).
+//
+// Entity layout per device:
+//   - 12 LED light entities (button_0_on through button_5_off)
+//   - 12 config select entities (button_N_behavior, button_N_led_mode)
+//   - 1 main dimmer light (harmless on pure keypads)
+//   - 1 action entity (button press events)
+//   - Utility converters: c4_led, c4_cmd, c4_query, zcl_read, c4_probe,
+//     c4_identify, c4_detect
 
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
-const dimmerDefinition = {
+const definition = {
     zigbeeModel: [
-        'C4-APD120',   // Adaptive phase dimmer 120V
-        'C4-DIM',      // Standard in-wall dimmer
-        'C4-KD120',    // Keypad dimmer 120V
-        'C4-KD277',    // Keypad dimmer 277V
-        'C4-FPD120',   // Forward phase dimmer 120V
-        'LDZ-102',     // Legacy dimmer model
+        'C4-APD120',    // Adaptive phase dimmer 120V
+        'C4-DIM',       // Standard in-wall dimmer
+        'C4-KD120',     // Keypad dimmer 120V
+        'C4-KD277',     // Keypad dimmer 277V
+        'C4-FPD120',    // Forward phase dimmer 120V
+        'C4-KC120277',  // Configurable keypad 120V/277V
+        'LDZ-102',      // Legacy dimmer model
     ],
     fingerprint: [{manufacturerID: 43981}],
-    model: 'C4-Dimmer',
+    model: 'C4-Zigbee',
     vendor: 'Control4',
-    description: 'Control4 Zigbee In-Wall Dimmer',
+    description: 'Control4 Zigbee Device (Dimmer/Keypad)',
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
-        // LED light entities — MUST come before light() so endpoint-restricted
-        // converters are checked first (they skip non-matching endpoints,
-        // letting the unrestricted light() converter handle the main dimmer).
-        // C4 factory defaults: top=white when on, bottom=blue when off
-        c4LedLight({endpointName: 'top_led_on',     ledId: '01', modeCode: '03',
-                    description: 'Top LED color when dimmer load is ON',
-                    defaultState: 'ON',  defaultColor: {hue: 0, saturation: 0}}),
-        c4LedLight({endpointName: 'top_led_off',    ledId: '01', modeCode: '04',
-                    description: 'Top LED color when dimmer load is OFF',
-                    defaultState: 'OFF'}),
-        c4LedLight({endpointName: 'bottom_led_on',  ledId: '04', modeCode: '03',
-                    description: 'Bottom LED color when dimmer load is ON',
-                    defaultState: 'OFF'}),
-        c4LedLight({endpointName: 'bottom_led_off', ledId: '04', modeCode: '04',
-                    description: 'Bottom LED color when dimmer load is OFF',
-                    defaultState: 'ON',  defaultColor: {hue: 240, saturation: 100}}),
-        // Main dimmer — standard Zigbee HA on/off + brightness
+        // ── 12 LED light entities (6 buttons × on/off) ──
+        // Must come BEFORE light() so endpoint-restricted converters are
+        // checked first. Commands to the default endpoint skip these and
+        // fall through to the unrestricted light() converter.
+        ...BUTTONS.flatMap(btn => [
+            c4LedLight({
+                endpointName: `button_${btn.idx}_on`,
+                ledId: btn.id,
+                modeCode: '03',
+                description: `Button ${btn.idx} LED color when active (slot ${btn.id})`,
+            }),
+            c4LedLight({
+                endpointName: `button_${btn.idx}_off`,
+                ledId: btn.id,
+                modeCode: '04',
+                description: `Button ${btn.idx} LED color when inactive (slot ${btn.id})`,
+            }),
+        ]),
+        // ── 12 config select entities (6 buttons × behavior + LED mode) ──
+        ...BUTTONS.flatMap(btn => [
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_behavior`,
+                description: `Button ${btn.idx} press behavior`,
+                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
+            }),
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_led_mode`,
+                description: `Button ${btn.idx} LED update mode`,
+                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
+            }),
+        ]),
+        // ── Main dimmer light (standard Zigbee HA on/off + brightness) ──
         light({configureReporting: false}),
     ],
+    exposes: [
+        new Enum('action', access.STATE, ACTION_VALUES)
+            .withDescription('Button press events'),
+    ],
     fromZigbee: [fzControl4Response],
-    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe, tzControl4Identify],
+    toZigbee: [
+        tzControl4Led, tzControl4Cmd, tzControl4Query,
+        tzControl4ZclRead, tzControl4Probe, tzControl4Identify,
+        tzControl4Detect,
+    ],
     meta: {disableDefaultResponse: true, multiEndpoint: true},
-    endpoint: (device) => ({
-        default: 1,
-        top_led_on: 1,
-        top_led_off: 1,
-        bottom_led_on: 1,
-        bottom_led_off: 1,
-    }),
+    endpoint: (device) => {
+        const map = {default: 1};
+        for (const btn of BUTTONS) {
+            map[`button_${btn.idx}_on`] = 1;
+            map[`button_${btn.idx}_off`] = 1;
+            map[`button_${btn.idx}`] = 1;
+        }
+        return map;
+    },
     configure: async (device, coordinatorEndpoint, definition) => {
         // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.
         // Do NOT touch endpoints 196/197 (proprietary C4).
         const endpoint = device.getEndpoint(1);
         if (!endpoint) return;
 
-        await endpoint.bind('genOnOff', coordinatorEndpoint);
-        await endpoint.bind('genLevelCtrl', coordinatorEndpoint);
+        // Bind standard clusters — safe for all device types.
+        // Pure keypads don't have a load, but binding doesn't cause errors.
+        try {
+            await endpoint.bind('genOnOff', coordinatorEndpoint);
+            await endpoint.bind('genLevelCtrl', coordinatorEndpoint);
+        } catch (e) {
+            console.error(`[C4 CONFIG] Cluster binding failed (may be normal for keypads): ${e.message}`);
+        }
 
         // Set metadata that genBasic can't provide (C4 locks it down).
         // This runs automatically on first pair / reconfigure.
@@ -762,120 +996,11 @@ const dimmerDefinition = {
             changed = true;
         }
         if (changed) device.save();
-    },
-};
 
-// ─── Keypad Definition: C4-KC120277 (Pure Keypad, No Load) ──────────
-//
-// 6 configurable button slots, each with:
-//   - LED On color (light entity, mode 03 = stored ON color)
-//   - LED Off color (light entity, mode 04 = stored OFF color)
-//   - Button behavior (select: keypad / toggle_load / load_on / load_off)
-//   - LED mode (select: follow_load / follow_connection / push_release / programmed)
-// Plus a single action sensor for button press events.
-//
-// The C4 Director uses mode 05 (immediate override) for keypad LEDs,
-// pushing state changes centrally. For initial setup, we store colors
-// via modes 03/04 which the device persists. HA automations can push
-// dynamic updates via c4_cmd with mode 05.
-//
-// Fingerprint: manufacturerID 43981 + endpoints 1, 2 (no 196/197).
-// This distinguishes pure keypads from dimmers (which have EP 196/197).
-
-const KEYPAD_ACTION_VALUES = KEYPAD_BUTTONS.flatMap(btn => [
-    `button_${btn.idx}_press`,
-    `button_${btn.idx}_scene`,
-    `button_${btn.idx}_click_1`,
-    `button_${btn.idx}_click_2`,
-    `button_${btn.idx}_click_3`,
-    `button_${btn.idx}_click_4`,
-]);
-
-/** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
-const keypadDefinition = {
-    fingerprint: [{
-        manufacturerID: 43981,
-        endpoints: [{ID: 1}, {ID: 2}],
-    }],
-    model: 'C4-KC120277',
-    vendor: 'Control4',
-    description: 'Control4 Configurable Keypad',
-    extend: [
-        // 6 buttons × 2 LED states = 12 light entities
-        ...KEYPAD_BUTTONS.flatMap(btn => [
-            c4LedLight({
-                endpointName: `button_${btn.idx}_on`,
-                ledId: btn.id,
-                modeCode: '03',
-                description: `Button ${btn.idx} LED color when active`,
-                defaultState: 'OFF',
-                defaultColor: {hue: 0, saturation: 0},
-            }),
-            c4LedLight({
-                endpointName: `button_${btn.idx}_off`,
-                ledId: btn.id,
-                modeCode: '04',
-                description: `Button ${btn.idx} LED color when inactive`,
-                defaultState: 'OFF',
-                defaultColor: {hue: 0, saturation: 0},
-            }),
-        ]),
-        // 6 buttons × 2 config selects = 12 select entities
-        ...KEYPAD_BUTTONS.flatMap(btn => [
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_behavior`,
-                description: `Button ${btn.idx} press behavior`,
-                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
-                defaultValue: 'keypad',
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_led_mode`,
-                description: `Button ${btn.idx} LED update mode`,
-                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
-                defaultValue: 'follow_connection',
-            }),
-        ]),
-    ],
-    exposes: [
-        new Enum('action', access.STATE, KEYPAD_ACTION_VALUES)
-            .withDescription('Keypad button press events'),
-    ],
-    fromZigbee: [fzControl4Response],
-    toZigbee: [tzControl4Led, tzControl4Cmd, tzControl4Query, tzControl4ZclRead, tzControl4Probe, tzControl4Identify],
-    meta: {disableDefaultResponse: true, multiEndpoint: true},
-    endpoint: (device) => {
-        const map = {default: 1};
-        for (const btn of KEYPAD_BUTTONS) {
-            map[`button_${btn.idx}_on`] = 1;
-            map[`button_${btn.idx}_off`] = 1;
-            map[`button_${btn.idx}`] = 1;
-        }
-        return map;
-    },
-    configure: async (device, coordinatorEndpoint, definition) => {
-        // Pure keypads have no load — skip genOnOff/genLevelCtrl binding.
-        // Just set metadata that genBasic can't provide.
-        let changed = false;
-        if (!device.manufacturerName) {
-            device.manufacturerName = 'Control4';
-            changed = true;
-        }
-        if (!device.powerSource) {
-            device.powerSource = 'Mains (single phase)';
-            changed = true;
-        }
-        if (changed) device.save();
+        console.error(`[C4 CONFIG] Device ${device.ieeeAddr} configured. Run {"c4_detect": true} to detect device type and read stored LED colors.`);
     },
 };
 
 // ─── Export ──────────────────────────────────────────────────────────
-//
-// Export both definitions as an array. Z2M matches devices to the most
-// specific fingerprint. The keypad fingerprint requires endpoints 1+2
-// (present on KC120277 but not on dimmers). The dimmer fingerprint
-// matches any device with manufacturerID 43981 as a fallback — this
-// covers APD120 dimmers and KD120 keypad dimmers (same protocol).
 
-export default [dimmerDefinition, keypadDefinition];
+export default definition;

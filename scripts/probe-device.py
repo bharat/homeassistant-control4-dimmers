@@ -562,6 +562,121 @@ def detect_device(prober):
         prober.set_debug(False)
 
 
+def survey_device(prober):
+    """Run a comprehensive C4 command survey for device fingerprinting.
+
+    Sends many C4 queries and records all responses. Run this on different
+    device types (APD120, KD120, KC120277) and diff the output to find
+    distinguishing commands.
+    """
+    if not prober.docker or not prober.docker.available:
+        print('  ERROR: survey requires --docker flag for response capture')
+        return
+
+    print(f'\n{"="*60}')
+    print(f'  C4 COMMAND SURVEY: {prober.device}')
+    print(f'{"="*60}\n')
+
+    prober.set_debug(True)
+    time.sleep(0.3)
+
+    # Commands to probe — organized by category
+    queries = [
+        # ── Device info ──
+        ('c4.dm.GD', 'Get Device (model info?)'),
+        ('c4.dm.GD 01', 'Get Device param 01'),
+        ('c4.dm.MN', 'Manufacturer Name'),
+        ('c4.dm.FW', 'Firmware Version'),
+        ('c4.dm.PD', 'Product Data'),
+        ('c4.dm.sl', 'Device Slot/Type?'),
+        ('c4.dm.tv', 'Table Values'),
+
+        # ── Dimmer / load ──
+        ('c4.dmx.dim', 'Dimmer type'),
+        ('c4.dmx.dim 01', 'Dimmer param 01'),
+        ('c4.dmx.pwr', 'Power state'),
+        ('c4.dmx.ls', 'Load status'),
+        ('c4.dmx.ls 01', 'Load status param 01'),
+
+        # ── Ambient / ALS ──
+        ('c4.dmx.amb 01', 'Ambient color mode 01'),
+        ('c4.dmx.amb 02', 'Ambient color mode 02'),
+        ('c4.als.sra', 'Ambient light sensor'),
+
+        # ── Button config ──
+        ('c4.dmx.bp', 'Button press config'),
+        ('c4.dmx.bp 00', 'Button press btn 00'),
+        ('c4.dmx.bp 01', 'Button press btn 01'),
+        ('c4.dmx.bp 02', 'Button press btn 02'),
+        ('c4.dmx.bp 04', 'Button press btn 04'),
+        ('c4.dmx.cc', 'Click count config'),
+        ('c4.dmx.cc 00', 'Click count btn 00'),
+        ('c4.dmx.cc 01', 'Click count btn 01'),
+        ('c4.dmx.sc', 'Scene config'),
+        ('c4.dmx.sc 00', 'Scene btn 00'),
+        ('c4.dmx.sc 01', 'Scene btn 01'),
+
+        # ── LED colors (sample) ──
+        ('c4.dmx.led 00 03', 'LED 00 ON color'),
+        ('c4.dmx.led 00 04', 'LED 00 OFF color'),
+        ('c4.dmx.led 00 05', 'LED 00 active color'),
+        ('c4.dmx.led 01 03', 'LED 01 ON color'),
+        ('c4.dmx.led 01 04', 'LED 01 OFF color'),
+        ('c4.dmx.led 01 05', 'LED 01 active color'),
+        ('c4.dmx.led 02 03', 'LED 02 ON color'),
+        ('c4.dmx.led 04 03', 'LED 04 ON color'),
+        ('c4.dmx.led 04 04', 'LED 04 OFF color'),
+        ('c4.dmx.led 05 03', 'LED 05 ON color'),
+
+        # ── System ──
+        ('c4.sy.zpw', 'Zigbee power'),
+        ('c4.sy.zpw 01', 'Zigbee power param 01'),
+
+        # ── Keypad-specific (may not exist on dimmers) ──
+        ('c4.kp.bc', 'Keypad button count?'),
+        ('c4.kp.bt', 'Keypad button type?'),
+        ('c4.kp.cfg', 'Keypad config?'),
+        ('c4.kp.sl', 'Keypad slot?'),
+    ]
+
+    results = []
+    try:
+        for cmd, desc in queries:
+            resp = c4_query_sync(prober, cmd, timeout=2.0)
+            if resp:
+                # Trim the sequence prefix for cleaner output
+                clean = re.sub(r'^0r[0-9a-f]+ ', '', resp)
+                status = 'OK' if '000 ' in resp else 'ERR'
+            else:
+                clean = '(no response)'
+                status = '---'
+            results.append((cmd, desc, status, clean))
+            # Show progress
+            indicator = {'OK': '+', 'ERR': 'x', '---': '.'}[status]
+            print(f'  [{indicator}] {cmd:25s} {clean}')
+
+    finally:
+        prober.set_debug(False)
+
+    # Summary
+    ok_count = sum(1 for _, _, s, _ in results if s == 'OK')
+    err_count = sum(1 for _, _, s, _ in results if s == 'ERR')
+    no_count = sum(1 for _, _, s, _ in results if s == '---')
+    print(f'\n{"─"*60}')
+    print(f'  Survey complete: {ok_count} OK, {err_count} errors, {no_count} no response')
+    print(f'{"─"*60}')
+
+    # Save to file for diffing
+    filename = f'survey-{prober.device.replace(" ", "_").lower()}.txt'
+    with open(filename, 'w') as f:
+        f.write(f'# C4 Survey: {prober.device}\n')
+        f.write(f'# Date: {time.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
+        for cmd, desc, status, clean in results:
+            f.write(f'{status:3s}  {cmd:25s}  {clean:40s}  # {desc}\n')
+    print(f'\n  Results saved to {filename}')
+    print(f'  Run on another device and diff: diff survey-kitchen.txt survey-other.txt')
+
+
 def interactive_mode(prober):
     """Interactive command loop."""
     print(f'\n{"="*60}')
@@ -573,8 +688,9 @@ def interactive_mode(prober):
     print(f'{"="*60}')
     print()
     print('Commands:')
-    print('  probe                         — full device probe')
     print('  detect                        — detect device type + read LED colors')
+    print('  survey                        — comprehensive C4 query survey (for diffing)')
+    print('  probe                         — full device probe')
     print('  read [cluster] [attr ...]     — read ZCL attributes')
     print('  query <c4_command>            — send C4 GET query, capture response')
     print('  cmd <c4_command>              — send C4 SET command (0s prefix)')
@@ -604,6 +720,8 @@ def interactive_mode(prober):
                 break
             elif cmd == 'detect':
                 detect_device(prober)
+            elif cmd == 'survey':
+                survey_device(prober)
             elif cmd == 'probe':
                 probe_full(prober)
             elif cmd == 'read':

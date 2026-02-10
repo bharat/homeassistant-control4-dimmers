@@ -17,7 +17,11 @@ Usage:
   # With Docker response capture (auto-decodes C4 query responses)
   python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass -i --docker zigbee2mqtt
 
+  # One-shot detect (no interactive mode needed)
+  python3 probe-device.py Kitchen --broker 192.168.1.54 -u ha -P pass --docker --detect
+
 Commands in interactive mode:
+  detect                        — detect device type + read stored LED colors
   probe                         — full device probe (endpoints + genBasic)
   read [cluster] [attr ...]     — read ZCL attributes
   query <c4_command>            — send C4 GET query, capture response
@@ -364,6 +368,200 @@ def zcl_read(prober, cluster, attributes=None, endpoint=1):
         print(f'  Result: {result}')
 
 
+def c4_query_sync(prober, command, timeout=3.0):
+    """Send a C4 GET query and return the response text (or None).
+
+    Requires Docker capture. Returns the first response line or None on timeout.
+    """
+    if not prober.docker or not prober.docker.available:
+        return None
+    prober.docker.flush()
+    prober.send({'c4_query': command}, wait=2.0)
+    responses = prober.docker.collect(timeout=timeout)
+    # Return first response that looks like a success (contains "000")
+    for r in responses:
+        if '000' in r:
+            return r
+    return responses[0] if responses else None
+
+
+def detect_device(prober):
+    """Detect device type and read stored LED colors via Docker log capture.
+
+    This is the probe-device.py equivalent of the converter's c4_detect,
+    but works reliably because it uses Docker log capture instead of
+    Z2M's fromZigbee response queue (which doesn't fire during toZigbee).
+    """
+    if not prober.docker or not prober.docker.available:
+        print('  ERROR: detect requires --docker flag for response capture')
+        print('  Usage: python3 probe-device.py <device> --docker -i')
+        return
+
+    print(f'\n{"="*60}')
+    print(f'  DETECTING DEVICE TYPE: {prober.device}')
+    print(f'{"="*60}\n')
+
+    # Enable debug for Docker log capture
+    prober.set_debug(True)
+    time.sleep(0.3)
+
+    try:
+        # ── Probe 1: Does button 02 exist? ──
+        print('Probe 1: Checking for button 02 (c4.dmx.led 02 03)...')
+        resp = c4_query_sync(prober, 'c4.dmx.led 02 03', timeout=3.0)
+        has_btn02 = False
+        btn02_color = None
+        if resp and '000 c4.dmx.led' in resp:
+            m = re.search(r'000 c4\.dmx\.led (\w{6})', resp)
+            if m:
+                has_btn02 = True
+                btn02_color = m.group(1).lower()
+                print(f'  → Button 02 EXISTS (stored color: #{btn02_color})')
+            else:
+                print(f'  → Got response but unexpected format: {resp}')
+        else:
+            print(f'  → Button 02 NOT FOUND (no response or error)')
+            if resp:
+                print(f'     Raw: {resp}')
+
+        # ── Probe 2: Does it have a load? ──
+        print('\nProbe 2: Checking for load (c4.dmx.dim)...')
+        resp = c4_query_sync(prober, 'c4.dmx.dim', timeout=3.0)
+        has_load = False
+        dim_type = None
+        if resp and '000 c4.dmx.dim' in resp:
+            m = re.search(r'000 c4\.dmx\.dim (\w+)', resp)
+            if m:
+                has_load = True
+                dim_type = m.group(1)
+                print(f'  → Has LOAD (dimmer type: {dim_type})')
+            else:
+                print(f'  → Got response but unexpected format: {resp}')
+        else:
+            print(f'  → NO LOAD (no response or error)')
+            if resp:
+                print(f'     Raw: {resp}')
+
+        # ── Determine device type ──
+        if not has_btn02 and has_load:
+            device_type = 'dimmer'
+            model = 'C4-APD120'
+            desc = 'Adaptive Phase Dimmer (2 buttons)'
+            buttons = [('01', 'top'), ('04', 'bottom')]
+        elif has_btn02 and has_load:
+            device_type = 'keypaddim'
+            model = 'C4-KD120'
+            desc = 'Keypad Dimmer (6 buttons + load)'
+            buttons = [('00', 'slot 0'), ('01', 'slot 1'), ('02', 'slot 2'),
+                       ('03', 'slot 3'), ('04', 'slot 4'), ('05', 'slot 5')]
+        elif has_btn02 and not has_load:
+            device_type = 'keypad'
+            model = 'C4-KC120277'
+            desc = 'Configurable Keypad (6 buttons, no load)'
+            buttons = [('00', 'slot 0'), ('01', 'slot 1'), ('02', 'slot 2'),
+                       ('03', 'slot 3'), ('04', 'slot 4'), ('05', 'slot 5')]
+        else:
+            device_type = 'unknown'
+            model = 'unknown'
+            desc = 'Unknown device (no buttons, no load)'
+            buttons = []
+
+        print(f'\n{"─"*60}')
+        print(f'  Device type: {device_type}')
+        print(f'  Model:       {model}')
+        print(f'  Description: {desc}')
+        print(f'{"─"*60}\n')
+
+        # ── Read stored LED colors ──
+        if buttons:
+            print(f'Reading stored LED colors ({len(buttons)} buttons × 2 modes)...\n')
+            colors = {}
+            for btn_id, btn_name in buttons:
+                for mode, mode_name in [('03', 'ON'), ('04', 'OFF')]:
+                    resp = c4_query_sync(prober, f'c4.dmx.led {btn_id} {mode}', timeout=2.0)
+                    hex_color = None
+                    if resp and '000 c4.dmx.led' in resp:
+                        m = re.search(r'000 c4\.dmx\.led (\w{6})', resp)
+                        if m:
+                            hex_color = m.group(1).lower()
+                    key = f'{btn_name} ({btn_id}) {mode_name}'
+                    if hex_color:
+                        colors[key] = hex_color
+                        marker = '  ' if hex_color == '000000' else '██'
+                        print(f'  {key:30s} #{hex_color} {marker}')
+                    else:
+                        print(f'  {key:30s} (no response)')
+
+            print(f'\n{"─"*60}')
+            print(f'  Colors read: {len(colors)} / {len(buttons) * 2}')
+            print(f'{"─"*60}')
+        else:
+            colors = {}
+
+        # ── Summary ──
+        print(f'\n{"="*60}')
+        print(f'  DETECTION COMPLETE')
+        print(f'  Device:  {prober.device}')
+        print(f'  Type:    {device_type} ({model})')
+        print(f'  Load:    {"Yes" if has_load else "No"}')
+        print(f'  Buttons: {len(buttons)}')
+        print(f'  Colors:  {len(colors)} read from firmware')
+        print(f'{"="*60}')
+
+        # ── Publish results to device state via MQTT ──
+        state_update = {'c4_device_type': device_type}
+        state_update['c4_detect_result'] = {
+            'device_type': device_type,
+            'model': model,
+            'description': desc,
+            'has_load': has_load,
+            'has_btn02': has_btn02,
+            'dim_type': dim_type,
+            'colors': colors,
+        }
+
+        # Also set LED entity states for colors we read
+        btn_idx_map = {'00': 0, '01': 1, '02': 2, '03': 3, '04': 4, '05': 5}
+        for btn_id, btn_name in buttons:
+            idx = btn_idx_map[btn_id]
+            for mode, suffix in [('03', 'on'), ('04', 'off')]:
+                key = f'{btn_name} ({btn_id}) {"ON" if suffix == "on" else "OFF"}'
+                hex_color = colors.get(key)
+                if hex_color:
+                    ep_name = f'button_{idx}_{suffix}'
+                    is_black = hex_color == '000000'
+                    # Convert hex RGB to hue/saturation
+                    r = int(hex_color[0:2], 16) / 255.0
+                    g = int(hex_color[2:4], 16) / 255.0
+                    b = int(hex_color[4:6], 16) / 255.0
+                    mx, mn = max(r, g, b), min(r, g, b)
+                    d = mx - mn
+                    h = 0
+                    if d != 0:
+                        if mx == r:
+                            h = ((g - b) / d) % 6
+                        elif mx == g:
+                            h = (b - r) / d + 2
+                        else:
+                            h = (r - g) / d + 4
+                        h = round(h * 60)
+                        if h < 0:
+                            h += 360
+                    s = 0 if mx == 0 else round((d / mx) * 100)
+
+                    state_update[f'state_{ep_name}'] = 'OFF' if is_black else 'ON'
+                    state_update[f'brightness_{ep_name}'] = 0 if is_black else 254
+                    state_update[f'color_{ep_name}'] = {'hue': h, 'saturation': s}
+                    state_update[f'color_mode_{ep_name}'] = 'hs'
+
+        # Publish state update
+        prober.client.publish(prober.base_topic, json.dumps(state_update))
+        print(f'\n  State published to {prober.base_topic}')
+
+    finally:
+        prober.set_debug(False)
+
+
 def interactive_mode(prober):
     """Interactive command loop."""
     print(f'\n{"="*60}')
@@ -376,6 +574,7 @@ def interactive_mode(prober):
     print()
     print('Commands:')
     print('  probe                         — full device probe')
+    print('  detect                        — detect device type + read LED colors')
     print('  read [cluster] [attr ...]     — read ZCL attributes')
     print('  query <c4_command>            — send C4 GET query, capture response')
     print('  cmd <c4_command>              — send C4 SET command (0s prefix)')
@@ -403,6 +602,8 @@ def interactive_mode(prober):
         try:
             if cmd in ('quit', 'exit', 'q'):
                 break
+            elif cmd == 'detect':
+                detect_device(prober)
             elif cmd == 'probe':
                 probe_full(prober)
             elif cmd == 'read':
@@ -507,6 +708,8 @@ def main():
     parser.add_argument('--docker', metavar='CONTAINER', nargs='?', const='zigbee2mqtt',
                         help='Docker container name for response capture (default: zigbee2mqtt)')
     parser.add_argument('--interactive', '-i', action='store_true', help='Interactive command mode')
+    parser.add_argument('--detect', action='store_true',
+                        help='Detect device type + read stored LED colors (requires --docker)')
     parser.add_argument('--zcl-read', metavar='CLUSTER', help='Read all attributes from a ZCL cluster')
     parser.add_argument('--c4-query', metavar='CMD', help='Send a C4 GET query')
     args = parser.parse_args()
@@ -518,6 +721,8 @@ def main():
     try:
         if args.interactive:
             interactive_mode(prober)
+        elif args.detect:
+            detect_device(prober)
         elif args.zcl_read:
             zcl_read(prober, args.zcl_read)
         elif args.c4_query:

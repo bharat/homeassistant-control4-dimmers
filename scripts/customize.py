@@ -10,8 +10,9 @@ This script:
 - Adjusts manifest domain/name and optionally updates devcontainer settings.
 """
 
-# ruff: noqa: T201
+from __future__ import annotations
 
+# ruff: noqa: T201
 import configparser
 import contextlib
 import json

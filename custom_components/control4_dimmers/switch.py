@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 
-from .entity import IntegrationBlueprintEntity
+from .entity import Control4DimmersEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .coordinator import BlueprintDataUpdateCoordinator
-    from .data import IntegrationBlueprintConfigEntry
+    from .coordinator import Control4DimmersDataUpdateCoordinator
+    from .data import Control4DimmersConfigEntry
 
 ENTITY_DESCRIPTIONS = (
     SwitchEntityDescription(
@@ -26,12 +26,12 @@ ENTITY_DESCRIPTIONS = (
 
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001 Unused function argument: `hass`
-    entry: IntegrationBlueprintConfigEntry,
+    entry: Control4DimmersConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the switch platform."""
     async_add_entities(
-        IntegrationBlueprintSwitch(
+        Control4DimmersSwitch(
             coordinator=entry.runtime_data.coordinator,
             entity_description=entity_description,
         )
@@ -39,12 +39,12 @@ async def async_setup_entry(
     )
 
 
-class IntegrationBlueprintSwitch(IntegrationBlueprintEntity, SwitchEntity):
+class Control4DimmersSwitch(Control4DimmersEntity, SwitchEntity):
     """integration_blueprint switch class."""
 
     def __init__(
         self,
-        coordinator: BlueprintDataUpdateCoordinator,
+        coordinator: Control4DimmersDataUpdateCoordinator,
         entity_description: SwitchEntityDescription,
     ) -> None:
         """Initialize the switch class."""

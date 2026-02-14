@@ -981,13 +981,41 @@ const definition = {
         return map;
     },
     configure: async (device, coordinatorEndpoint, definition) => {
-        // ONLY configure endpoint 1 — the standard Zigbee HA endpoint.
-        // Do NOT touch endpoints 196/197 (proprietary C4).
         const endpoint = device.getEndpoint(1);
         if (!endpoint) return;
 
-        // Bind standard clusters — safe for all device types.
-        // Pure keypads don't have a load, but binding doesn't cause errors.
+        // ── Register EP197 on coordinator for C4 message reception ──
+        //
+        // C4 devices send responses and button events on profile 0xC25C,
+        // cluster 1, destination EP 197. By default, the coordinator only
+        // has EP 1 (HA) and EP 242 (Green Power). Without EP 197 registered,
+        // herdsman drops incoming C4 messages at the adapter level.
+        //
+        // This creates EP 197 in herdsman's coordinator model. A Z2M restart
+        // may be required for the EZSP firmware to register the endpoint.
+        try {
+            const coordinator = coordinatorEndpoint.getDevice();
+            let coordEp197 = coordinator.getEndpoint(197);
+            if (!coordEp197) {
+                coordEp197 = coordinator.createEndpoint(197);
+                console.error(`[C4 CONFIG] Created EP 197 on coordinator`);
+            }
+            // Ensure profile and clusters are set for C4 text protocol
+            if (coordEp197.profileID !== C4_MIB_PROFILE) {
+                coordEp197.profileID = C4_MIB_PROFILE;
+                coordEp197.deviceID = 0;
+                coordEp197.inputClusters = [C4_CLUSTER];
+                coordEp197.outputClusters = [C4_CLUSTER];
+                coordinator.save();
+                console.error(`[C4 CONFIG] Configured coordinator EP 197: profile=0x${C4_MIB_PROFILE.toString(16)}, cluster=${C4_CLUSTER}`);
+                console.error(`[C4 CONFIG] *** Z2M RESTART REQUIRED for EP 197 to be registered on EZSP firmware ***`);
+            }
+        } catch (e) {
+            console.error(`[C4 CONFIG] Could not register EP 197 on coordinator: ${e.message}`);
+            console.error(`[C4 CONFIG] Button events may not work. See docs/device-identification.md for workaround.`);
+        }
+
+        // ── Bind standard HA clusters on EP 1 ──
         try {
             await endpoint.bind('genOnOff', coordinatorEndpoint);
             await endpoint.bind('genLevelCtrl', coordinatorEndpoint);
@@ -996,7 +1024,6 @@ const definition = {
         }
 
         // Set metadata that genBasic can't provide (C4 locks it down).
-        // This runs automatically on first pair / reconfigure.
         let changed = false;
         if (!device.manufacturerName) {
             device.manufacturerName = 'Control4';

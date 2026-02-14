@@ -810,7 +810,7 @@ const tzControl4Detect = {
 // Telemetry format: "0t<seq> sa <command> <data>"
 
 const fzControl4Response = {
-    cluster: 1,
+    cluster: 'genPowerCfg', // C4 uses cluster ID 1, which ZCL maps to genPowerCfg
     type: ['raw'],
     convert: async (model, msg, publish, options, meta) => {
         try {

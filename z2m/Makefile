@@ -4,7 +4,9 @@
 # make build-amd64 — Build for amd64 (when building on ARM for x86 prod server)
 # make deploy      — Build amd64 + push to production server via SSH
 # make test        — Run the converter test suite
+# make setup-buildx — One-time setup for multi-arch Docker builds
 # make push        — Build multi-arch + push to ghcr.io
+# make push-amd64  — Push amd64 only (faster)
 
 IMAGE_NAME ?= z2m-control4
 IMAGE_TAG  ?= latest
@@ -15,7 +17,9 @@ PLATFORM   ?= linux/amd64
 DEPLOY_HOST ?= generosity
 DEPLOY_USER ?= root
 
-.PHONY: build build-amd64 test deploy push clean
+BUILDX_BUILDER ?= multiarch
+
+.PHONY: build build-amd64 test deploy push push-amd64 setup-buildx clean
 
 # Build for the current platform
 build:
@@ -33,9 +37,19 @@ deploy: build-amd64
 	docker save $(IMAGE_NAME):$(IMAGE_TAG) | ssh $(DEPLOY_USER)@$(DEPLOY_HOST) "docker load && docker restart zigbee2mqtt"
 	@echo "Done. Image loaded and Z2M restarted on $(DEPLOY_HOST)."
 
-# Multi-arch build + push to ghcr.io (requires: docker buildx create --use)
-push:
-	docker buildx build --platform linux/amd64,linux/arm64 \
+# One-time setup: create a buildx builder for multi-arch builds
+setup-buildx:
+	docker buildx create --name $(BUILDX_BUILDER) --use
+	docker buildx inspect --bootstrap
+
+# Multi-arch build + push to ghcr.io (run setup-buildx first)
+push: 
+	docker buildx build --builder $(BUILDX_BUILDER) --platform linux/amd64,linux/arm64 \
+		-t $(GHCR_REPO):$(IMAGE_TAG) --push .
+
+# Push amd64 only (faster, no QEMU needed)
+push-amd64:
+	docker buildx build --builder $(BUILDX_BUILDER) --platform linux/amd64 \
 		-t $(GHCR_REPO):$(IMAGE_TAG) --push .
 
 clean:

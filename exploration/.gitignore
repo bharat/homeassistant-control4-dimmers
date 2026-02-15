@@ -1,0 +1,4 @@
+.env.local
+survey-*.txt
+__pycache__/
+*.pyc

@@ -1,0 +1,23 @@
+# Docker Compose for Zigbee2MQTT with Control4 support
+#
+# Usage:
+#   cp z2m/.env.example z2m/.env   # edit with your settings
+#   docker compose -f z2m/docker-compose.yml up -d
+#
+# This is a drop-in replacement for the stock Z2M docker-compose.
+
+services:
+  zigbee2mqtt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zigbee2mqtt
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-America/Los_Angeles}
+    volumes:
+      - ${Z2M_DATA_DIR:-.}/data:/app/data
+    ports:
+      - "8080:8080"
+    devices:
+      - ${ZIGBEE_DEVICE:-/dev/ttyUSB0}:/dev/ttyACM0

@@ -1,0 +1,53 @@
+--- Control4 Profile (0xC25C) Whitelist Patch for zigbee-herdsman ---
+---
+--- This patch adds the Control4 MIB profile (0xC25C) to the incoming
+--- message whitelist in zigbee-herdsman's EZSP adapters. Without this
+--- patch, the EZSP adapter silently drops ALL messages on profile 0xC25C,
+--- which prevents C4 button events and text protocol responses from
+--- reaching the converter.
+---
+--- Apply to zigbee-herdsman source with:
+---   cd /path/to/zigbee-herdsman && git apply /path/to/herdsman-c4-profile.patch
+---
+--- Files changed:
+---   src/zspec/consts.ts                       - Add CUSTOM_CONTROL4_PROFILE_ID constant
+---   src/adapter/ember/ezsp/ezsp.ts            - Whitelist C4 profile in Ember adapter
+---   src/adapter/ezsp/adapter/ezspAdapter.ts   - Whitelist C4 profile in legacy EZSP adapter
+
+diff --git a/src/zspec/consts.ts b/src/zspec/consts.ts
+--- a/src/zspec/consts.ts
++++ b/src/zspec/consts.ts
+@@ -22,6 +22,8 @@
+ /** The profile ID used to access Shelly devices custom clusters. */
+ export const CUSTOM_SHELLY_PROFILE_ID = 0xc001;
++/** The profile ID used by Control4 devices for text-based MIB commands (LED, button events, etc.). */
++export const CUSTOM_CONTROL4_PROFILE_ID = 0xc25c;
+ 
+ /** The default HA endpoint. */
+ export const HA_ENDPOINT = 0x01;
+diff --git a/src/adapter/ember/ezsp/ezsp.ts b/src/adapter/ember/ezsp/ezsp.ts
+--- a/src/adapter/ember/ezsp/ezsp.ts
++++ b/src/adapter/ember/ezsp/ezsp.ts
+@@ -5354,7 +5354,9 @@
+             (apsFrame.profileId === ZSpec.GP_PROFILE_ID && type !== EmberIncomingMessageType.BROADCAST_LOOPBACK) ||
+             // TODO: Better (dynamic) way to handle this?
+             // Shelly custom Clusters require a special profile ID
+-            apsFrame.profileId === ZSpec.CUSTOM_SHELLY_PROFILE_ID
++            apsFrame.profileId === ZSpec.CUSTOM_SHELLY_PROFILE_ID ||
++            // Control4 MIB text protocol (LED control, button events, device detection)
++            apsFrame.profileId === ZSpec.CUSTOM_CONTROL4_PROFILE_ID
+         ) {
+             this.emit("incomingMessage", type, apsFrame, packetInfo.lastHopLqi, packetInfo.senderShortId, messageContents);
+         }
+diff --git a/src/adapter/ezsp/adapter/ezspAdapter.ts b/src/adapter/ezsp/adapter/ezspAdapter.ts
+--- a/src/adapter/ezsp/adapter/ezspAdapter.ts
++++ b/src/adapter/ezsp/adapter/ezspAdapter.ts
+@@ -65,7 +65,9 @@
+             frame.apsFrame.profileId === 0xffff ||
+             // Shelly custom Clusters require a special profile ID
+-            frame.apsFrame.profileId === ZSpec.CUSTOM_SHELLY_PROFILE_ID
++            frame.apsFrame.profileId === ZSpec.CUSTOM_SHELLY_PROFILE_ID ||
++            // Control4 MIB text protocol (LED control, button events, device detection)
++            frame.apsFrame.profileId === ZSpec.CUSTOM_CONTROL4_PROFILE_ID
+         ) {
+             const payload: ZclPayload = {

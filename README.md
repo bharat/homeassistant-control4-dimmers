@@ -1,46 +1,118 @@
-# Notice
+# Control4 Zigbee Integration for Home Assistant
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+Migrate Control4 Zigbee dimmers and keypads to Home Assistant via Zigbee2MQTT — without replacing hardware.
 
-HAVE FUN! 😎
+Full on/off, dimming, LED color control, and keypad button events — matching original Control4 behavior.
 
-## Why?
+## How It Works
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+Control4 dimmers are **standard Zigbee HA devices underneath the proprietary layer**. Endpoint 1 speaks standard `genOnOff` and `genLevelCtrl` for dimming. LED control and button events use a proprietary text-based protocol on profile `0xC25C`.
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+This project provides:
 
-## What?
+1. **Z2M External Converter** (`z2m/converters/control4.mjs`) — Device definitions for all newer C4 in-wall devices
+2. **Patched zigbee-herdsman** — Whitelists C4 profile `0xC25C` in the EZSP adapter so button events and LED responses aren't dropped
+3. **Custom Docker Image** — Drop-in replacement for stock Z2M, bundling the converter and herdsman patch
+4. **Test Suite** — 104 tests covering color math, protocol formatting, response parsing, and device detection
 
-This repository contains multiple files, here is a overview:
+## Supported Devices
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/integration_blueprint/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+| Model | Type | On/Off + Dimming | LED Control | Button Events |
+|-------|------|:---:|:---:|:---:|
+| C4-APD120 | Adaptive Phase Dimmer | **Confirmed** | **Confirmed** | **Confirmed** |
+| C4-KD120 | Keypad Dimmer | **Confirmed** | **Confirmed** | **Confirmed** |
+| C4-KC120277 | Configurable Keypad | N/A (no load) | **Confirmed** | **Confirmed** |
 
-## How?
+All newer Control4 Zigbee devices with manufacturer ID `43981` (`0xABCD`) are expected to work.
 
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `integration_blueprint` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `Integration Blueprint` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
+## Quick Start
 
-## Next steps
+### Option 1: Docker (Recommended)
 
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon) to https://github.com/home-assistant/brands.
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+```bash
+# Build the custom Z2M image
+cd z2m
+docker build -t z2m-control4 .
+
+# Copy and edit environment config
+cp .env.example .env
+# Edit .env with your Z2M data dir, coordinator device, etc.
+
+# Run with docker compose
+docker compose up -d
+```
+
+### Option 2: Manual Installation
+
+1. Copy `z2m/converters/control4.mjs` and `z2m/converters/c4-protocol.mjs` to your Z2M `external_converters/` directory
+2. Apply the herdsman profile patch (see `z2m/herdsman-c4-profile.patch`) or run `exploration/scripts/patch-herdsman-c4-profile.sh`
+3. Restart Zigbee2MQTT
+
+### Pair a Dimmer
+
+1. Factory reset: Press **top 13x, bottom 4x, top 13x** (13-4-13 sequence)
+2. Enable Permit Join in Z2M
+3. Wait for the device to pair
+4. Run device detection: `mosquitto_pub -t zigbee2mqtt/DEVICE_NAME/set -m '{"c4_detect": true}'`
+
+See `exploration/README.md` for the full step-by-step migration guide.
+
+## Project Structure
+
+```
+├── z2m/                          # Z2M converter, Docker, and tests
+│   ├── converters/
+│   │   ├── control4.mjs          # Main Z2M converter (the core artifact)
+│   │   └── c4-protocol.mjs       # Pure protocol logic (testable, no Z2M deps)
+│   ├── tests/
+│   │   └── c4-protocol.test.mjs  # 104 tests for the protocol module
+│   ├── Dockerfile                # Custom Z2M image with C4 support
+│   ├── docker-compose.yml        # Docker Compose for local dev
+│   ├── Makefile                  # build/test/deploy/push targets
+│   └── herdsman-c4-profile.patch # Source-level patch for zigbee-herdsman
+├── exploration/                  # Original reverse-engineering work (imported with history)
+│   ├── README.md                 # Full migration guide
+│   ├── PROGRESS.md               # Session-by-session progress log
+│   ├── docs/                     # Protocol reference and device identification
+│   └── scripts/                  # Utility scripts (probe, database fix, etc.)
+├── custom_components/            # HA custom component (future: keypad config UI)
+│   └── control4_dimmers/
+└── PLAN.md                       # Project roadmap
+```
+
+## Development
+
+```bash
+# Run the converter test suite
+cd z2m && npm test
+
+# Build the Docker image
+cd z2m && make build
+
+# Deploy to production server
+cd z2m && make deploy DEPLOY_HOST=your-server
+```
+
+## Roadmap
+
+See [PLAN.md](PLAN.md) for the full project arc. Current status:
+
+- [x] **Phase 0**: Import exploration repo with full history
+- [x] **Phase 1**: Clean converter + test framework (104 tests)
+- [x] **Phase 2**: Herdsman C4 profile patch
+- [x] **Phase 3**: Docker build pipeline + CI/CD
+- [ ] **Phase 4**: Complete device support (all 3 types, telemetry, dimming tables)
+- [ ] **Phase 5**: HA custom component for keypad configuration
+- [ ] **Phase 6**: Keypad configuration frontend (visual editor)
+- [ ] **Phase 7**: Upstream contributions (deferred)
+
+## Credits
+
+- **pstuart** — Original SmartThings C4 dimmer driver
+- **iankberry** — Hubitat port
+- **samtherecordman** — Z2M issue #160 pioneer work
+- **Koenkk** — Zigbee2MQTT / zigbee-herdsman
+
+## License
+
+MIT

@@ -1034,3 +1034,9 @@ window.customCards.push({
   description: "Configure Control4 dimmers and keypads with a visual slot editor.",
   preview: true,
 });
+
+console.info(
+  "%c CONTROL4-CARD %c loaded v" + CARD_VERSION,
+  "color:#fff;background:#0a84ff;font-weight:bold;padding:2px 6px;border-radius:4px",
+  ""
+);

@@ -12,7 +12,6 @@ This script:
 
 from __future__ import annotations
 
-# ruff: noqa: T201
 import configparser
 import contextlib
 import json

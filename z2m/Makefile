@@ -43,7 +43,7 @@ setup-buildx:
 	docker buildx inspect --bootstrap
 
 # Multi-arch build + push to ghcr.io (run setup-buildx first)
-push: 
+push:
 	docker buildx build --builder $(BUILDX_BUILDER) --platform linux/amd64,linux/arm64 \
 		-t $(GHCR_REPO):$(IMAGE_TAG) --push .
 

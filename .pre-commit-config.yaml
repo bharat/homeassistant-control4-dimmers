@@ -15,3 +15,13 @@ repos:
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: check-yaml
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: python -m pytest tests/ --timeout=15 -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

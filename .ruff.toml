@@ -2,6 +2,8 @@
 
 target-version = "py313"
 
+extend-exclude = ["exploration/"]
+
 [lint]
 select = [
     "ALL",
@@ -13,6 +15,22 @@ ignore = [
     "D212", # multi-line-summary-first-line (incompatible with formatter)
     "COM812", # incompatible with formatter
     "ISC001", # incompatible with formatter
+]
+
+[lint.per-file-ignores]
+"custom_components/control4_dimmers/frontend/__init__.py" = ["TID252"]
+"tests/**" = [
+    "S101",     # assert is expected in tests
+    "SLF001",   # private member access is expected in tests
+    "D100", "D101", "D102", "D103", "D104",  # docstrings not required in tests
+    "ANN",      # type annotations not required in tests
+    "TC001", "TC002", "TC003",  # TYPE_CHECKING moves not required in tests
+    "PLR2004",  # magic values are fine in test assertions
+    "ARG001", "ARG002",  # unused args (fixtures) are fine
+    "RET504",   # unnecessary assignment before return (clarity in tests)
+]
+"scripts/**" = [
+    "T201",     # print is fine in scripts
 ]
 
 [lint.flake8-pytest-style]

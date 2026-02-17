@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers.event import async_call_later
 
-from control4_dimmers.const import JSMODULES, URL_BASE
+from ..const import JSMODULES, URL_BASE
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

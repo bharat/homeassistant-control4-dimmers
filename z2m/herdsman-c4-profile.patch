@@ -22,7 +22,7 @@ diff --git a/src/zspec/consts.ts b/src/zspec/consts.ts
  export const CUSTOM_SHELLY_PROFILE_ID = 0xc001;
 +/** The profile ID used by Control4 devices for text-based MIB commands (LED, button events, etc.). */
 +export const CUSTOM_CONTROL4_PROFILE_ID = 0xc25c;
- 
+
  /** The default HA endpoint. */
  export const HA_ENDPOINT = 0x01;
 diff --git a/src/adapter/ember/ezsp/ezsp.ts b/src/adapter/ember/ezsp/ezsp.ts

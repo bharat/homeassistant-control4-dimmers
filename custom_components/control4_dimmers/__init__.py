@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.LIGHT,
+    Platform.SELECT,
 ]
 
 type Control4ConfigEntry = ConfigEntry
@@ -30,9 +31,7 @@ type Control4ConfigEntry = ConfigEntry
 async def _register_websocket_handlers(hass: HomeAssistant) -> None:
     """Register websocket commands used by the Lovelace card."""
 
-    @websocket_api.websocket_command(
-        {vol.Required("type"): f"{DOMAIN}/version"}
-    )
+    @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/version"})
     @websocket_api.async_response
     async def websocket_get_version(
         _hass: HomeAssistant,
@@ -41,9 +40,7 @@ async def _register_websocket_handlers(hass: HomeAssistant) -> None:
     ) -> None:
         connection.send_result(msg["id"], {"version": INTEGRATION_VERSION})
 
-    @websocket_api.websocket_command(
-        {vol.Required("type"): f"{DOMAIN}/devices"}
-    )
+    @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/devices"})
     @websocket_api.async_response
     async def websocket_get_devices(
         hass: HomeAssistant,
@@ -107,10 +104,44 @@ async def _register_websocket_handlers(hass: HomeAssistant) -> None:
         await manager.async_send_mqtt(msg["ieee_address"], msg["payload"])
         connection.send_result(msg["id"], {"ok": True})
 
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/device_by_entity",
+            vol.Required("entity_id"): cv.string,
+        }
+    )
+    @websocket_api.async_response
+    async def websocket_device_by_entity(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict,
+    ) -> None:
+        """Resolve a device from one of our entity IDs."""
+        entity_id = msg["entity_id"]
+        state = hass.states.get(entity_id)
+        if state is None:
+            connection.send_error(msg["id"], "not_found", "Entity not found")
+            return
+        ieee = state.attributes.get("ieee_address")
+        if not ieee:
+            connection.send_error(msg["id"], "not_found", "No ieee_address attribute")
+            return
+        runtime = _get_runtime(hass)
+        if runtime is None:
+            connection.send_error(msg["id"], "not_loaded", "Integration not loaded")
+            return
+        manager: Control4Manager = runtime["manager"]
+        info = manager.get_device_info(ieee)
+        if info is None:
+            connection.send_error(msg["id"], "not_found", "Device not discovered")
+            return
+        connection.send_result(msg["id"], info)
+
     websocket_api.async_register_command(hass, websocket_get_version)
     websocket_api.async_register_command(hass, websocket_get_devices)
     websocket_api.async_register_command(hass, websocket_configure_device)
     websocket_api.async_register_command(hass, websocket_send_mqtt)
+    websocket_api.async_register_command(hass, websocket_device_by_entity)
 
 
 async def _register_frontend(hass: HomeAssistant) -> None:
@@ -131,7 +162,7 @@ async def _register_frontend(hass: HomeAssistant) -> None:
 def _get_runtime(hass: HomeAssistant) -> dict[str, Any] | None:
     """Get the runtime data for the first config entry."""
     domain_data = hass.data.get(DOMAIN, {})
-    for entry_id, data in domain_data.items():
+    for data in domain_data.values():
         if isinstance(data, dict) and "manager" in data:
             return data
     return None

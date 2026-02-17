@@ -1,20 +1,49 @@
 #!/usr/bin/env bash
+# Start a Home Assistant development server with the Control4 Dimmers integration.
+#
+# Prerequisites:
+#   pip install homeassistant paho-mqtt
+#   A Mosquitto broker running on localhost:1883
+#
+# Usage:
+#   ./scripts/develop          # Start HA only
+#   ./scripts/develop --sim    # Start HA + device simulator
+#
+# The script:
+# 1. Optionally starts the device simulator in the background
+# 2. Starts HA with the local config directory
+# 3. HA is available at http://localhost:8123
 
-set -e
-
+set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Create config dir if not present
-if [[ ! -d "${PWD}/config" ]]; then
-    mkdir -p "${PWD}/config"
-    hass --config "${PWD}/config" --script ensure_config
+SCRIPT_DIR="$(pwd)"
+CONFIG_DIR="${SCRIPT_DIR}/config"
+
+export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
+
+echo "=== Control4 Dimmers Development Server ==="
+echo "Config:  ${CONFIG_DIR}"
+echo "Integration: custom_components/control4_dimmers"
+echo ""
+
+SIM_PID=""
+
+cleanup() {
+    if [ -n "${SIM_PID}" ]; then
+        echo "Stopping simulator (PID ${SIM_PID})..."
+        kill "${SIM_PID}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+if [ "${1:-}" = "--sim" ]; then
+    echo "Starting device simulator..."
+    python3 scripts/simulate_devices.py &
+    SIM_PID=$!
+    echo "Simulator PID: ${SIM_PID}"
+    sleep 2
 fi
 
-# Set the path to custom_components
-## This let's us have the structure we want <root>/custom_components/control4_dimmers
-## while at the same time have Home Assistant configuration inside <root>/config
-## without resulting to symlinks.
-export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
-
-# Start Home Assistant
-hass --config "${PWD}/config" --debug
+echo "Starting Home Assistant..."
+hass --config "${CONFIG_DIR}" --debug

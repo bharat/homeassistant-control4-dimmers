@@ -1,12 +1,11 @@
 {
   "domain": "control4_dimmers",
-  "name": "Control4Dimmers",
-  "codeowners": [
-    "@ludeeus"
-  ],
+  "name": "Control4 Dimmers",
+  "codeowners": ["@bharat"],
   "config_flow": true,
+  "dependencies": ["mqtt", "frontend", "http"],
   "documentation": "https://github.com/bharat/homeassistant-control4-dimmers",
-  "iot_class": "cloud_polling",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/bharat/homeassistant-control4-dimmers/issues",
-  "version": "0.1.0"
+  "version": "0.0.0"
 }

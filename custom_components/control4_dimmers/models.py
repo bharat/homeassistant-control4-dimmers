@@ -158,11 +158,11 @@ def _hs_to_hex(hue: float, saturation: float) -> str:
         r, g, b = v, t, p
     elif i == 1:
         r, g, b = q, v, p
-    elif i == 2:
+    elif i == 2:  # noqa: PLR2004
         r, g, b = p, v, t
-    elif i == 3:
+    elif i == 3:  # noqa: PLR2004
         r, g, b = p, q, v
-    elif i == 4:
+    elif i == 4:  # noqa: PLR2004
         r, g, b = t, p, v
     else:
         r, g, b = v, p, q

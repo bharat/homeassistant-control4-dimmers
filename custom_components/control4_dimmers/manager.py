@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import mqtt
@@ -12,13 +13,11 @@ from .const import (
     CONF_MQTT_TOPIC,
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
-    DEVICE_TYPE_KEYPAD,
-    DEVICE_TYPE_KEYPADDIM,
     LOGGER,
     SLOT_COUNT,
 )
 from .models import DeviceConfig, DeviceState, SlotConfig
-from .store import Control4Store
+from .store import Control4Store  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,6 +53,10 @@ class Control4Manager:
         self._devices: dict[str, DeviceState] = {}
         self._subscriptions: list[Callable[[], None]] = []
         self._listeners: list[Callable[[], None]] = []
+        self._pending_states: dict[str, dict] = {}  # buffered state payloads
+        self._event_callbacks: dict[
+            tuple[str, int], Callable[[str], None]
+        ] = {}  # (ieee, slot_id) -> callback(event_type)
 
     @property
     def mqtt_topic(self) -> str:
@@ -81,6 +84,51 @@ class Control4Manager:
         for callback in self._listeners:
             callback()
 
+    def register_event_callback(
+        self,
+        ieee_address: str,
+        slot_id: int,
+        callback: Callable[[str], None],
+    ) -> Callable[[], None]:
+        """
+        Register a callback for button events on a specific slot.
+
+        The callback receives the event_type string (e.g. "press",
+        "double_press").  Returns an unsubscribe callable.
+        """
+        key = (ieee_address, slot_id)
+        self._event_callbacks[key] = callback
+        return lambda: self._event_callbacks.pop(key, None)
+
+    def _dispatch_button_action(self, device: DeviceState, action_str: str) -> None:
+        """Parse an action string from Z2M and dispatch to event entities."""
+        if not action_str:
+            return
+
+        # button_N_press  (from c4.dmx.bp)
+        press_match = re.match(r"button_(\d+)_press", action_str)
+        if press_match:
+            slot_id = int(press_match.group(1))
+            event_type = "press"
+            self._fire_event_callback(device.ieee_address, slot_id, event_type)
+            return
+
+        # button_N_click_C  (from c4.dmx.cc)
+        click_match = re.match(r"button_(\d+)_click_(\d+)", action_str)
+        if click_match:
+            slot_id = int(click_match.group(1))
+            count = int(click_match.group(2))
+            event_type = _click_count_to_event_type(count)
+            self._fire_event_callback(device.ieee_address, slot_id, event_type)
+            return
+
+    def _fire_event_callback(self, ieee: str, slot_id: int, event_type: str) -> None:
+        """Invoke the registered event callback for a slot, if any."""
+        cb = self._event_callbacks.get((ieee, slot_id))
+        if cb is not None:
+            cb(event_type)
+            LOGGER.debug("Button event: %s slot %d -> %s", ieee, slot_id, event_type)
+
     async def async_start(self) -> None:
         """Start MQTT subscriptions for device discovery and state."""
         topic = self.mqtt_topic
@@ -107,7 +155,9 @@ class Control4Manager:
             unsub()
         self._subscriptions.clear()
 
-    async def _handle_bridge_devices(self, msg: mqtt.ReceiveMessage) -> None:
+    async def _handle_bridge_devices(  # noqa: PLR0912
+        self, msg: mqtt.ReceiveMessage
+    ) -> None:
         """Handle zigbee2mqtt/bridge/devices message to discover C4 devices."""
         payload = msg.payload
         if isinstance(payload, bytes):
@@ -157,6 +207,22 @@ class Control4Manager:
             LOGGER.info("Control4 device removed: %s", ieee)
             del self._devices[ieee]
 
+        # Apply any state payloads that arrived before discovery.
+        if self._pending_states:
+            applied = []
+            for name, payload in self._pending_states.items():
+                device = self._find_device_by_name(name)
+                if device is not None:
+                    device.update_from_mqtt(payload)
+                    applied.append(name)
+            for name in applied:
+                del self._pending_states[name]
+            if applied:
+                LOGGER.debug(
+                    "Applied %d buffered state payloads after discovery",
+                    len(applied),
+                )
+
         self._notify_listeners()
 
     async def _handle_device_state(self, msg: mqtt.ReceiveMessage) -> None:
@@ -184,9 +250,18 @@ class Control4Manager:
 
         device = self._find_device_by_name(device_name)
         if device is None:
+            # Device not yet known (bridge/devices may not have arrived).
+            # Buffer the payload so it can be applied after discovery.
+            self._pending_states[device_name] = payload
             return
 
         device.update_from_mqtt(payload)
+
+        # Dispatch button action events (press / click) to event entities.
+        action = payload.get("action")
+        if action:
+            self._dispatch_button_action(device, action)
+
         self._notify_listeners()
 
     def _find_device_by_name(self, friendly_name: str) -> DeviceState | None:
@@ -210,12 +285,8 @@ class Control4Manager:
             "available": state.available,
             "brightness": state.brightness,
             "state": state.state,
-            "led_colors": {
-                str(k): v for k, v in state.led_colors.items()
-            },
-            "button_configs": {
-                str(k): v for k, v in state.button_configs.items()
-            },
+            "led_colors": {str(k): v for k, v in state.led_colors.items()},
+            "button_configs": {str(k): v for k, v in state.button_configs.items()},
             "config": config.to_dict() if config else None,
         }
 
@@ -262,9 +333,7 @@ class Control4Manager:
 
         self._notify_listeners()
 
-    async def _push_slot_config(
-        self, state: DeviceState, config: DeviceConfig
-    ) -> None:
+    async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
         """Push slot LED colors to the device via MQTT."""
         topic = f"{self.mqtt_topic}/{state.friendly_name}/set"
         for slot in config.slots:
@@ -284,13 +353,9 @@ class Control4Manager:
             }
 
             for payload in [on_payload, off_payload, behavior_payload]:
-                await mqtt.async_publish(
-                    self._hass, topic, json.dumps(payload), qos=1
-                )
+                await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
 
-    async def async_send_mqtt(
-        self, ieee_address: str, payload: dict[str, Any]
-    ) -> None:
+    async def async_send_mqtt(self, ieee_address: str, payload: dict[str, Any]) -> None:
         """Send an arbitrary MQTT set command to a device."""
         state = self._devices.get(ieee_address)
         if state is None:
@@ -318,9 +383,22 @@ class Control4Manager:
                 ),
             ]
         return [
-            SlotConfig(slot_id=i, size=1, name=f"Button {i}")
+            SlotConfig(slot_id=i, size=1, name=f"Button {i + 1}")
             for i in range(SLOT_COUNT)
         ]
+
+
+_CLICK_COUNT_MAP: dict[int, str] = {
+    1: "press",
+    2: "double_press",
+    3: "triple_press",
+    4: "quadruple_press",
+}
+
+
+def _click_count_to_event_type(count: int) -> str:
+    """Map a c4.dmx.cc click count to an event_type string."""
+    return _CLICK_COUNT_MAP.get(count, f"click_{count}")
 
 
 def _is_control4_device(device_info: dict) -> bool:
@@ -333,6 +411,4 @@ def _is_control4_device(device_info: dict) -> bool:
     if model in C4_MODEL_IDS:
         return True
     model_id = device_info.get("model_id", "")
-    if model_id in C4_MODEL_IDS:
-        return True
-    return False
+    return model_id in C4_MODEL_IDS

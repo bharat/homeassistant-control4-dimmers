@@ -6,7 +6,7 @@ Publishes fake Z2M MQTT messages for 6 Control4 devices (2 of each type)
 so the custom integration can be developed and tested without real hardware.
 
 Usage:
-    python3 scripts/simulate_devices.py [--broker localhost] [--port 1883] [--topic zigbee2mqtt]
+    python3 scripts/simulate_devices.py [--broker host] [--port 1883]
 
 Requires: paho-mqtt
     pip install paho-mqtt
@@ -17,14 +17,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
+import re
 import sys
-import time
+from typing import Any
 
 try:
     import paho.mqtt.client as mqtt_client
 except ImportError:
-    print("Error: paho-mqtt is required. Install with: pip install paho-mqtt")
     sys.exit(1)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -35,7 +36,7 @@ log = logging.getLogger("c4-simulator")
 DEVICES = [
     {
         "ieee_address": "0x000fff0000aaa001",
-        "friendly_name": "Kitchen Dimmer",
+        "friendly_name": "Kitchen",
         "model_id": "C4-APD120",
         "type": "dimmer",
         "definition": {
@@ -47,7 +48,7 @@ DEVICES = [
     },
     {
         "ieee_address": "0x000fff0000aaa002",
-        "friendly_name": "Living Room Dimmer",
+        "friendly_name": "Living Room",
         "model_id": "C4-APD120",
         "type": "dimmer",
         "definition": {
@@ -83,7 +84,7 @@ DEVICES = [
     },
     {
         "ieee_address": "0x000fff0000ccc001",
-        "friendly_name": "Theater Keypad",
+        "friendly_name": "Theater",
         "model_id": "C4-KC120277",
         "type": "keypad",
         "definition": {
@@ -95,7 +96,7 @@ DEVICES = [
     },
     {
         "ieee_address": "0x000fff0000ccc002",
-        "friendly_name": "Garage Keypad",
+        "friendly_name": "Garage",
         "model_id": "C4-KC120277",
         "type": "keypad",
         "definition": {
@@ -124,31 +125,40 @@ KEYPAD_LED_DEFAULTS = {
 
 def build_bridge_devices(devices: list[dict]) -> list[dict]:
     """Build the zigbee2mqtt/bridge/devices payload."""
-    result = []
-    for dev in devices:
-        result.append(
-            {
-                "ieee_address": dev["ieee_address"],
-                "friendly_name": dev["friendly_name"],
-                "model_id": dev["model_id"],
-                "manufacturer": "Control4",
-                "type": "EndDevice",
-                "network_address": random.randint(1000, 65000),
-                "supported": True,
-                "disabled": False,
-                "definition": dev["definition"],
-                "endpoints": {
-                    "1": {
-                        "bindings": [],
-                        "configured_reportings": [],
-                        "clusters": {"input": ["genOnOff", "genLevelCtrl"], "output": []},
+    return [
+        {
+            "ieee_address": dev["ieee_address"],
+            "friendly_name": dev["friendly_name"],
+            "model_id": dev["model_id"],
+            "manufacturer": "Control4",
+            "type": "EndDevice",
+            "network_address": random.randint(1000, 65000),  # noqa: S311
+            "supported": True,
+            "disabled": False,
+            "definition": dev["definition"],
+            "endpoints": {
+                "1": {
+                    "bindings": [],
+                    "configured_reportings": [],
+                    "clusters": {
+                        "input": ["genOnOff", "genLevelCtrl"],
+                        "output": [],
                     },
-                    "196": {"bindings": [], "configured_reportings": [], "clusters": {"input": [], "output": []}},
-                    "197": {"bindings": [], "configured_reportings": [], "clusters": {"input": [], "output": []}},
                 },
-            }
-        )
-    return result
+                "196": {
+                    "bindings": [],
+                    "configured_reportings": [],
+                    "clusters": {"input": [], "output": []},
+                },
+                "197": {
+                    "bindings": [],
+                    "configured_reportings": [],
+                    "clusters": {"input": [], "output": []},
+                },
+            },
+        }
+        for dev in devices
+    ]
 
 
 def build_device_state(dev: dict) -> dict:
@@ -156,11 +166,11 @@ def build_device_state(dev: dict) -> dict:
     device_type = dev["type"]
     state = {
         "c4_device_type": device_type,
-        "linkquality": random.randint(60, 255),
+        "linkquality": random.randint(60, 255),  # noqa: S311
     }
 
     if device_type in ("dimmer", "keypaddim"):
-        brightness = random.choice([0, 64, 128, 200, 254])
+        brightness = random.choice([0, 64, 128, 200, 254])  # noqa: S311
         state["state"] = "ON" if brightness > 0 else "OFF"
         state["brightness"] = brightness
 
@@ -174,7 +184,7 @@ def build_device_state(dev: dict) -> dict:
             state[f"color_button_{btn_id}_{mode}"] = {"hue": h, "saturation": s}
             state[f"color_mode_button_{btn_id}_{mode}"] = "hs"
 
-    for btn_id in (leds.keys() if device_type == "dimmer" else range(6)):
+    for btn_id in leds.keys() if device_type == "dimmer" else range(6):
         state[f"button_{btn_id}_behavior"] = "keypad"
         state[f"button_{btn_id}_led_mode"] = "programmed"
 
@@ -205,21 +215,39 @@ class C4Simulator:
     """MQTT-based Control4 device simulator."""
 
     def __init__(self, broker: str, port: int, topic: str) -> None:
+        """Initialize simulator with MQTT connection parameters."""
         self.broker = broker
         self.port = port
         self.topic = topic
-        self.client = mqtt_client.Client(client_id="c4-simulator")
+        self.client = mqtt_client.Client(client_id=f"c4-simulator-{os.getpid()}")
+        self._connected_once = False
         self.device_states: dict[str, dict] = {}
 
         for dev in DEVICES:
             self.device_states[dev["friendly_name"]] = build_device_state(dev)
 
-    def on_connect(self, client, userdata, flags, rc):
-        log.info("Connected to MQTT broker at %s:%d", self.broker, self.port)
+    def on_connect(
+        self,
+        client: Any,
+        _userdata: Any,
+        _flags: Any,
+        _rc: Any,
+    ) -> None:
+        """Handle MQTT broker connection and resubscribe."""
+        if not self._connected_once:
+            self._connected_once = True
+            log.info("Connected to MQTT broker at %s:%d", self.broker, self.port)
+        else:
+            log.debug("Reconnected to MQTT broker")
         client.subscribe(f"{self.topic}/+/set")
-        log.info("Subscribed to %s/+/set", self.topic)
 
-    def on_message(self, client, userdata, msg):
+    def on_message(
+        self,
+        _client: Any,
+        _userdata: Any,
+        msg: Any,
+    ) -> None:
+        """Handle incoming MQTT set commands."""
         topic = msg.topic
         if not topic.endswith("/set"):
             return
@@ -235,19 +263,48 @@ class C4Simulator:
 
         log.info("SET %s: %s", device_name, json.dumps(payload, indent=None))
 
+        # Handle button press commands: echo an action event.
+        c4_cmd = payload.get("c4_cmd", "")
+        if c4_cmd:
+            action = self._parse_c4_cmd_to_action(c4_cmd)
+            if action:
+                log.info("ACTION %s: %s", device_name, action)
+                state["action"] = action
+                self.publish_state(device_name)
+                # Clear the action after publishing (Z2M behavior).
+                state["action"] = ""
+                self.publish_state(device_name)
+                return
+
         for key, value in payload.items():
             state[key] = value
 
         self.publish_state(device_name)
 
-    def publish_bridge_devices(self):
+    @staticmethod
+    def _parse_c4_cmd_to_action(cmd: str) -> str | None:
+        """
+        Convert a c4_cmd string to a Z2M-style action string.
+
+        Examples:
+            c4.dmx.bp 00 -> button_0_press
+            c4.dmx.bp 03 -> button_3_press
+
+        """
+        bp_match = re.match(r"c4\.dmx\.bp\s+([0-9a-fA-F]+)", cmd)
+        if bp_match:
+            btn = int(bp_match.group(1), 16)
+            return f"button_{btn}_press"
+        return None
+
+    def publish_bridge_devices(self) -> None:
+        """Publish the bridge/devices discovery payload."""
         payload = json.dumps(build_bridge_devices(DEVICES))
-        self.client.publish(
-            f"{self.topic}/bridge/devices", payload, retain=True
-        )
+        self.client.publish(f"{self.topic}/bridge/devices", payload, retain=True)
         log.info("Published bridge/devices with %d Control4 devices", len(DEVICES))
 
-    def publish_state(self, device_name: str):
+    def publish_state(self, device_name: str) -> None:
+        """Publish state for a single device."""
         state = self.device_states.get(device_name)
         if state is None:
             return
@@ -257,12 +314,14 @@ class C4Simulator:
             retain=True,
         )
 
-    def publish_all_states(self):
+    def publish_all_states(self) -> None:
+        """Publish state for all simulated devices."""
         for dev in DEVICES:
             self.publish_state(dev["friendly_name"])
         log.info("Published state for %d devices", len(DEVICES))
 
-    def run(self):
+    def run(self) -> None:
+        """Connect to the broker and run the event loop forever."""
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
 
@@ -280,7 +339,8 @@ class C4Simulator:
             self.client.disconnect()
 
 
-def main():
+def main() -> None:
+    """Run the Control4 device simulator."""
     parser = argparse.ArgumentParser(description="Simulate Control4 Z2M devices")
     parser.add_argument("--broker", default="localhost", help="MQTT broker host")
     parser.add_argument("--port", type=int, default=1883, help="MQTT broker port")

@@ -13,7 +13,5 @@ logger:
   logs:
     custom_components.control4_dimmers: debug
 
-# https://www.home-assistant.io/integrations/mqtt/
-mqtt:
-  broker: localhost
-  port: 1883
+# MQTT is configured via the UI (Settings > Integrations > MQTT).
+# After first launch, add MQTT with broker: localhost, port: 1883.

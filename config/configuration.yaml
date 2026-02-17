@@ -1,3 +1,5 @@
+# Home Assistant development config for Control4 Dimmers
+
 # https://www.home-assistant.io/integrations/default_config/
 default_config:
 
@@ -10,3 +12,8 @@ logger:
   default: info
   logs:
     custom_components.control4_dimmers: debug
+
+# https://www.home-assistant.io/integrations/mqtt/
+mqtt:
+  broker: localhost
+  port: 1883

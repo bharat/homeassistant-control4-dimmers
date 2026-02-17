@@ -1,0 +1,59 @@
+configure_slots:
+  name: Configure Slots
+  description: Configure the button slot layout for a Control4 device.
+  fields:
+    ieee_address:
+      name: Device IEEE Address
+      description: The IEEE address of the Control4 device.
+      required: true
+      selector:
+        text:
+    slots:
+      name: Slot Configuration
+      description: JSON array of slot configuration objects.
+      required: true
+      selector:
+        text:
+
+set_led_color:
+  name: Set LED Color
+  description: Set the LED color for a specific button slot.
+  fields:
+    ieee_address:
+      name: Device IEEE Address
+      description: The IEEE address of the Control4 device.
+      required: true
+      selector:
+        text:
+    slot_id:
+      name: Slot ID
+      description: The button slot ID (0-5).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+    on_color:
+      name: ON Color
+      description: RGB hex color for the LED when active (e.g. 0000ff).
+      required: false
+      selector:
+        text:
+    off_color:
+      name: OFF Color
+      description: RGB hex color for the LED when inactive (e.g. 000000).
+      required: false
+      selector:
+        text:
+
+detect_device:
+  name: Detect Device
+  description: Trigger device type detection via C4 protocol.
+  fields:
+    ieee_address:
+      name: Device IEEE Address
+      description: The IEEE address of the Control4 device.
+      required: true
+      selector:
+        text:

@@ -67,183 +67,184 @@ const DEFAULT_COLORS = {
 const CARD_STYLES = `
   :host {
     display: block;
-    --c4-bg: var(--card-background-color, #1c1c1e);
-    --c4-fg: var(--primary-text-color, #e5e5e7);
-    --c4-secondary: var(--secondary-text-color, #8e8e93);
-    --c4-accent: var(--primary-color, #0a84ff);
-    --c4-surface: var(--ha-card-background, #2c2c2e);
-    --c4-border: var(--divider-color, #38383a);
-    --c4-radius: 12px;
-    --c4-slot-height: 52px;
-    --c4-chassis-width: 80px;
-    font-family: var(--ha-card-font-family, inherit);
+    --c4-slot-height: 56px;
+    --c4-chassis-width: 72px;
   }
 
   ha-card {
     padding: 16px;
-    background: var(--c4-bg);
-    border-radius: var(--c4-radius);
   }
+
+  /* ── Header ── */
 
   .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 16px;
-    padding: 0;
   }
   .card-header h2 {
     margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--c4-fg);
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--primary-text-color);
   }
   .card-header .device-type {
-    font-size: 12px;
-    color: var(--c4-secondary);
-    background: var(--c4-surface);
-    padding: 4px 8px;
-    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
   }
+
+  /* ── Device selector (no device chosen) ── */
 
   .no-device {
     text-align: center;
     padding: 32px 16px;
-    color: var(--c4-secondary);
+    color: var(--secondary-text-color);
+  }
+  .no-device p {
+    margin: 0 0 12px;
+    font-size: 0.9rem;
   }
   .no-device select {
-    margin-top: 12px;
     padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--c4-border);
-    background: var(--c4-surface);
-    color: var(--c4-fg);
-    font-size: 14px;
+    border-radius: var(--ha-card-border-radius, 12px);
+    border: 1px solid var(--divider-color);
+    background: var(--input-fill-color, var(--secondary-background-color));
+    color: var(--primary-text-color);
+    font-size: 0.875rem;
     width: 100%;
-    max-width: 300px;
+    max-width: 320px;
+    outline: none;
   }
+  .no-device select:focus {
+    border-color: var(--primary-color);
+  }
+
+  /* ── Main layout ── */
 
   .device-layout {
     display: flex;
-    gap: 20px;
+    gap: 16px;
     align-items: flex-start;
   }
 
-  /* Chassis — the vertical slot strip */
+  /* ── Chassis (vertical button strip) ── */
+
   .chassis {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     width: var(--c4-chassis-width);
     flex-shrink: 0;
-    background: #1a1a1a;
-    border-radius: 8px;
-    padding: 4px;
-    border: 2px solid #333;
+    background: var(--secondary-background-color);
+    border-radius: var(--ha-card-border-radius, 12px);
+    padding: 6px;
   }
   .chassis-slot {
     height: var(--c4-slot-height);
-    border-radius: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s ease;
-    font-size: 11px;
+    transition: box-shadow 0.2s ease, background 0.2s ease;
+    font-size: 0.7rem;
     font-weight: 500;
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    color: var(--primary-text-color);
     position: relative;
     user-select: none;
+    background: var(--card-background-color, #fff);
+    border: 1px solid var(--divider-color);
   }
   .chassis-slot:hover {
-    filter: brightness(1.2);
-    transform: scale(1.02);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   }
   .chassis-slot.selected {
-    box-shadow: 0 0 0 2px var(--c4-accent), 0 0 8px rgba(10,132,255,0.3);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
   }
   .chassis-slot.size-2 {
-    height: calc(var(--c4-slot-height) * 2 + 2px);
+    height: calc(var(--c4-slot-height) * 2 + 3px);
   }
   .chassis-slot.size-3 {
-    height: calc(var(--c4-slot-height) * 3 + 4px);
+    height: calc(var(--c4-slot-height) * 3 + 6px);
   }
   .chassis-slot .slot-label {
-    font-size: 10px;
-    opacity: 0.8;
+    font-size: 0.7rem;
+    color: var(--primary-text-color);
   }
   .chassis-slot .led-indicator {
     position: absolute;
-    left: 4px;
+    left: 6px;
     top: 50%;
     transform: translateY(-50%);
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    border: 1px solid rgba(255,255,255,0.2);
+    border: 1px solid var(--divider-color);
+    box-shadow: inset 0 0 4px rgba(0,0,0,0.1);
   }
 
-  /* Config panel */
+  /* ── Config panel ── */
+
   .config-panel {
     flex: 1;
     min-width: 0;
   }
-  .config-panel h3 {
-    margin: 0 0 12px 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--c4-fg);
-  }
 
   .slot-config {
-    background: var(--c4-surface);
-    border-radius: 10px;
-    padding: 14px;
-    margin-bottom: 12px;
-    border: 1px solid var(--c4-border);
+    border-radius: var(--ha-card-border-radius, 12px);
+    padding: 16px;
+    background: var(--secondary-background-color);
   }
 
   .config-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 12px;
+    margin-bottom: 12px;
   }
   .config-row:last-child {
     margin-bottom: 0;
   }
   .config-row label {
-    font-size: 12px;
-    color: var(--c4-secondary);
-    width: 70px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--secondary-text-color);
+    width: 72px;
     flex-shrink: 0;
   }
   .config-row input[type="text"],
   .config-row select {
     flex: 1;
-    padding: 6px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--c4-border);
-    background: var(--c4-bg);
-    color: var(--c4-fg);
-    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--divider-color);
+    background: var(--input-fill-color, var(--card-background-color, #fff));
+    color: var(--primary-text-color);
+    font-size: 0.85rem;
+    font-family: inherit;
+    outline: none;
+  }
+  .config-row input[type="text"]:focus,
+  .config-row select:focus {
+    border-color: var(--primary-color);
   }
   .config-row input[type="color"] {
-    width: 36px;
-    height: 28px;
+    width: 40px;
+    height: 32px;
     padding: 0;
-    border: 1px solid var(--c4-border);
-    border-radius: 6px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
     cursor: pointer;
     background: transparent;
   }
   .config-row input[type="color"]::-webkit-color-swatch-wrapper {
-    padding: 2px;
+    padding: 3px;
   }
   .config-row input[type="color"]::-webkit-color-swatch {
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
   }
 
   .color-pair {
@@ -253,39 +254,50 @@ const CARD_STYLES = `
     flex: 1;
   }
   .color-pair .color-label {
-    font-size: 11px;
-    color: var(--c4-secondary);
+    font-size: 0.75rem;
+    color: var(--secondary-text-color);
   }
 
-  /* Slot layout editor */
+  /* ── Slot size toolbar ── */
+
   .layout-toolbar {
     display: flex;
     gap: 6px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .layout-toolbar .toolbar-label {
+    font-size: 0.8rem;
+    color: var(--secondary-text-color);
+    margin-right: 4px;
   }
   .layout-toolbar button {
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--c4-border);
-    background: var(--c4-surface);
-    color: var(--c4-fg);
-    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--divider-color);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color);
+    font-size: 0.8rem;
+    font-family: inherit;
     cursor: pointer;
     transition: all 0.15s ease;
   }
   .layout-toolbar button:hover {
-    background: var(--c4-accent);
-    border-color: var(--c4-accent);
-    color: #fff;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
   }
   .layout-toolbar button.active {
-    background: var(--c4-accent);
-    border-color: var(--c4-accent);
-    color: #fff;
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: var(--text-primary-color, #fff);
+  }
+  .layout-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
-  /* Device type override */
+  /* ── Device type row ── */
+
   .type-override {
     margin-bottom: 16px;
     display: flex;
@@ -293,19 +305,26 @@ const CARD_STYLES = `
     gap: 10px;
   }
   .type-override label {
-    font-size: 12px;
-    color: var(--c4-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--secondary-text-color);
   }
   .type-override select {
     padding: 6px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--c4-border);
-    background: var(--c4-surface);
-    color: var(--c4-fg);
-    font-size: 13px;
+    border-radius: 8px;
+    border: 1px solid var(--divider-color);
+    background: var(--input-fill-color, var(--secondary-background-color));
+    color: var(--primary-text-color);
+    font-size: 0.85rem;
+    font-family: inherit;
+    outline: none;
+  }
+  .type-override select:focus {
+    border-color: var(--primary-color);
   }
 
-  /* Save button */
+  /* ── Save / Reset bar ── */
+
   .save-bar {
     margin-top: 16px;
     display: flex;
@@ -316,69 +335,68 @@ const CARD_STYLES = `
     padding: 8px 20px;
     border-radius: 8px;
     border: none;
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 500;
+    font-family: inherit;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: opacity 0.15s ease;
   }
   .save-bar .btn-save {
-    background: var(--c4-accent);
-    color: #fff;
+    background: var(--primary-color);
+    color: var(--text-primary-color, #fff);
   }
   .save-bar .btn-save:hover {
-    filter: brightness(1.1);
+    opacity: 0.9;
   }
   .save-bar .btn-save:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    opacity: 0.4;
+    cursor: default;
   }
   .save-bar .btn-reset {
-    background: var(--c4-surface);
-    color: var(--c4-fg);
-    border: 1px solid var(--c4-border);
+    background: transparent;
+    color: var(--primary-text-color);
+    border: 1px solid var(--divider-color);
+  }
+  .save-bar .btn-reset:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
-  /* Version mismatch banner */
+  /* ── Version mismatch ── */
+
   .version-mismatch {
-    background: #ff9f0a;
-    color: #000;
-    padding: 8px 12px;
-    border-radius: 8px;
+    background: var(--warning-color, #ffc107);
+    color: var(--primary-text-color);
+    padding: 10px 14px;
+    border-radius: var(--ha-card-border-radius, 12px);
     margin-bottom: 12px;
-    font-size: 13px;
+    font-size: 0.8rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
   .version-mismatch button {
-    background: rgba(0,0,0,0.2);
+    background: rgba(0,0,0,0.1);
     border: none;
-    color: #000;
-    padding: 4px 10px;
-    border-radius: 4px;
+    color: inherit;
+    padding: 4px 12px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 500;
+    font-family: inherit;
   }
 
-  /* Empty config prompt */
+  /* ── Empty state ── */
+
   .setup-prompt {
     text-align: center;
-    padding: 20px;
+    padding: 24px 16px;
   }
   .setup-prompt p {
-    color: var(--c4-secondary);
-    font-size: 14px;
-    margin-bottom: 12px;
-  }
-  .setup-prompt button {
-    padding: 8px 20px;
-    border-radius: 8px;
-    border: none;
-    background: var(--c4-accent);
-    color: #fff;
-    font-size: 14px;
-    cursor: pointer;
+    color: var(--secondary-text-color);
+    font-size: 0.875rem;
+    margin: 0;
   }
 `;
 
@@ -391,11 +409,6 @@ function hexToInputColor(hex) {
 
 function inputColorToHex(val) {
   return val.replace("#", "").toLowerCase();
-}
-
-function slotBgColor(hex) {
-  if (!hex || hex === "000000") return "#2c2c2e";
-  return "#" + hex;
 }
 
 /**
@@ -773,7 +786,7 @@ class Control4Card extends HTMLElement {
         <div class="config-panel">
           ${!typeMeta.fixedLayout ? `
             <div class="layout-toolbar">
-              <span style="font-size:12px;color:var(--c4-secondary);margin-right:4px;">Selected button size:</span>
+              <span class="toolbar-label">Button size:</span>
               ${[1, 2, 3].map((size) => `
                 <button class="size-btn ${selectedSlot?.size === size ? "active" : ""}"
                         data-size="${size}"
@@ -805,12 +818,10 @@ class Control4Card extends HTMLElement {
     const cfg = btn.slots[0];
     const isSelected = this._selectedSlotId === btn.startSlot;
     const onColor = cfg.led_on_color || DEFAULT_COLORS.on;
-    const bgColor = slotBgColor(onColor);
 
     return `
       <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}"
-           data-slot="${btn.startSlot}"
-           style="background: ${bgColor};">
+           data-slot="${btn.startSlot}">
         <div class="led-indicator" style="background: #${onColor};"></div>
         <span class="slot-label">${cfg.name || `Btn ${btn.startSlot}`}</span>
       </div>

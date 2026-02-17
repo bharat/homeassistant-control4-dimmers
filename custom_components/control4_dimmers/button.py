@@ -1,4 +1,5 @@
-"""Button platform for Control4 Dimmers.
+"""
+Button platform for Control4 Dimmers.
 
 Creates HA button entities for each configured slot on a Control4 device.
 Pressing a button entity sends the corresponding button press event via MQTT.
@@ -6,17 +7,16 @@ Pressing a button entity sends the corresponding button press event via MQTT.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .manager import Control4Manager
 
@@ -39,16 +39,16 @@ async def async_setup_entry(
         state = manager.devices.get(ieee)
         if state is None:
             continue
-        for slot in config.slots:
-            entities.append(
-                Control4ButtonEntity(
-                    manager=manager,
-                    ieee_address=ieee,
-                    friendly_name=state.friendly_name,
-                    slot_id=slot.slot_id,
-                    slot_name=slot.name,
-                )
+        entities.extend(
+            Control4ButtonEntity(
+                manager=manager,
+                ieee_address=ieee,
+                friendly_name=state.friendly_name,
+                slot_id=slot.slot_id,
+                slot_name=slot.name,
             )
+            for slot in config.slots
+        )
 
     if entities:
         async_add_entities(entities)
@@ -73,7 +73,7 @@ class Control4ButtonEntity(ButtonEntity):
         self._ieee = ieee_address
         self._slot_id = slot_id
         self._attr_unique_id = f"{ieee_address}_button_{slot_id}"
-        self._attr_name = slot_name or f"Button {slot_id}"
+        self._attr_name = slot_name or f"Button {slot_id + 1}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, ieee_address)},
             "name": friendly_name,

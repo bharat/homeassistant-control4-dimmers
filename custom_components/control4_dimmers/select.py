@@ -15,6 +15,8 @@ from homeassistant.components.select import SelectEntity
 from .const import DEVICE_TYPES, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -62,16 +64,31 @@ class Control4DeviceTypeSelect(SelectEntity):
         """Initialize the select entity."""
         self._manager = manager
         self._ieee = ieee_address
+        self._unsub_listener: Callable[[], None] | None = None
         state = manager.devices.get(ieee_address)
         friendly = state.friendly_name if state else ieee_address
         self._attr_unique_id = f"{ieee_address}_device_type"
-        self._attr_name = f"{friendly} Device Type"
+        self._attr_name = "Device Type"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, ieee_address)},
             "name": friendly,
             "manufacturer": "Control4",
             "model": state.model_id if state else None,
         }
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to manager updates so state refreshes on MQTT changes."""
+        self._unsub_listener = self._manager.add_listener(self._on_manager_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from manager updates."""
+        if self._unsub_listener:
+            self._unsub_listener()
+            self._unsub_listener = None
+
+    def _on_manager_update(self) -> None:
+        """Refresh state when the manager detects new data from MQTT."""
+        self.async_write_ha_state()
 
     @property
     def current_option(self) -> str | None:
@@ -86,11 +103,17 @@ class Control4DeviceTypeSelect(SelectEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:
-        """Expose ieee_address and friendly_name for the card."""
+        """
+        Expose device identifiers for the card.
+
+        Note: we use ``device_name`` instead of ``friendly_name`` because
+        HA reserves the ``friendly_name`` attribute for the entity's own
+        computed display name.
+        """
         state = self._manager.devices.get(self._ieee)
         return {
             "ieee_address": self._ieee,
-            "friendly_name": state.friendly_name if state else None,
+            "device_name": state.friendly_name if state else None,
             "model_id": state.model_id if state else None,
             "detected_type": state.device_type if state else None,
         }

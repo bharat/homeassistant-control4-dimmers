@@ -2,7 +2,21 @@
 
 ## Current State
 
-**This repo** (`homeassistant-control4-dimmers`): Scaffolded HA custom component from the blueprint template. Placeholder code, mixed naming (still references `integration_blueprint` in several files). No real Control4 logic.
+**Custom HA integration** (`control4_dimmers`): Fully functional custom component with:
+
+- MQTT-based device discovery from Zigbee2MQTT (`bridge/devices`)
+- Automatic device type detection (dimmer / keypad-dimmer / keypad) via `c4_device_type` MQTT field
+- Device-type select entities with override support
+- Button entities for each configured slot (sends `c4.dmx.bp` commands via MQTT)
+- Event entities for each physical button slot (fires `press`, `double_press`, `triple_press`, `quadruple_press`)
+- LED light entities per slot (on/off color control via MQTT)
+- Persistent device configuration storage
+- Bundled Lovelace card (`control4-dimmer-card`) with:
+  - Dashboard view: interactive keypad (press/double-tap buttons), brightness/state display
+  - Configuration editor: device type, button slot layout, LED colors, behaviors, automation linking
+  - Frontend/backend version sync with toast notification
+- WebSocket API for card-to-backend communication
+- Development simulator (`scripts/simulate_devices.py`) with fake Control4 devices
 
 **Custom Z2M Docker image** (`z2m/`): Production Docker image bundling our converter + herdsman profile patch. Currently running in production.
 
@@ -85,32 +99,9 @@ The EZSP adapter in `zigbee-herdsman` silently drops messages on non-standard Zi
 
 **Upstream:** Deferred. We'll validate the full approach end-to-end first, then decide if/when to submit a PR. The Shelly precedent (custom profile whitelist) makes the case straightforward when we're ready.
 
-### Phase 3: Custom Docker Image for Z2M
+### Phase 3: Custom Docker Image for Z2M ✓
 
-Build a Z2M Docker image that bundles the herdsman fork + converter. This is the deployment vehicle for production.
-
-**Dockerfile approach:**
-
-```
-z2m/
-  Dockerfile              -- based on koenkk/zigbee2mqtt, overlays our converter + herdsman
-  docker-compose.yml      -- for local dev/testing
-  .env.example            -- MQTT broker, Z2M data dir, coordinator device
-```
-
-**Build strategy:**
-
-- Base: `koenkk/zigbee2mqtt:latest` (official image)
-- Layer 1: Replace `zigbee-herdsman` with our fork (`npm install` or file copy)
-- Layer 2: Copy `control4.mjs` into `/app/data/external_converters/`
-- Result: Drop-in replacement for the stock Z2M image
-
-**CI/CD:**
-
-- GitHub Actions workflow: build on push to `main`, tag-based releases
-- Push to `ghcr.io/bharat/zigbee2mqtt-control4:latest` and `:vX.Y.Z`
-- Fast-track dev: `make deploy` script that builds locally and `docker save | ssh | docker load` to prod server
-- Eventually Docker Hub if community adoption warrants
+Z2M Docker image built and deployed to production (`ghcr.io/bharat/zigbee2mqtt-control4`). Multi-arch build support (amd64/arm64) via `z2m/Makefile`.
 
 ### Phase 4: Complete Device Support
 
@@ -127,30 +118,13 @@ The converter handles the protocol but several features are untested or incomple
 - Expose dimming table parameters (`c4.dm.tv`) as HA number entities (ramp rates, min/max brightness)
 - Batch migration of remaining ~29 dimmers
 
-### Phase 5: HA Custom Component (Keypad Configuration)
+### Phase 5: HA Custom Component ✓
 
-Once Z2M handles all device communication, the HA custom component serves a focused role: **keypad button configuration UI**.
+Fully functional custom component with MQTT discovery, device entities, persistent config, and WebSocket API.
 
-The 6-slot C4 keypads have a modular button layout (1/2/3-slot buttons, rockers, up/down) that's configured via drag-and-drop in Composer Pro. We need an equivalent in HA.
+### Phase 6: Keypad Configuration Frontend ✓
 
-**Scope:**
-
-- Config flow: discover Control4 devices from Z2M MQTT
-- Keypad configuration entity: button layout, per-button behavior, LED colors
-- No device communication -- all commands route through Z2M MQTT
-- HACS-compatible for easy community installation
-
-### Phase 6: Keypad Configuration Frontend
-
-A custom HA frontend panel (Lovelace card or panel) for visual keypad configuration:
-
-- Visual representation of the 6-slot chassis
-- Drag-and-drop button assembly (1-slot, 2-slot, 3-slot, rocker)
-- Per-button settings: name, behavior (keypad/toggle/on/off), LED on-color, LED off-color
-- Live preview of LED colors
-- Writes configuration via MQTT to Z2M, which sends C4 text commands
-
-This is the biggest UX piece and should come after all device support is solid.
+Bundled Lovelace card (`control4-dimmer-card`) with interactive dashboard and configuration editor. Supports visual slot layout, per-button settings (name, behavior, LED colors), automation linking via event entities, and frontend/backend version sync.
 
 ### Phase 7: Upstream Contributions (Deferred)
 
@@ -162,9 +136,24 @@ Not starting upstream PRs until the full approach is validated end-to-end. When 
 - Document the `sendRequest()` bypass (may need an official API from herdsman)
 - Community documentation: migration guide, supported devices, troubleshooting
 
-## Immediate Next Steps (What We Build First)
+## Progress
 
-1. Set up `z2m/` directory with the cleaned converter and test framework
-2. Write initial test suite covering color math, protocol formatting, and detection logic
-3. Set up Docker build pipeline (Dockerfile + GitHub Actions)
-4. Clean the HA custom component scaffold (fix naming, remove placeholder code)
+1. Set up `z2m/` directory with converter and Docker build -- **DONE**
+2. Custom Z2M Docker image deployed to production -- **DONE**
+3. Clean HA custom component (naming, scaffold, real logic) -- **DONE**
+4. MQTT device discovery and state management -- **DONE**
+5. Device-type select entities with auto-detection -- **DONE**
+6. Bundled Lovelace card (dashboard + config editor) -- **DONE**
+7. Frontend/backend version sync -- **DONE**
+8. Button event entities (press/double/triple/quad) -- **DONE**
+9. Automation linking UI in card editor -- **DONE**
+10. Development simulator for offline iteration -- **DONE**
+
+## Remaining Work
+
+- Z2M converter test framework (Phase 1 -- vitest, color math, protocol)
+- Herdsman fork as proper source-level change (Phase 2 -- deferred pending validation)
+- GitHub Actions CI/CD for Docker image (Phase 3)
+- Complete device testing with physical hardware (Phase 4)
+- HACS compatibility packaging
+- Upstream PRs (Phase 7 -- deferred)

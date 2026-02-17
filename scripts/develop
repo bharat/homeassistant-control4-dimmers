@@ -53,6 +53,9 @@ else
 fi
 
 if [ "${1:-}" = "--sim" ]; then
+    # Kill any stale simulator instances to avoid MQTT client-id collisions
+    pkill -f "simulate_devices.py" 2>/dev/null || true
+    sleep 0.5
     echo "Starting device simulator..."
     python3 scripts/simulate_devices.py &
     SIM_PID=$!

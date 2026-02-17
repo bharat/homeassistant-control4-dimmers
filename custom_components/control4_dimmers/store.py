@@ -54,8 +54,3 @@ class Control4Store:
         """Save or update a device config."""
         self._devices[config.ieee_address] = config
         await self.async_save()
-
-    async def async_remove_device(self, ieee_address: str) -> None:
-        """Remove a device config."""
-        self._devices.pop(ieee_address, None)
-        await self.async_save()

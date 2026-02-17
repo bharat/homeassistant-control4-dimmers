@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers.event import async_call_later
 
-from ..const import JSMODULES, URL_BASE
+from control4_dimmers.const import JSMODULES, URL_BASE
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -32,11 +32,7 @@ class JSModuleRegistration:
         """Register the static HTTP path for frontend assets."""
         try:
             await self.hass.http.async_register_static_paths(
-                [
-                    StaticPathConfig(
-                        URL_BASE, Path(__file__).parent, cache_headers=False
-                    )
-                ]
+                [StaticPathConfig(URL_BASE, Path(__file__).parent, cache_headers=False)]
             )
         except RuntimeError:
             return

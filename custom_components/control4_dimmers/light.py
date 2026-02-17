@@ -1,4 +1,5 @@
-"""Light platform for Control4 Dimmers.
+"""
+Light platform for Control4 Dimmers.
 
 Creates HA light entities for LED color control on each button slot.
 Each slot has an ON color and OFF color, represented as separate lights.
@@ -6,8 +7,7 @@ Each slot has an ON color and OFF color, represented as separate lights.
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -15,13 +15,13 @@ from homeassistant.components.light import (
     ColorMode,
     LightEntity,
 )
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .manager import Control4Manager
 
@@ -44,18 +44,18 @@ async def async_setup_entry(
         state = manager.devices.get(ieee)
         if state is None:
             continue
-        for slot in config.slots:
-            for mode in ("on", "off"):
-                entities.append(
-                    Control4LedLight(
-                        manager=manager,
-                        ieee_address=ieee,
-                        friendly_name=state.friendly_name,
-                        slot_id=slot.slot_id,
-                        slot_name=slot.name,
-                        mode=mode,
-                    )
-                )
+        entities.extend(
+            Control4LedLight(
+                manager=manager,
+                ieee_address=ieee,
+                friendly_name=state.friendly_name,
+                slot_id=slot.slot_id,
+                slot_name=slot.name,
+                mode=mode,
+            )
+            for slot in config.slots
+            for mode in ("on", "off")
+        )
 
     if entities:
         async_add_entities(entities)
@@ -67,9 +67,9 @@ class Control4LedLight(LightEntity):
 
     _attr_has_entity_name = True
     _attr_color_mode = ColorMode.HS
-    _attr_supported_color_modes = {ColorMode.HS}
+    _attr_supported_color_modes: ClassVar[set[ColorMode]] = {ColorMode.HS}
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         manager: Control4Manager,
         ieee_address: str,
@@ -83,7 +83,7 @@ class Control4LedLight(LightEntity):
         self._ieee = ieee_address
         self._slot_id = slot_id
         self._mode = mode
-        label = slot_name or f"Button {slot_id}"
+        label = slot_name or f"Button {slot_id + 1}"
         mode_label = "On" if mode == "on" else "Off"
         self._attr_unique_id = f"{ieee_address}_led_{slot_id}_{mode}"
         self._attr_name = f"{label} LED {mode_label}"
@@ -116,7 +116,7 @@ class Control4LedLight(LightEntity):
         await self._manager.async_send_mqtt(self._ieee, payload)
         self.async_write_ha_state()
 
-    async def async_turn_off(self, **kwargs: Any) -> None:
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
         """Turn off the LED by setting it to black."""
         self._attr_is_on = False
         self._attr_brightness = 0

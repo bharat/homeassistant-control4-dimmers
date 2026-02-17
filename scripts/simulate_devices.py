@@ -208,16 +208,13 @@ class C4Simulator:
         self.broker = broker
         self.port = port
         self.topic = topic
-        self.client = mqtt_client.Client(
-            client_id="c4-simulator",
-            callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2,
-        )
+        self.client = mqtt_client.Client(client_id="c4-simulator")
         self.device_states: dict[str, dict] = {}
 
         for dev in DEVICES:
             self.device_states[dev["friendly_name"]] = build_device_state(dev)
 
-    def on_connect(self, client, userdata, flags, reason_code, properties=None):
+    def on_connect(self, client, userdata, flags, rc):
         log.info("Connected to MQTT broker at %s:%d", self.broker, self.port)
         client.subscribe(f"{self.topic}/+/set")
         log.info("Subscribed to %s/+/set", self.topic)

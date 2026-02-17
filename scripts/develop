@@ -27,6 +27,7 @@ echo "Config:  ${CONFIG_DIR}"
 echo "Integration: custom_components/control4_dimmers"
 echo ""
 
+MOSQUITTO_PID=""
 SIM_PID=""
 
 cleanup() {
@@ -34,8 +35,22 @@ cleanup() {
         echo "Stopping simulator (PID ${SIM_PID})..."
         kill "${SIM_PID}" 2>/dev/null || true
     fi
+    if [ -n "${MOSQUITTO_PID}" ]; then
+        echo "Stopping Mosquitto (PID ${MOSQUITTO_PID})..."
+        kill "${MOSQUITTO_PID}" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
+
+# Start Mosquitto if not already running
+if ! mosquitto_pub -t __ping -n 2>/dev/null; then
+    echo "Starting Mosquitto MQTT broker on port 1883..."
+    mosquitto -p 1883 -d
+    MOSQUITTO_PID=$(pgrep -n mosquitto || true)
+    sleep 1
+else
+    echo "Mosquitto already running."
+fi
 
 if [ "${1:-}" = "--sim" ]; then
     echo "Starting device simulator..."

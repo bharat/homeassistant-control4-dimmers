@@ -7,24 +7,10 @@
 homeassistant:
   debug: true
 
-automation:
-config:
-counter:
 frontend:
-input_boolean:
-input_number:
-input_select:
-input_text:
-logbook:
-map:
+config:
 my:
-scene:
-script:
-sun:
-system_health:
-tag:
-timer:
-zone:
+recorder:
 
 logger:
   default: info

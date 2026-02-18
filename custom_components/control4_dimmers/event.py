@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
+from homeassistant.helpers import entity_registry as er
+from homeassistant.util import slugify
 
 from .const import BUTTON_EVENT_TYPES, DEVICE_TYPE_SLOTS, DOMAIN, LOGGER
 
@@ -130,7 +132,18 @@ class Control4ButtonEvent(EventEntity):
                 self._attr_unique_id,
                 self.name,
             )
+            self._update_entity_id()
             self.async_write_ha_state()
+
+    def _update_entity_id(self) -> None:
+        """Update the entity_id in the HA registry to match the current name."""
+        if not self.hass or not self.registry_entry:
+            return
+        ent_reg = er.async_get(self.hass)
+        device_name = self._attr_device_info["name"]
+        new_entity_id = f"event.{slugify(f'{device_name} {self.name}')}"
+        if new_entity_id != self.entity_id:
+            ent_reg.async_update_entity(self.entity_id, new_entity_id=new_entity_id)
 
     def _sync_name_from_config(self) -> bool:
         """Update entity name from stored slot config. Return True if changed."""
@@ -143,6 +156,14 @@ class Control4ButtonEvent(EventEntity):
                 if slot_cfg.slot_id == self._slot_id and slot_cfg.name:
                     new_name = slot_cfg.name
                     break
+
+        if new_name is None:
+            device = self._manager.devices.get(self._ieee)
+            if device and device.device_type:
+                for default_slot in self._manager.get_default_slots(device.device_type):
+                    if default_slot.slot_id == self._slot_id and default_slot.name:
+                        new_name = default_slot.name
+                        break
 
         self._custom_name = new_name
         return self._custom_name != old_name

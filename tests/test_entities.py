@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -94,9 +94,23 @@ class TestControl4ButtonEvent:
         entity = self._make_entity(manager)
         assert entity.unique_id == f"{IEEE_DIMMER}_event_1"
 
-    def test_default_name(self, manager: Control4Manager) -> None:
+    def test_default_name_no_device(self, manager: Control4Manager) -> None:
         entity = self._make_entity(manager)
         assert entity.name == "Button 2"
+
+    def test_default_name_from_device_type(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        entity = self._make_entity(manager, slot_id=1)
+        assert entity.name == "Top"
+
+    def test_default_name_bottom_slot(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        entity = self._make_entity(manager, slot_id=4)
+        assert entity.name == "Bottom"
 
     def test_event_types(self, manager: Control4Manager) -> None:
         entity = self._make_entity(manager)
@@ -138,6 +152,30 @@ class TestControl4ButtonEvent:
         entity.async_write_ha_state = MagicMock()
         entity._on_button_event("press")
         entity.async_write_ha_state.assert_called_once()
+
+    def test_update_entity_id_on_rename(self, manager: Control4Manager) -> None:
+        entity = self._make_entity(manager)
+        entity.hass = MagicMock()
+        entity.async_write_ha_state = MagicMock()
+        mock_registry_entry = MagicMock()
+        mock_registry_entry.entity_id = "event.kitchen_button_2"
+        entity.registry_entry = mock_registry_entry
+        entity.entity_id = "event.kitchen_button_2"
+        mock_ent_reg = MagicMock()
+        with patch(
+            "custom_components.control4_dimmers.event.er.async_get",
+            return_value=mock_ent_reg,
+        ):
+            manager.store._devices[IEEE_DIMMER] = DeviceConfig(
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                device_type="dimmer",
+                slots=[SlotConfig(slot_id=1, name="Main")],
+            )
+            entity._on_manager_update()
+        mock_ent_reg.async_update_entity.assert_called_once_with(
+            "event.kitchen_button_2", new_entity_id="event.kitchen_main"
+        )
 
 
 # ── LED Light entity ─────────────────────────────────────────────────

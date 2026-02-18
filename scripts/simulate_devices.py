@@ -185,8 +185,17 @@ def build_device_state(dev: dict) -> dict:
             state[f"color_mode_button_{btn_id}_{mode}"] = "hs"
 
     for btn_id in leds.keys() if device_type == "dimmer" else range(6):
-        state[f"button_{btn_id}_behavior"] = "keypad"
-        state[f"button_{btn_id}_led_mode"] = "programmed"
+        if device_type == "dimmer":
+            behavior = "load_on" if btn_id == 1 else "load_off"
+            led_mode = "follow_load"
+        elif device_type == "keypaddim" and btn_id == 0:
+            behavior = "toggle_load"
+            led_mode = "follow_load"
+        else:
+            behavior = "keypad"
+            led_mode = "programmed"
+        state[f"button_{btn_id}_behavior"] = behavior
+        state[f"button_{btn_id}_led_mode"] = led_mode
 
     return state
 
@@ -300,20 +309,39 @@ class C4Simulator:
 
     @staticmethod
     def _apply_load_control(state: dict, btn_id: int | None) -> None:
-        """Update dimmer state/brightness when a load-control button is pressed."""
+        """
+        Update dimmer state/brightness when a load-control button is pressed.
+
+        The button's behavior determines whether it affects the load:
+          - toggle_load: toggle ON/OFF
+          - load_on:     turn ON
+          - load_off:    turn OFF
+          - keypad:      no load change (scene trigger only)
+
+        Dimmers default to load_on (Top) / load_off (Bottom) when no
+        behavior has been explicitly configured.
+        """
         if btn_id is None:
             return
         device_type = state.get("c4_device_type")
-        if device_type == "dimmer":
-            top, bottom = 1, 4
-        elif device_type == "keypaddim":
-            top, bottom = 0, 5
-        else:
+        if device_type not in ("dimmer", "keypaddim"):
             return
-        if btn_id == top:
+
+        behavior = state.get(f"button_{btn_id}_behavior", "")
+        if not behavior and device_type == "dimmer":
+            behavior = "load_on" if btn_id == 1 else "load_off"
+
+        if behavior == "toggle_load":
+            if state.get("state") == "ON":
+                state["state"] = "OFF"
+                state["brightness"] = 0
+            else:
+                state["state"] = "ON"
+                state["brightness"] = 254
+        elif behavior == "load_on":
             state["state"] = "ON"
             state["brightness"] = 254
-        elif btn_id == bottom:
+        elif behavior == "load_off":
             state["state"] = "OFF"
             state["brightness"] = 0
 

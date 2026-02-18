@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
-# Start a Home Assistant development server with the Control4 Dimmers integration.
-#
-# Prerequisites:
-#   pip install homeassistant paho-mqtt
-#   A Mosquitto broker running on localhost:1883
+# Start a Home Assistant development environment with MQTT and simulated devices.
 #
 # Usage:
-#   ./scripts/develop          # Start HA only
-#   ./scripts/develop --sim    # Start HA + device simulator
+#   ./scripts/develop          # Start Mosquitto + simulator + HA
+#   ./scripts/develop --no-sim # Start Mosquitto + HA (no simulator)
 #
-# The script:
-# 1. Optionally starts the device simulator in the background
-# 2. Starts HA with the local config directory
-# 3. HA is available at http://localhost:8123
+# All processes run in the foreground via concurrently and stop together on Ctrl+C.
+# HA is available at http://localhost:8123
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,41 +21,27 @@ echo "Config:  ${CONFIG_DIR}"
 echo "Integration: custom_components/control4_dimmers"
 echo ""
 
-MOSQUITTO_PID=""
-SIM_PID=""
-
-cleanup() {
-    if [ -n "${SIM_PID}" ]; then
-        echo "Stopping simulator (PID ${SIM_PID})..."
-        kill "${SIM_PID}" 2>/dev/null || true
-    fi
-    if [ -n "${MOSQUITTO_PID}" ]; then
-        echo "Stopping Mosquitto (PID ${MOSQUITTO_PID})..."
-        kill "${MOSQUITTO_PID}" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-
-# Start Mosquitto if not already running
-if ! mosquitto_pub -t __ping -n 2>/dev/null; then
-    echo "Starting Mosquitto MQTT broker on port 1883..."
-    mosquitto -p 1883 -d
-    MOSQUITTO_PID=$(pgrep -n mosquitto || true)
-    sleep 1
-else
-    echo "Mosquitto already running."
+SIM="--sim"
+if [ "${1:-}" = "--no-sim" ]; then
+    SIM=""
 fi
 
-if [ "${1:-}" = "--sim" ]; then
-    # Kill any stale simulator instances to avoid MQTT client-id collisions
-    pkill -f "simulate_devices.py" 2>/dev/null || true
-    sleep 0.5
-    echo "Starting device simulator..."
-    python3 scripts/simulate_devices.py &
-    SIM_PID=$!
-    echo "Simulator PID: ${SIM_PID}"
-    sleep 2
+COMMANDS=(
+    "mosquitto -p 1883 -v"
+    "hass --config ${CONFIG_DIR} --debug"
+)
+NAMES="mqtt,hass"
+COLORS="blue,magenta"
+
+if [ -n "${SIM}" ]; then
+    COMMANDS+=("python3 scripts/simulate_devices.py")
+    NAMES="${NAMES},sim"
+    COLORS="${COLORS},green"
 fi
 
-echo "Starting Home Assistant..."
-hass --config "${CONFIG_DIR}" --debug
+concurrently \
+    --kill-others \
+    --names "${NAMES}" \
+    --prefix-colors "${COLORS}" \
+    --prefix "[{name}]" \
+    "${COMMANDS[@]}"

@@ -102,13 +102,15 @@ class Control4DeviceTypeSelect(SelectEntity):
         return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | None]:
+    def extra_state_attributes(self) -> dict[str, str | int | None]:
         """
-        Expose device identifiers for the card.
+        Expose device identifiers and live load state for the card.
 
         Note: we use ``device_name`` instead of ``friendly_name`` because
         HA reserves the ``friendly_name`` attribute for the entity's own
-        computed display name.
+        computed display name.  ``load_state`` and ``load_brightness``
+        ensure HA fires state_changed events when the dimmer changes,
+        which lets the card re-render.
         """
         state = self._manager.devices.get(self._ieee)
         return {
@@ -116,6 +118,8 @@ class Control4DeviceTypeSelect(SelectEntity):
             "device_name": state.friendly_name if state else None,
             "model_id": state.model_id if state else None,
             "detected_type": state.device_type if state else None,
+            "load_state": state.state if state else None,
+            "load_brightness": state.brightness if state else None,
         }
 
     async def async_select_option(self, option: str) -> None:

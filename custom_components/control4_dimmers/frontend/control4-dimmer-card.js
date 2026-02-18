@@ -626,7 +626,7 @@ class Control4Card extends HTMLElement {
 
     const entityId = this._config.entity;
     if (entityId && hass.states[entityId]) {
-      const newState = hass.states[entityId].state;
+      const newState = hass.states[entityId].last_updated;
       const ieee = hass.states[entityId].attributes?.ieee_address;
       if (newState !== this._lastEntityState || (!this._deviceInfo && ieee)) {
         this._lastEntityState = newState;

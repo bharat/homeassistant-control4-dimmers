@@ -65,10 +65,8 @@ The resulting image is a drop-in replacement for the stock
 
 1. Copy `z2m/converters/control4.mjs` and `z2m/converters/c4-protocol.mjs`
    into your Zigbee2MQTT `external_converters/` directory.
-2. Patch zigbee-herdsman to accept the C4 profile. Either:
-   - Apply `z2m/herdsman-c4-profile.patch` to the source, or
-   - Run `exploration/scripts/patch-herdsman-c4-profile.sh` against a running
-     Z2M Docker container.
+2. Patch zigbee-herdsman to accept the C4 profile:
+   apply `z2m/herdsman-c4-profile.patch` to the source.
 3. Restart Zigbee2MQTT.
 
 ### HA Custom Component (future)
@@ -88,13 +86,6 @@ Zigbee2MQTT.
    ```
    mosquitto_pub -t zigbee2mqtt/DEVICE_NAME/set -m '{"c4_detect": true}'
    ```
-5. Optionally fix the interview state:
-   ```
-   python3 exploration/scripts/fix-c4-database.py /path/to/database.db --apply
-   ```
-
-See [exploration/README.md](exploration/README.md) for a detailed guide
-covering batch setup, LED color configuration, and troubleshooting.
 
 ## How it works
 
@@ -146,7 +137,6 @@ cd z2m && make push
 
 See [PLAN.md](PLAN.md) for the full project arc.
 
-- [x] Import exploration repo with full research and development history
 - [x] Clean converter with test framework (104 tests)
 - [x] Herdsman C4 profile patch
 - [x] Docker build pipeline + GitHub Actions CI/CD

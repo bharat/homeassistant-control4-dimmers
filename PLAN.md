@@ -139,15 +139,15 @@ Not starting upstream PRs until the full approach is validated end-to-end. When 
 ## Progress
 
 1. Set up `z2m/` directory with converter and Docker build -- **DONE**
-2. Custom Z2M Docker image deployed to production -- **DONE**
-3. Clean HA custom component (naming, scaffold, real logic) -- **DONE**
-4. MQTT device discovery and state management -- **DONE**
-5. Device-type select entities with auto-detection -- **DONE**
-6. Bundled Lovelace card (dashboard + config editor) -- **DONE**
-7. Frontend/backend version sync -- **DONE**
-8. Button event entities (press/double/triple/quad) -- **DONE**
-9. Automation linking UI in card editor -- **DONE**
-10. Development simulator for offline iteration -- **DONE**
+3. Custom Z2M Docker image deployed to production -- **DONE**
+4. Clean HA custom component (naming, scaffold, real logic) -- **DONE**
+5. MQTT device discovery and state management -- **DONE**
+6. Device-type select entities with auto-detection -- **DONE**
+7. Bundled Lovelace card (dashboard + config editor) -- **DONE**
+8. Frontend/backend version sync -- **DONE**
+9. Button event entities (press/double/triple/quad) -- **DONE**
+10. Automation linking UI in card editor -- **DONE**
+11. Development simulator for offline iteration -- **DONE**
 
 ## Remaining Work
 

@@ -1,13 +1,19 @@
-# Control4 Dimmers
+# Control4 Dimmers for Home Assistant
 
 [![Validate](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml)
 [![Lint](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml)
 [![Z2M Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml)
 
-Control4 Dimmers is a Home Assistant custom integration and Zigbee2MQTT
-converter that lets you migrate Control4 Zigbee dimmers and keypads to Home
-Assistant -- without replacing any hardware. Full on/off, dimming, LED color
-control, and keypad button events, matching original Control4 behavior.
+> **Background:** Control4 makes beautifully engineered Zigbee dimmers and
+> keypads. This project bridges them into the Home Assistant ecosystem so
+> they can participate alongside other Zigbee devices — preserving the
+> hardware you already have and the features that make it great. For the
+> full story of how this integration was researched and built using publicly
+> available information, see **[RESEARCH.md](RESEARCH.md)**.
+
+A Zigbee2MQTT converter that brings Control4 Zigbee dimmers and keypads into
+Home Assistant with full on/off, dimming, LED color control, and keypad
+button events — preserving the original Control4 experience.
 
 ## What you can do
 
@@ -15,7 +21,7 @@ control, and keypad button events, matching original Control4 behavior.
 - Set per-button LED colors with a native HA color picker (on-state and off-state independently).
 - Receive keypad button press, click count, and scene change events as HA actions.
 - Auto-detect device type (dimmer, keypad dimmer, or pure keypad) at pairing time.
-- Read stored LED colors from device firmware so migrated dimmers show their existing C4 colors.
+- Read stored LED colors from device firmware so dimmers retain their existing C4 colors.
 - Send raw C4 text protocol commands for experimentation and debugging.
 - Build and deploy a custom Z2M Docker image that bundles everything you need.
 
@@ -28,15 +34,15 @@ control, and keypad button events, matching original Control4 behavior.
 | C4-KC120277 | Configurable Keypad | N/A | Yes | 6 (configurable slots) | **Confirmed** |
 
 All newer Control4 Zigbee devices with manufacturer ID `43981` (`0xABCD`) are
-expected to work. Factory reset is **13-4-13**: press top 13x, bottom 4x, top
-13x.
+expected to work. To move a device to a new Zigbee mesh, use the **13-4-13**
+factory reset sequence: press top 13x, bottom 4x, top 13x.
 
 ## Prerequisites
 
 - Home Assistant with [Zigbee2MQTT](https://www.zigbee2mqtt.io/) installed
 - A supported Zigbee coordinator (SONOFF ZBDongle-E, SLZB-06, or any
   EFR32/CC2652-based stick)
-- Physical access to each Control4 dimmer for the factory reset sequence
+- Physical access to each Control4 device for the factory reset sequence
 
 ## Installation
 
@@ -72,9 +78,9 @@ scaffolded but not yet functional. It will provide a keypad button configuration
 UI once device support is complete. For now, all device control flows through
 Zigbee2MQTT.
 
-## Pairing a Dimmer
+## Adding a Device
 
-1. Factory reset the dimmer: press **top 13x, bottom 4x, top 13x**.
+1. Factory reset the device: press **top 13x, bottom 4x, top 13x**.
 2. Enable Permit Join in the Zigbee2MQTT web UI.
 3. Wait for the device to appear (interview may partially fail -- this is
    normal for C4 devices).
@@ -87,17 +93,16 @@ Zigbee2MQTT.
    python3 exploration/scripts/fix-c4-database.py /path/to/database.db --apply
    ```
 
-See [exploration/README.md](exploration/README.md) for the complete
-step-by-step migration guide covering batch migration, LED color setup,
-and troubleshooting.
+See [exploration/README.md](exploration/README.md) for a detailed guide
+covering batch setup, LED color configuration, and troubleshooting.
 
 ## How it works
 
-Control4 dimmers are standard Zigbee HA devices underneath a proprietary
-layer. Endpoint 1 speaks standard `genOnOff` (cluster `0x0006`) and
-`genLevelCtrl` (cluster `0x0008`) for on/off and dimming. LED color control
-and button events use a proprietary text-based protocol on Zigbee profile
-`0xC25C` with raw ASCII payloads (no ZCL framing).
+Control4 dimmers have a thoughtful two-layer architecture. Endpoint 1 speaks
+standard Zigbee HA — `genOnOff` (cluster `0x0006`) and `genLevelCtrl`
+(cluster `0x0008`) — for basic on/off and dimming. The advanced features that
+make C4 hardware special (LED colors, button events, device identification)
+use a text-based protocol on Zigbee profile `0xC25C` with raw ASCII payloads.
 
 This project has three layers:
 
@@ -141,7 +146,7 @@ cd z2m && make push
 
 See [PLAN.md](PLAN.md) for the full project arc.
 
-- [x] Import exploration repo with full reverse-engineering history
+- [x] Import exploration repo with full research and development history
 - [x] Clean converter with test framework (104 tests)
 - [x] Herdsman C4 profile patch
 - [x] Docker build pipeline + GitHub Actions CI/CD
@@ -151,8 +156,10 @@ See [PLAN.md](PLAN.md) for the full project arc.
 
 ## Credits
 
-- **pstuart** -- Original SmartThings C4 dimmer driver that proved standard
-  Zigbee commands work
+- **pstuart** -- Original SmartThings C4 driver that proved standard
+  Zigbee commands work (2014)
+- **ArcadeMachinist** -- Decoded the C4 keypad protocol and identified the
+  EZSP adapter requirement (2022)
 - **iankberry** -- Hubitat port confirming continued compatibility
 - **samtherecordman** -- Z2M issue #160 pioneer work with
   `disableDefaultResponse` discovery

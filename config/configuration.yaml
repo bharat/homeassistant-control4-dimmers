@@ -1,13 +1,31 @@
 # Home Assistant development config for Control4 Dimmers
+#
+# We avoid default_config: because it pulls in go2rtc, stream, etc.
+# which require binaries not present in the devcontainer. Instead we
+# include only the components we actually need.
 
-# https://www.home-assistant.io/integrations/default_config/
-default_config:
-
-# https://www.home-assistant.io/integrations/homeassistant/
 homeassistant:
   debug: true
 
-# https://www.home-assistant.io/integrations/logger/
+automation:
+config:
+counter:
+frontend:
+input_boolean:
+input_number:
+input_select:
+input_text:
+logbook:
+map:
+my:
+scene:
+script:
+sun:
+system_health:
+tag:
+timer:
+zone:
+
 logger:
   default: info
   logs:

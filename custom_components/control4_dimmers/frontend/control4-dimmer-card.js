@@ -571,20 +571,27 @@ function defaultSlotsForType(deviceType) {
   if (!meta) return [];
   if (deviceType === "dimmer") {
     return [
-      { slot_id: 1, size: 1, name: "Top", behavior: "toggle_load", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
-      { slot_id: 4, size: 1, name: "Bottom", behavior: "toggle_load", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
+      { slot_id: 1, size: 1, name: "Top", behavior: "load_on", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
+      { slot_id: 4, size: 1, name: "Bottom", behavior: "load_off", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
     ];
   }
-  return meta.slots.map((id) => ({
-    slot_id: id, size: 1, name: `Button ${slotDisplayNum(id)}`,
-    behavior: "keypad", led_mode: "programmed",
-    led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
-  }));
+  return meta.slots.map((id) => {
+    const isTopLoad = deviceType === "keypaddim" && id === 0;
+    return {
+      slot_id: id, size: 1, name: `Button ${slotDisplayNum(id)}`,
+      behavior: isTopLoad ? "toggle_load" : "keypad",
+      led_mode: isTopLoad ? "follow_load" : "programmed",
+      led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
+    };
+  });
 }
 
 function ledColor(cfg, deviceState) {
-  const isOn = deviceState === "ON";
-  return isOn ? (cfg.led_on_color || DEFAULT_COLORS.on) : (cfg.led_off_color || DEFAULT_COLORS.off);
+  if (cfg.led_mode === "follow_load") {
+    const isOn = deviceState === "ON";
+    return isOn ? (cfg.led_on_color || DEFAULT_COLORS.on) : (cfg.led_off_color || DEFAULT_COLORS.off);
+  }
+  return cfg.led_off_color || DEFAULT_COLORS.off;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -601,6 +608,15 @@ class Control4Card extends HTMLElement {
     this._slots = [];
     this._versionChecked = false;
     this._lastEntityState = null;
+    this._onConfigSaved = () => this._fetchDevice();
+  }
+
+  connectedCallback() {
+    window.addEventListener(`${DOMAIN}-config-saved`, this._onConfigSaved);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener(`${DOMAIN}-config-saved`, this._onConfigSaved);
   }
 
   set hass(hass) {
@@ -1034,6 +1050,7 @@ class Control4CardEditor extends HTMLElement {
       });
       this._dirty = false;
       await this._fetchDevice();
+      window.dispatchEvent(new CustomEvent(`${DOMAIN}-config-saved`));
     } catch (err) {
       console.error("Failed to save config", err);
     } finally {

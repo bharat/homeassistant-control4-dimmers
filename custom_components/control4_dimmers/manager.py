@@ -13,6 +13,7 @@ from .const import (
     CONF_MQTT_TOPIC,
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
+    DEVICE_TYPE_KEYPADDIM,
     LOGGER,
     SLOT_COUNT,
 )
@@ -371,6 +372,8 @@ class Control4Manager:
                     slot_id=1,
                     size=1,
                     name="Top",
+                    behavior="load_on",
+                    led_mode="follow_load",
                     led_on_color="ffffff",
                     led_off_color="000000",
                 ),
@@ -378,12 +381,24 @@ class Control4Manager:
                     slot_id=4,
                     size=1,
                     name="Bottom",
+                    behavior="load_off",
+                    led_mode="follow_load",
                     led_on_color="000000",
                     led_off_color="0000ff",
                 ),
             ]
         return [
-            SlotConfig(slot_id=i, size=1, name=f"Button {i + 1}")
+            SlotConfig(
+                slot_id=i,
+                size=1,
+                name=f"Button {i + 1}",
+                behavior="toggle_load"
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 0
+                else "keypad",
+                led_mode="follow_load"
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 0
+                else "programmed",
+            )
             for i in range(SLOT_COUNT)
         ]
 

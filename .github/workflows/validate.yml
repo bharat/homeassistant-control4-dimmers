@@ -25,13 +25,15 @@ jobs:
       - name: Run hassfest validation
         uses: home-assistant/actions/hassfest@55b4a5d23e09d627c2773c2ef82afa98904d65b4 # master
 
-  hacs: # https://github.com/hacs/action
-    name: HACS validation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run HACS validation
-        uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
-        with:
-          category: integration
-          # Remove this 'ignore' key when you have added brand images for your integration to https://github.com/home-assistant/brands
-          ignore: brands
+  # TODO: Re-enable when the repo is public. The HACS action fetches files via
+  # raw.githubusercontent.com which doesn't work for private repos.
+  # hacs: # https://github.com/hacs/action
+  #   name: HACS validation
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Run HACS validation
+  #       uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
+  #       with:
+  #         category: integration
+  #         # Remove this 'ignore' key when you have added brand images for your integration to https://github.com/home-assistant/brands
+  #         ignore: brands

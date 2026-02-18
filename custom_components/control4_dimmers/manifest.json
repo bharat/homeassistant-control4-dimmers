@@ -3,7 +3,7 @@
   "name": "Control4 Dimmers",
   "codeowners": ["@bharat"],
   "config_flow": true,
-  "dependencies": ["mqtt", "frontend", "http"],
+  "dependencies": ["mqtt", "http"],
   "documentation": "https://github.com/bharat/homeassistant-control4-dimmers",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/bharat/homeassistant-control4-dimmers/issues",

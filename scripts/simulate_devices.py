@@ -266,8 +266,9 @@ class C4Simulator:
         # Handle button press commands: echo an action event.
         c4_cmd = payload.get("c4_cmd", "")
         if c4_cmd:
-            action = self._parse_c4_cmd_to_action(c4_cmd)
+            action, btn_id = self._parse_c4_cmd(c4_cmd)
             if action:
+                self._apply_load_control(state, btn_id)
                 log.info("ACTION %s: %s", device_name, action)
                 state["action"] = action
                 self.publish_state(device_name)
@@ -282,20 +283,39 @@ class C4Simulator:
         self.publish_state(device_name)
 
     @staticmethod
-    def _parse_c4_cmd_to_action(cmd: str) -> str | None:
+    def _parse_c4_cmd(cmd: str) -> tuple[str | None, int | None]:
         """
-        Convert a c4_cmd string to a Z2M-style action string.
+        Convert a c4_cmd string to a Z2M-style action string and button ID.
 
         Examples:
-            c4.dmx.bp 00 -> button_0_press
-            c4.dmx.bp 03 -> button_3_press
+            c4.dmx.bp 00 -> ("button_0_press", 0)
+            c4.dmx.bp 03 -> ("button_3_press", 3)
 
         """
         bp_match = re.match(r"c4\.dmx\.bp\s+([0-9a-fA-F]+)", cmd)
         if bp_match:
             btn = int(bp_match.group(1), 16)
-            return f"button_{btn}_press"
-        return None
+            return f"button_{btn}_press", btn
+        return None, None
+
+    @staticmethod
+    def _apply_load_control(state: dict, btn_id: int | None) -> None:
+        """Update dimmer state/brightness when a load-control button is pressed."""
+        if btn_id is None:
+            return
+        device_type = state.get("c4_device_type")
+        if device_type == "dimmer":
+            top, bottom = 1, 4
+        elif device_type == "keypaddim":
+            top, bottom = 0, 5
+        else:
+            return
+        if btn_id == top:
+            state["state"] = "ON"
+            state["brightness"] = 254
+        elif btn_id == bottom:
+            state["state"] = "OFF"
+            state["brightness"] = 0
 
     def publish_bridge_devices(self) -> None:
         """Publish the bridge/devices discovery payload."""

@@ -697,6 +697,7 @@ class Control4Card extends HTMLElement {
         ieee_address: this._deviceInfo.ieee_address,
         payload: { c4_cmd: `c4.dmx.bp ${btnHex}` },
       });
+      setTimeout(() => this._fetchDevice(), 300);
     } catch (err) {
       console.error("Button press failed", err);
     }

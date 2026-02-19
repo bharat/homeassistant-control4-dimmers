@@ -67,22 +67,35 @@ function slotDisplayNum(slotId) { return slotId + 1; }
 const CARD_STYLES = `
   :host {
     display: block;
-    --c4-slot-height: 40px;
-    --c4-chassis-width: 160px;
+    --c4-slot-height: 44px;
   }
 
   ha-card { padding: 16px; }
 
-  /* ── Header ── */
+  /* ── Header (entities-card style) ── */
 
   .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     margin-bottom: 12px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
   }
-  .card-header .device-name {
+  .card-header:active {
+    opacity: 0.7;
+  }
+  .entity-icon {
+    --mdc-icon-size: 24px;
+    flex-shrink: 0;
+  }
+  .card-header .name {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 500;
+    font-size: 24px;
+    font-weight: 400;
     color: var(--primary-text-color);
+    line-height: 1.2;
+    flex: 1;
   }
 
   /* ── No entity / loading ── */
@@ -94,102 +107,53 @@ const CARD_STYLES = `
     font-size: 0.9rem;
   }
 
-  /* ── Chassis (centered) ── */
+  /* ── Chassis (full-width keypad) ── */
 
-  .chassis-wrap {
-    display: flex;
-    justify-content: center;
-  }
   .chassis {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    width: var(--c4-chassis-width);
-    background: var(--secondary-background-color);
-    border-radius: var(--ha-card-border-radius, 12px);
-    padding: 6px;
+    gap: 4px;
   }
   .chassis-btn {
     height: var(--c4-slot-height);
-    border-radius: 8px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
-    justify-content: center;
     cursor: pointer;
-    font-size: 0.78rem;
-    font-weight: 500;
+    font-size: 14px;
+    font-weight: 400;
     color: var(--primary-text-color);
-    position: relative;
     user-select: none;
-    background: var(--card-background-color, #fff);
-    border: 1px solid var(--divider-color);
-    padding-left: 20px;
-    transition: transform 0.1s ease, box-shadow 0.15s ease;
+    background: var(--secondary-background-color);
+    border: none;
+    padding: 0 14px;
+    transition: transform 0.1s ease, background 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
   }
   .chassis-btn:hover {
-    box-shadow: 0 1px 6px rgba(0,0,0,0.10);
+    filter: brightness(0.96);
   }
   .chassis-btn:active, .chassis-btn.pressing {
-    transform: scale(0.96);
+    transform: scale(0.97);
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
-    border-color: var(--primary-color);
   }
-  .chassis-btn.size-2 { height: calc(var(--c4-slot-height) * 2 + 3px); }
-  .chassis-btn.size-3 { height: calc(var(--c4-slot-height) * 3 + 6px); }
+  .chassis-btn.size-2 { height: calc(var(--c4-slot-height) * 2 + 4px); }
+  .chassis-btn.size-3 { height: calc(var(--c4-slot-height) * 3 + 8px); }
 
-  .chassis-btn .led {
-    position: absolute;
-    left: 7px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    border: 1px solid rgba(0,0,0,0.12);
-  }
   .chassis-btn .btn-label {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 0.75rem;
+    flex: 1;
   }
-
-  /* ── State info (below chassis) ── */
-
-  .state-info {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 20px;
-  }
-  .state-chip {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.82rem;
-    color: var(--secondary-text-color);
-  }
-  .state-chip .chip-value {
-    font-weight: 500;
-    color: var(--primary-text-color);
-  }
-  .state-chip .chip-value.on { color: var(--label-badge-green, #4caf50); }
-  .state-chip .chip-value.off { color: var(--secondary-text-color); }
-
-  .brightness-bar {
-    width: 80px;
-    height: 5px;
-    border-radius: 3px;
-    background: var(--divider-color);
-    overflow: hidden;
-  }
-  .brightness-bar .fill {
-    height: 100%;
-    border-radius: 3px;
-    background: var(--primary-color);
-    transition: width 0.3s ease;
+  .chassis-btn .led {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-left: 10px;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
   }
 
 `;
@@ -290,17 +254,15 @@ const EDITOR_STYLES = `
     border-radius: 6px;
     display: flex;
     align-items: center;
-    justify-content: center;
     cursor: pointer;
     transition: box-shadow 0.15s ease;
     font-size: 0.7rem;
     font-weight: 500;
     color: var(--primary-text-color);
-    position: relative;
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding-left: 16px;
+    padding: 0 8px;
   }
   .chassis-slot:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   .chassis-slot.selected {
@@ -314,16 +276,15 @@ const EDITOR_STYLES = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
   }
   .chassis-slot .led-dot {
-    position: absolute;
-    left: 5px;
-    top: 50%;
-    transform: translateY(-50%);
     width: 8px;
     height: 8px;
     border-radius: 50%;
     border: 1px solid var(--divider-color);
+    flex-shrink: 0;
+    margin-left: 4px;
   }
 
   /* ── Config panel ── */
@@ -725,6 +686,28 @@ class Control4Card extends HTMLElement {
     window.location.reload();
   }
 
+  /* ── entities-card integration ── */
+
+  _findLightEntityId() {
+    if (!this._hass || !this._deviceInfo) return null;
+    const ieee = this._deviceInfo.ieee_address;
+    for (const [eid, state] of Object.entries(this._hass.states)) {
+      if (eid.startsWith("light.") && state.attributes?.ieee_address === ieee) {
+        return eid;
+      }
+    }
+    return null;
+  }
+
+  _openMoreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(new CustomEvent("hass-more-info", {
+      detail: { entityId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   /* ── render ── */
 
   _render() {
@@ -737,6 +720,13 @@ class Control4Card extends HTMLElement {
     const brightness = dev?.brightness;
     const hasDimmer = effectiveType === "dimmer" || effectiveType === "keypaddim";
 
+    const iconStyle = (() => {
+      if (!hasDimmer) return "";
+      if (devState !== "ON") return "color: var(--state-icon-color, #44739e)";
+      const b = brightness != null ? brightness : 254;
+      return `color: var(--state-light-on-color, #f9d27e); filter: brightness(${Math.round((b + 245) / 5)}%)`;
+    })();
+
     this.shadowRoot.innerHTML = `
       <style>${CARD_STYLES}</style>
       <ha-card>
@@ -747,38 +737,23 @@ class Control4Card extends HTMLElement {
         ` : !dev ? `
           <div class="no-entity"><p>Loading...</p></div>
         ` : `
-          <div class="card-header">
-            <span class="device-name">${dev.friendly_name}</span>
-          </div>
+          <h1 class="card-header">
+            ${hasDimmer ? `<ha-icon class="entity-icon" icon="mdi:lightbulb" style="${iconStyle}"></ha-icon>` : ""}
+            <div class="name">${dev.friendly_name}</div>
+          </h1>
 
-          <div class="chassis-wrap">
-            <div class="chassis">
-              ${layout.map((btn) => {
-                const cfg = btn.slots[0];
-                const color = ledColor(cfg, devState);
-                return `
-                  <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                    <div class="led" style="background:#${color};"></div>
-                    <span class="btn-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
-                  </div>
-                `;
-              }).join("")}
-            </div>
-          </div>
-
-          ${hasDimmer ? `
-            <div class="state-info">
-              <div class="state-chip">
-                <span class="chip-value ${devState === 'ON' ? 'on' : 'off'}">${devState || "—"}</span>
-              </div>
-              <div class="state-chip">
-                <div class="brightness-bar">
-                  <div class="fill" style="width:${brightness != null ? Math.round(brightness / 254 * 100) : 0}%;"></div>
+          <div class="chassis">
+            ${layout.map((btn) => {
+              const cfg = btn.slots[0];
+              const color = ledColor(cfg, devState);
+              return `
+                <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
+                  <span class="btn-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
+                  <div class="led" style="background:#${color};"></div>
                 </div>
-                <span class="chip-value">${brightness != null ? Math.round(brightness / 254 * 100) + "%" : "—"}</span>
-              </div>
-            </div>
-          ` : ""}
+              `;
+            }).join("")}
+          </div>
         `}
       </ha-card>
     `;
@@ -789,6 +764,14 @@ class Control4Card extends HTMLElement {
   _attachListeners() {
     const root = this.shadowRoot;
     if (!root) return;
+
+    const header = root.querySelector(".card-header");
+    if (header) {
+      header.addEventListener("click", () => {
+        const lightId = this._findLightEntityId();
+        if (lightId) this._openMoreInfo(lightId);
+      });
+    }
 
     const btns = root.querySelectorAll(".chassis-btn");
     for (const el of btns) {
@@ -1126,8 +1109,8 @@ class Control4CardEditor extends HTMLElement {
                 const onColor = cfg.led_on_color || DEFAULT_COLORS.on;
                 return `
                   <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}" data-slot="${btn.startSlot}">
-                    <div class="led-dot" style="background:#${onColor};"></div>
                     <span class="slot-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
+                    <div class="led-dot" style="background:#${onColor};"></div>
                   </div>
                 `;
               }).join("")}

@@ -10,6 +10,7 @@ homeassistant:
 frontend:
 config:
 my:
+automation: !include automations.yaml
 recorder:
 
 logger:

@@ -898,13 +898,32 @@ class Control4CardEditor extends HTMLElement {
             item_id: entityId,
           });
           const autoIds = related?.automation || [];
-          autoMap[slotKey] = autoIds.map((aid) => {
+          const autos = [];
+          for (const aid of autoIds) {
             const st = this._hass.states[aid];
-            return {
+            let triggerEventTypes = [];
+            try {
+              const configId = st?.attributes?.id;
+              if (configId) {
+                const resp = await this._hass.callApi("GET", `config/automation/config/${configId}`);
+                const triggers = resp?.triggers || resp?.trigger || [];
+                const triggerList = Array.isArray(triggers) ? triggers : [triggers];
+                for (const t of triggerList) {
+                  const ids = Array.isArray(t.entity_id) ? t.entity_id : [t.entity_id];
+                  if (ids.includes(entityId) && t.attribute === "event_type") {
+                    const toVals = Array.isArray(t.to) ? t.to : t.to ? [t.to] : [];
+                    triggerEventTypes.push(...toVals);
+                  }
+                }
+              }
+            } catch { /* config not available */ }
+            autos.push({
               entity_id: aid,
               name: st?.attributes?.friendly_name || aid,
-            };
-          });
+              event_types: triggerEventTypes,
+            });
+          }
+          autoMap[slotKey] = autos;
         } catch {
           autoMap[slotKey] = [];
         }
@@ -1204,7 +1223,9 @@ class Control4CardEditor extends HTMLElement {
             <div class="section-title">${slot.name || `Button ${slotDisplayNum(slot.slot_id)}`} Automations</div>
             <div class="event-entity-id">${eventEntityId}</div>
             ${eventTypes.map((et) => {
-              const linked = automations.filter((a) => a.name);
+              const linked = automations.filter((a) =>
+                a.event_types.length === 0 || a.event_types.includes(et.key)
+              );
               return `
                 <div class="event-row">
                   <span class="event-type-label">${et.label}</span>

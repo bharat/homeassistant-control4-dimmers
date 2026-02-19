@@ -78,7 +78,8 @@ const CARD_STYLES = `
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 12px;
+    margin: -16px -16px 0;
+    padding: 12px 16px 16px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }

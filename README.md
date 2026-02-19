@@ -18,8 +18,9 @@ button events — preserving the original Control4 experience.
 ## What you can do
 
 - Control C4 dimmers and keypads through Home Assistant using standard Zigbee.
+- Configure buttons with a visual chassis editor in a custom Lovelace card.
 - Set per-button LED colors with a native HA color picker (on-state and off-state independently).
-- Receive keypad button press, click count, and scene change events as HA actions.
+- Trigger automations from physical button events (`pressed`, `released`, `single_tap`, `double_tap`, `triple_tap`) exposed as HA event entities.
 - Auto-detect device type (dimmer, keypad dimmer, or pure keypad) at pairing time.
 - Read stored LED colors from device firmware so dimmers retain their existing C4 colors.
 - Send raw C4 text protocol commands for experimentation and debugging.
@@ -69,12 +70,20 @@ The resulting image is a drop-in replacement for the stock
    apply `z2m/herdsman-c4-profile.patch` to the source.
 3. Restart Zigbee2MQTT.
 
-### HA Custom Component (future)
+### HA Custom Component
 
-The Home Assistant custom component (`custom_components/control4_dimmers`) is
-scaffolded but not yet functional. It will provide a keypad button configuration
-UI once device support is complete. For now, all device control flows through
-Zigbee2MQTT.
+Install the `custom_components/control4_dimmers` directory into your Home
+Assistant `custom_components/` folder and restart. The integration auto-discovers
+Control4 devices from Zigbee2MQTT and provides:
+
+- **Lovelace card** with an entities-card-style header, per-button LED
+  indicators, and click-to-open light control.
+- **Visual chassis editor** for naming buttons, choosing LED modes/colors,
+  and configuring button sizes.
+- **Event entities** for each button slot, with automation links shown
+  directly in the editor.
+- **Light entities** for dimmers with brightness control via the native HA
+  more-info dialog.
 
 ## Adding a Device
 
@@ -102,8 +111,8 @@ This project has three layers:
 2. **zigbee-herdsman Patch** -- adds profile `0xC25C` to the EZSP adapter's
    incoming message whitelist so C4 responses and button events aren't silently
    dropped.
-3. **HA Custom Component** *(future)* -- keypad configuration UI for the
-   6-slot C4 chassis.
+3. **HA Custom Component** -- Lovelace card with a visual chassis editor,
+   event entities for button automations, and light entities for dimmers.
 
 ### Runtime device detection
 
@@ -120,7 +129,13 @@ the same manufacturer ID. The converter uses a single
 ## Development
 
 ```bash
-# Run the converter test suite (104 tests)
+# Run the HA integration dev environment (MQTT broker + simulator + HA)
+scripts/develop
+
+# Run Python tests for the custom component
+python -m pytest tests/
+
+# Run the Z2M converter test suite (104 tests)
 cd z2m && npm test
 
 # Build the Docker image
@@ -140,9 +155,9 @@ See [PLAN.md](PLAN.md) for the full project arc.
 - [x] Clean converter with test framework (104 tests)
 - [x] Herdsman C4 profile patch
 - [x] Docker build pipeline + GitHub Actions CI/CD
+- [x] HA custom component with event entities and light entities
+- [x] Keypad configuration frontend (visual 6-slot chassis editor)
 - [ ] Complete device support (telemetry sensors, dimming tables)
-- [ ] HA custom component for keypad configuration
-- [ ] Keypad configuration frontend (visual 6-slot chassis editor)
 
 ## Credits
 

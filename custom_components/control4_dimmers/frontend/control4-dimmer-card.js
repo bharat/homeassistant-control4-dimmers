@@ -153,7 +153,6 @@ const CARD_STYLES = `
     border-radius: 50%;
     flex-shrink: 0;
     margin-left: 10px;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
   }
 
 `;
@@ -282,10 +281,8 @@ const EDITOR_STYLES = `
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: 1px solid var(--divider-color);
     flex-shrink: 0;
     margin-left: 6px;
-    box-shadow: inset 0 1px 1px rgba(0,0,0,0.1);
   }
 
   /* ── Config panel ── */
@@ -486,6 +483,16 @@ function hexToInputColor(hex) {
 
 function inputColorToHex(val) {
   return val.replace("#", "").toLowerCase();
+}
+
+function ledRingStyle(hex) {
+  const h = (hex || "000000").replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16) || 0;
+  const g = parseInt(h.substring(2, 4), 16) || 0;
+  const b = parseInt(h.substring(4, 6), 16) || 0;
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const ring = lum > 0.45 ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.5)";
+  return `box-shadow: 0 0 0 2px ${ring}, inset 0 1px 2px rgba(0,0,0,0.15);`;
 }
 
 function computeLayout(slotConfigs, deviceType) {
@@ -750,7 +757,7 @@ class Control4Card extends HTMLElement {
               return `
                 <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
                   <span class="btn-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
-                  <div class="led" style="background:#${color};"></div>
+                  <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
                 </div>
               `;
             }).join("")}
@@ -1130,7 +1137,7 @@ class Control4CardEditor extends HTMLElement {
                 return `
                   <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}" data-slot="${btn.startSlot}">
                     <span class="slot-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
-                    <div class="led-dot" style="background:#${onColor};"></div>
+                    <div class="led-dot" style="background:#${onColor}; ${ledRingStyle(onColor)}"></div>
                   </div>
                 `;
               }).join("")}

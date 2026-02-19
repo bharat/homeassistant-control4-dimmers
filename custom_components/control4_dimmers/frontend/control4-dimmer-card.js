@@ -163,8 +163,8 @@ const CARD_STYLES = `
 const EDITOR_STYLES = `
   :host {
     display: block;
-    --c4-slot-height: 32px;
-    --c4-chassis-width: 120px;
+    --c4-slot-height: 36px;
+    --c4-chassis-width: 130px;
   }
 
   .editor-section {
@@ -173,10 +173,10 @@ const EDITOR_STYLES = `
   .editor-section:last-child { margin-bottom: 0; }
 
   .section-label {
-    font-size: 0.82rem;
+    font-size: 14px;
     font-weight: 500;
     color: var(--secondary-text-color);
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     display: block;
   }
 
@@ -184,12 +184,12 @@ const EDITOR_STYLES = `
 
   .entity-picker select {
     width: 100%;
-    padding: 8px;
+    padding: 8px 10px;
     border-radius: 8px;
     border: 1px solid var(--divider-color);
     background: var(--input-fill-color, var(--secondary-background-color));
     color: var(--primary-text-color);
-    font-size: 0.875rem;
+    font-size: 14px;
     font-family: inherit;
     outline: none;
   }
@@ -197,7 +197,7 @@ const EDITOR_STYLES = `
 
   .hint {
     margin-top: 6px;
-    font-size: 0.75rem;
+    font-size: 12px;
     color: var(--secondary-text-color);
   }
 
@@ -210,22 +210,22 @@ const EDITOR_STYLES = `
     background: var(--card-background-color, #fff);
   }
   .device-config-box .box-header {
-    font-size: 0.88rem;
+    font-size: 16px;
     font-weight: 500;
     color: var(--primary-text-color);
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }
 
   /* ── Full-width selects (for top-level dropdowns) ── */
 
   .full-width-select {
     width: 100%;
-    padding: 8px;
+    padding: 8px 10px;
     border-radius: 8px;
     border: 1px solid var(--divider-color);
     background: var(--input-fill-color, var(--secondary-background-color));
     color: var(--primary-text-color);
-    font-size: 0.875rem;
+    font-size: 14px;
     font-family: inherit;
     outline: none;
   }
@@ -242,49 +242,50 @@ const EDITOR_STYLES = `
   .chassis {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     width: var(--c4-chassis-width);
     flex-shrink: 0;
     background: var(--secondary-background-color);
     border-radius: var(--ha-card-border-radius, 12px);
-    padding: 5px;
+    padding: 6px;
   }
   .chassis-slot {
     height: var(--c4-slot-height);
-    border-radius: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     cursor: pointer;
     transition: box-shadow 0.15s ease;
-    font-size: 0.7rem;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 400;
     color: var(--primary-text-color);
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding: 0 8px;
+    padding: 0 10px;
   }
   .chassis-slot:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   .chassis-slot.selected {
     border-color: var(--primary-color);
     box-shadow: 0 0 0 1px var(--primary-color);
   }
-  .chassis-slot.size-2 { height: calc(var(--c4-slot-height) * 2 + 2px); }
-  .chassis-slot.size-3 { height: calc(var(--c4-slot-height) * 3 + 4px); }
+  .chassis-slot.size-2 { height: calc(var(--c4-slot-height) * 2 + 3px); }
+  .chassis-slot.size-3 { height: calc(var(--c4-slot-height) * 3 + 6px); }
   .chassis-slot .slot-label {
-    font-size: 0.7rem;
+    font-size: 12px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
   }
   .chassis-slot .led-dot {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     border: 1px solid var(--divider-color);
     flex-shrink: 0;
-    margin-left: 4px;
+    margin-left: 6px;
+    box-shadow: inset 0 1px 1px rgba(0,0,0,0.1);
   }
 
   /* ── Config panel ── */
@@ -293,21 +294,21 @@ const EDITOR_STYLES = `
 
   .slot-config {
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: var(--secondary-background-color);
   }
   .config-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
   .config-row:last-child { margin-bottom: 0; }
   .config-row label {
-    font-size: 0.78rem;
+    font-size: 13px;
     font-weight: 500;
     color: var(--secondary-text-color);
-    width: 60px;
+    width: 68px;
     flex-shrink: 0;
   }
   .config-row input[type="text"],
@@ -318,7 +319,7 @@ const EDITOR_STYLES = `
     border: 1px solid var(--divider-color);
     background: var(--input-fill-color, var(--card-background-color, #fff));
     color: var(--primary-text-color);
-    font-size: 0.82rem;
+    font-size: 14px;
     font-family: inherit;
     outline: none;
     min-width: 0;
@@ -343,7 +344,7 @@ const EDITOR_STYLES = `
     flex: 1;
   }
   .color-pair .color-label {
-    font-size: 0.72rem;
+    font-size: 12px;
     color: var(--secondary-text-color);
   }
 
@@ -354,12 +355,12 @@ const EDITOR_STYLES = `
     gap: 4px;
   }
   .size-buttons button {
-    padding: 4px 10px;
+    padding: 5px 12px;
     border-radius: 6px;
     border: 1px solid var(--divider-color);
     background: var(--card-background-color, #fff);
     color: var(--primary-text-color);
-    font-size: 0.78rem;
+    font-size: 13px;
     font-family: inherit;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -382,41 +383,41 @@ const EDITOR_STYLES = `
     border-top: 1px solid var(--divider-color);
   }
   .automations-section .section-title {
-    font-size: 0.76rem;
+    font-size: 12px;
     font-weight: 600;
     color: var(--secondary-text-color);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
   .automations-section .event-row {
     display: flex;
     align-items: baseline;
-    gap: 6px;
-    margin-bottom: 4px;
-    font-size: 0.78rem;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
   }
   .automations-section .event-type-label {
     font-weight: 500;
     color: var(--primary-text-color);
-    min-width: 85px;
+    min-width: 90px;
   }
   .automations-section .auto-link {
     color: var(--primary-color);
     cursor: pointer;
     text-decoration: none;
-    font-size: 0.76rem;
+    font-size: 13px;
   }
   .automations-section .auto-link:hover { text-decoration: underline; }
   .automations-section .auto-none {
     color: var(--disabled-text-color, #999);
-    font-size: 0.76rem;
+    font-size: 13px;
     font-style: italic;
   }
   .automations-section .create-auto-link {
     display: inline-block;
-    margin-top: 6px;
-    font-size: 0.78rem;
+    margin-top: 8px;
+    font-size: 13px;
     color: var(--primary-color);
     cursor: pointer;
     text-decoration: none;
@@ -424,11 +425,11 @@ const EDITOR_STYLES = `
   }
   .automations-section .create-auto-link:hover { text-decoration: underline; }
   .automations-section .event-entity-id {
-    font-size: 0.68rem;
+    font-size: 11px;
     color: var(--secondary-text-color);
     font-family: monospace;
     margin-top: 2px;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     word-break: break-all;
   }
 
@@ -440,7 +441,7 @@ const EDITOR_STYLES = `
   }
   .setup-prompt p {
     color: var(--secondary-text-color);
-    font-size: 0.82rem;
+    font-size: 14px;
     margin: 0;
   }
 
@@ -453,10 +454,10 @@ const EDITOR_STYLES = `
     gap: 8px;
   }
   .save-bar button {
-    padding: 6px 16px;
+    padding: 8px 18px;
     border-radius: 8px;
     border: none;
-    font-size: 0.82rem;
+    font-size: 14px;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -1156,11 +1157,11 @@ class Control4CardEditor extends HTMLElement {
       <div class="slot-config">
         ${showSize ? `
           <div class="config-row">
-            <label>Size</label>
+            <label>Slots</label>
             <div class="size-buttons">
               ${[1, 2, 3].map((size) => `
                 <button class="size-btn ${slot.size === size ? "active" : ""}" data-size="${size}">
-                  ${size}-slot
+                  ${size}
                 </button>
               `).join("")}
             </div>

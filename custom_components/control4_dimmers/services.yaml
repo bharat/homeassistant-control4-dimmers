@@ -1,0 +1,60 @@
+set_led:
+  name: Set LED Color
+  description: Set an LED color on a Control4 button.
+  fields:
+    entity_id:
+      name: Button Entity
+      description: The event entity for the button.
+      required: true
+      selector:
+        entity:
+          domain: event
+    mode:
+      name: Mode
+      description: Which LED state to set (on or off).
+      required: true
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+    color:
+      name: Color
+      description: Hex RGB color (e.g. "#ff0000").
+      required: true
+      selector:
+        text:
+
+press_button:
+  name: Press Button
+  description: Simulate a button press on a Control4 device.
+  fields:
+    entity_id:
+      name: Button Entity
+      description: The event entity for the button.
+      required: true
+      selector:
+        entity:
+          domain: event
+
+set_device_type:
+  name: Set Device Type
+  description: Override the auto-detected device type.
+  fields:
+    entity_id:
+      name: Device Sensor
+      description: The sensor anchor entity for the device.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+    device_type:
+      name: Device Type
+      description: The device type to set.
+      required: true
+      selector:
+        select:
+          options:
+            - "dimmer"
+            - "keypaddim"
+            - "keypad"

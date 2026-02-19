@@ -22,18 +22,18 @@ export const C4_CLUSTER     = 1;      // Proprietary cluster (NOT genPowerCfg)
 // KC120277 pure keypad uses: 00–05 (6 configurable slots)
 
 export const BUTTONS = [
-    {idx: 0, id: '00'},
-    {idx: 1, id: '01'},
-    {idx: 2, id: '02'},
-    {idx: 3, id: '03'},
-    {idx: 4, id: '04'},
-    {idx: 5, id: '05'},
+    {idx: 1, id: '00'},
+    {idx: 2, id: '01'},
+    {idx: 3, id: '02'},
+    {idx: 4, id: '03'},
+    {idx: 5, id: '04'},
+    {idx: 6, id: '05'},
 ];
 
 // Legacy name map for the raw c4_led interface
 export const LED_IDS = {
     top: '01', bottom: '04',
-    '0': '00', '1': '01', '2': '02', '3': '03', '4': '04', '5': '05',
+    '1': '00', '2': '01', '3': '02', '4': '03', '5': '04', '6': '05',
 };
 
 export const LED_MODES = {
@@ -207,23 +207,26 @@ export function parseButtonEvent(text) {
     // Button press: 0t<seq> sa c4.dmx.bp <btn>
     const bpMatch = text.match(/^0t\w+ sa c4\.dmx\.bp (\w+)/);
     if (bpMatch) {
-        const btnId = parseInt(bpMatch[1], 16);
-        return {action: `button_${btnId}_press`, buttonId: btnId, type: 'press'};
+        const wireId = parseInt(bpMatch[1], 16);
+        const btnIdx = wireId + 1;
+        return {action: `button_${btnIdx}_press`, buttonId: btnIdx, type: 'press'};
     }
 
     // Click count: 0t<seq> sa c4.dmx.cc <btn> <count>
     const ccMatch = text.match(/^0t\w+ sa c4\.dmx\.cc (\w+) (\w+)/);
     if (ccMatch) {
-        const btnId = parseInt(ccMatch[1], 16);
+        const wireId = parseInt(ccMatch[1], 16);
+        const btnIdx = wireId + 1;
         const count = parseInt(ccMatch[2], 16);
-        return {action: `button_${btnId}_click_${count}`, buttonId: btnId, clickCount: count, type: 'click'};
+        return {action: `button_${btnIdx}_click_${count}`, buttonId: btnIdx, clickCount: count, type: 'click'};
     }
 
     // Scene change: 0t<seq> sa c4.dmx.sc <btn>
     const scMatch = text.match(/^0t\w+ sa c4\.dmx\.sc (\w+)/);
     if (scMatch) {
-        const btnId = parseInt(scMatch[1], 16);
-        return {action: `button_${btnId}_scene`, buttonId: btnId, type: 'scene'};
+        const wireId = parseInt(scMatch[1], 16);
+        const btnIdx = wireId + 1;
+        return {action: `button_${btnIdx}_scene`, buttonId: btnIdx, type: 'scene'};
     }
 
     return null;
@@ -253,21 +256,15 @@ export function classifyDeviceType(dimResponseText) {
 /** Get button list for a device type */
 export function getButtonsForDeviceType(deviceType) {
     if (deviceType === 'dimmer') {
-        return BUTTONS.filter(b => b.idx === 1 || b.idx === 4);
+        return BUTTONS.filter(b => b.idx === 2 || b.idx === 5);
     }
     return BUTTONS; // keypaddim and keypad use all 6 slots
 }
 
-/** Build state object from a read LED color */
+/** Build state object from a read LED color (flat hex attribute) */
 export function buildLedColorState(buttonIdx, suffix, hexColor) {
-    const epName = `button_${buttonIdx}_${suffix}`;
-    const isBlack = hexColor === '000000';
-    const hs = rgbHexToHs(hexColor);
     return {
-        [`state_${epName}`]: isBlack ? 'OFF' : 'ON',
-        [`brightness_${epName}`]: isBlack ? 0 : 254,
-        [`color_${epName}`]: hs,
-        [`color_mode_${epName}`]: 'hs',
+        [`c4_led_${buttonIdx}_${suffix}`]: hexColor,
     };
 }
 

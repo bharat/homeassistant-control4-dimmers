@@ -100,8 +100,8 @@ def dimmer_config() -> DeviceConfig:
         friendly_name="Kitchen",
         device_type="dimmer",
         slots=[
-            SlotConfig(slot_id=1, name="Top"),
-            SlotConfig(slot_id=4, name="Bottom"),
+            SlotConfig(slot_id=2, name="Top"),
+            SlotConfig(slot_id=5, name="Bottom"),
         ],
     )
 
@@ -113,7 +113,7 @@ def keypad_config() -> DeviceConfig:
         ieee_address=IEEE_KEYPAD,
         friendly_name="Theater",
         device_type="keypad",
-        slots=[SlotConfig(slot_id=i, name=f"Button {i + 1}") for i in range(6)],
+        slots=[SlotConfig(slot_id=i, name=f"Button {i}") for i in range(1, 7)],
     )
 
 

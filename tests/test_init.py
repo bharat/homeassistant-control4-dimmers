@@ -44,6 +44,10 @@ class TestAsyncSetup:
                 new_callable=AsyncMock,
             ),
             patch(
+                "custom_components.control4_dimmers._register_services",
+                new_callable=AsyncMock,
+            ),
+            patch(
                 "custom_components.control4_dimmers._register_frontend",
                 new_callable=AsyncMock,
             ),

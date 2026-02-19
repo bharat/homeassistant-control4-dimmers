@@ -134,17 +134,29 @@ class TestDeviceState:
         state.update_from_mqtt({"c4_device_type": "keypaddim"})
         assert state.device_type == "keypaddim"
 
-    def test_update_led_colors(self) -> None:
+    def test_update_led_colors_flat_hex(self) -> None:
         state = DeviceState(ieee_address="0x001", friendly_name="Test")
         state.update_from_mqtt(
             {
-                "color_button_0_on": {"hue": 240, "saturation": 100},
-                "color_button_0_off": "000000",
+                "c4_led_1_on": "0000ff",
+                "c4_led_1_off": "000000",
             }
         )
-        assert 0 in state.led_colors
-        assert "on" in state.led_colors[0]
-        assert state.led_colors[0]["off"] == "000000"
+        assert 1 in state.led_colors
+        assert state.led_colors[1]["on"] == "0000ff"
+        assert state.led_colors[1]["off"] == "000000"
+
+    def test_update_led_colors_legacy_hs(self) -> None:
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "color_button_1_on": {"hue": 240, "saturation": 100},
+                "color_button_1_off": "000000",
+            }
+        )
+        assert 1 in state.led_colors
+        assert "on" in state.led_colors[1]
+        assert state.led_colors[1]["off"] == "000000"
 
     def test_update_button_configs(self) -> None:
         state = DeviceState(ieee_address="0x001", friendly_name="Test")

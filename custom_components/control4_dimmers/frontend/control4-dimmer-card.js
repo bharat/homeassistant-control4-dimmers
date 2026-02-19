@@ -4,7 +4,7 @@
  * CARD:   Interactive control surface — press buttons, see LED states.
  * EDITOR: Full device configuration — slots, behaviors, LED colors, device type.
  *
- * Config: { type: "custom:control4-dimmer-card", entity: "select.xxx_device_type" }
+ * Config: { type: "custom:control4-dimmer-card", entity: "sensor.xxx" }
  */
 
 const DOMAIN = "control4_dimmers";
@@ -38,9 +38,9 @@ const CARD_VERSION = (() => {
 /* ────────────────────── constants ────────────────────── */
 
 const DEVICE_TYPES = {
-  dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [1, 4],        fixedLayout: true },
-  keypaddim: { label: "Keypad Dimmer", model: "C4-KD120",    slots: [0,1,2,3,4,5], fixedLayout: false },
-  keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [0,1,2,3,4,5], fixedLayout: false },
+  dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [2, 5],        fixedLayout: true },
+  keypaddim: { label: "Keypad Dimmer", model: "C4-KD120",    slots: [1,2,3,4,5,6], fixedLayout: false },
+  keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
 };
 
 const BEHAVIORS = [
@@ -58,9 +58,6 @@ const LED_MODES = [
 ];
 
 const DEFAULT_COLORS = { on: "0000ff", off: "000000" };
-
-/** Map internal 0-based slot_id to a 1-based display number. */
-function slotDisplayNum(slotId) { return slotId + 1; }
 
 /* ────────────────────── card styles (interactive view) ────────────────────── */
 
@@ -514,7 +511,7 @@ function computeLayout(slotConfigs, deviceType) {
     return activeSlots.map((id) => {
       const cfg = slotConfigs.find((s) => s.slot_id === id) || {
         slot_id: id, size: 1,
-        name: id === 1 ? "Top" : "Bottom",
+        name: id === 2 ? "Top" : "Bottom",
         led_on_color: "ffffff", led_off_color: "0000ff",
       };
       return { startSlot: id, size: 1, slots: [cfg] };
@@ -536,7 +533,7 @@ function computeLayout(slotConfigs, deviceType) {
     if (!used.has(id)) {
       buttons.push({
         startSlot: id, size: 1,
-        slots: [{ slot_id: id, size: 1, name: `Button ${slotDisplayNum(id)}`, behavior: "keypad", led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
+        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, behavior: "keypad", led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
       });
     }
   }
@@ -550,14 +547,14 @@ function defaultSlotsForType(deviceType) {
   if (!meta) return [];
   if (deviceType === "dimmer") {
     return [
-      { slot_id: 1, size: 1, name: "Top", behavior: "load_on", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
-      { slot_id: 4, size: 1, name: "Bottom", behavior: "load_off", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
+      { slot_id: 2, size: 1, name: "Top", behavior: "load_on", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
+      { slot_id: 5, size: 1, name: "Bottom", behavior: "load_off", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
     ];
   }
   return meta.slots.map((id) => {
-    const isTopLoad = deviceType === "keypaddim" && id === 0;
+    const isTopLoad = deviceType === "keypaddim" && id === 1;
     return {
-      slot_id: id, size: 1, name: `Button ${slotDisplayNum(id)}`,
+      slot_id: id, size: 1, name: `Button ${id}`,
       behavior: isTopLoad ? "toggle_load" : "keypad",
       led_mode: isTopLoad ? "follow_load" : "programmed",
       led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
@@ -585,6 +582,7 @@ class Control4Card extends HTMLElement {
     this._config = {};
     this._deviceInfo = null;
     this._slots = [];
+    this._eventEntities = {};
     this._versionChecked = false;
     this._lastEntityState = null;
     this._onConfigSaved = () => this._fetchDevice();
@@ -620,6 +618,7 @@ class Control4Card extends HTMLElement {
     this._config = config;
     this._deviceInfo = null;
     this._slots = [];
+    this._eventEntities = {};
     if (this._hass && config.entity) this._fetchDevice();
     this._render();
   }
@@ -672,6 +671,15 @@ class Control4Card extends HTMLElement {
       } else {
         this._slots = defaultSlotsForType(effectiveType);
       }
+      if (info.ieee_address) {
+        try {
+          const evts = await this._hass.connection.sendMessagePromise({
+            type: `${DOMAIN}/event_entities`,
+            ieee_address: info.ieee_address,
+          });
+          this._eventEntities = evts || {};
+        } catch { /* non-critical */ }
+      }
       this._render();
     } catch (err) {
       console.error("Control4 Card: failed to fetch device", err);
@@ -685,12 +693,14 @@ class Control4Card extends HTMLElement {
 
   async _pressButton(slotId) {
     if (!this._hass || !this._deviceInfo) return;
-    const btnHex = slotId.toString(16).padStart(2, "0");
+    const eventEntityId = this._eventEntities[`slot_${slotId}`];
+    if (!eventEntityId) {
+      console.error("No event entity for slot", slotId);
+      return;
+    }
     try {
-      await this._hass.connection.sendMessagePromise({
-        type: `${DOMAIN}/send_mqtt`,
-        ieee_address: this._deviceInfo.ieee_address,
-        payload: { c4_cmd: `c4.dmx.bp ${btnHex}` },
+      await this._hass.callService(DOMAIN, "press_button", {
+        entity_id: eventEntityId,
       });
       setTimeout(() => this._fetchDevice(), 300);
     } catch (err) {
@@ -766,7 +776,7 @@ class Control4Card extends HTMLElement {
               const color = ledColor(cfg, devState);
               return `
                 <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                  <span class="btn-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
+                  <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
                   <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
                 </div>
               `;
@@ -855,14 +865,13 @@ class Control4CardEditor extends HTMLElement {
     if (!this._hass) return [];
     return Object.keys(this._hass.states)
       .filter((eid) => {
-        if (!eid.startsWith("select.")) return false;
-        return this._hass.states[eid]?.attributes?.ieee_address != null;
+        if (!eid.startsWith("sensor.")) return false;
+        const attrs = this._hass.states[eid]?.attributes;
+        return attrs?.ieee_address != null && (attrs?.device_type != null || attrs?.detected_type != null);
       })
       .map((eid) => {
         const st = this._hass.states[eid];
-        // Use our custom device_name attribute (the Z2M device name),
-        // NOT HA's friendly_name which includes the entity suffix.
-        const devName = st.attributes.device_name || st.attributes.friendly_name || eid;
+        const devName = st.attributes.friendly_name || eid;
         return {
           entity_id: eid,
           display_name: devName,
@@ -971,9 +980,9 @@ class Control4CardEditor extends HTMLElement {
   async _handleTypeChange(newType) {
     if (!this._deviceInfo || !this._hass || !newType) return;
     try {
-      await this._hass.callService("select", "select_option", {
+      await this._hass.callService(DOMAIN, "set_device_type", {
         entity_id: this._config.entity,
-        option: newType,
+        device_type: newType,
       });
       this._localSlots = defaultSlotsForType(newType);
       this._dirty = true;
@@ -999,7 +1008,7 @@ class Control4CardEditor extends HTMLElement {
     // Instead, surgically update any affected DOM elements.
     if (field === "name") {
       const root = this.shadowRoot;
-      const displayName = value || `Button ${slotDisplayNum(slotId)}`;
+      const displayName = value || `Button ${slotId}`;
       // Update the chassis button label on the left.
       const slotEl = root?.querySelector(`.chassis-slot[data-slot="${slotId}"]`);
       if (slotEl) {
@@ -1034,7 +1043,7 @@ class Control4CardEditor extends HTMLElement {
     let mainSlot = this._localSlots.find((s) => s.slot_id === startSlot);
     if (!mainSlot) {
       mainSlot = {
-        slot_id: startSlot, size: newSize, name: `Button ${slotDisplayNum(startSlot)}`,
+        slot_id: startSlot, size: newSize, name: `Button ${startSlot}`,
         behavior: "keypad", led_mode: "programmed",
         led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
       };
@@ -1045,7 +1054,7 @@ class Control4CardEditor extends HTMLElement {
     for (const id of meta.slots) {
       if (!this._localSlots.find((s) => s.slot_id === id) && (id < startSlot || id >= startSlot + newSize)) {
         this._localSlots.push({
-          slot_id: id, size: 1, name: `Button ${slotDisplayNum(id)}`,
+          slot_id: id, size: 1, name: `Button ${id}`,
           behavior: "keypad", led_mode: "programmed",
           led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
         });
@@ -1149,7 +1158,7 @@ class Control4CardEditor extends HTMLElement {
                 const onColor = cfg.led_on_color || DEFAULT_COLORS.on;
                 return `
                   <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}" data-slot="${btn.startSlot}">
-                    <span class="slot-label">${cfg.name || `Button ${slotDisplayNum(btn.startSlot)}`}</span>
+                    <span class="slot-label">${cfg.name || `Button ${btn.startSlot}`}</span>
                     <div class="led-dot" style="background:#${onColor}; ${ledRingStyle(onColor)}"></div>
                   </div>
                 `;
@@ -1210,7 +1219,7 @@ class Control4CardEditor extends HTMLElement {
         ` : ""}
         <div class="config-row">
           <label>Name</label>
-          <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slotDisplayNum(slot.slot_id)}">
+          <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slot.slot_id}">
         </div>
         ${showLoadOptions ? `
           <div class="config-row">
@@ -1242,7 +1251,7 @@ class Control4CardEditor extends HTMLElement {
 
         ${eventEntityId ? `
           <div class="automations-section">
-            <div class="section-title">${slot.name || `Button ${slotDisplayNum(slot.slot_id)}`} Automations</div>
+            <div class="section-title">${slot.name || `Button ${slot.slot_id}`} Automations</div>
             <div class="event-entity-id">${eventEntityId}</div>
             ${eventTypes.map((et) => {
               const linked = automations.filter((a) =>

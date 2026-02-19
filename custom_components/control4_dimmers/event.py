@@ -9,7 +9,7 @@ can be used as an automation trigger.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.helpers import entity_registry as er
@@ -43,7 +43,8 @@ async def async_setup_entry(
     def _check_new_devices() -> None:
         new_entities: list[Control4ButtonEvent] = []
         for ieee, state in manager.devices.items():
-            device_type = state.device_type
+            config = manager.store.get_device(ieee)
+            device_type = config.effective_type if config else state.device_type
             if not device_type:
                 continue
             slot_ids = DEVICE_TYPE_SLOTS.get(device_type, [])
@@ -88,7 +89,7 @@ class Control4ButtonEvent(EventEntity):
         self._manager = manager
         self._ieee = ieee_address
         self._slot_id = slot_id
-        self._default_name = f"Button {slot_id + 1}"
+        self._default_name = f"Button {slot_id}"
         self._custom_name: str | None = None
         self._unsub_event: Callable[[], None] | None = None
         self._unsub_listener: Callable[[], None] | None = None
@@ -106,6 +107,44 @@ class Control4ButtonEvent(EventEntity):
     def name(self) -> str:
         """Return the current name, reflecting any user-configured label."""
         return self._custom_name or self._default_name
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose per-button config: LED colors, behavior, LED mode."""
+        config = self._manager.store.get_device(self._ieee)
+        slot_cfg = None
+        if config:
+            for s in config.slots:
+                if s.slot_id == self._slot_id:
+                    slot_cfg = s
+                    break
+
+        device = self._manager.devices.get(self._ieee)
+        led_colors = device.led_colors.get(self._slot_id, {}) if device else {}
+
+        on_color = led_colors.get("on", "0000ff")
+        off_color = led_colors.get("off", "000000")
+        behavior = "keypad"
+        led_mode = "programmed"
+
+        if slot_cfg:
+            on_color = slot_cfg.led_on_color or on_color
+            off_color = slot_cfg.led_off_color or off_color
+            behavior = slot_cfg.behavior or behavior
+            led_mode = slot_cfg.led_mode or led_mode
+        elif device:
+            btn_cfg = device.button_configs.get(self._slot_id, {})
+            behavior = btn_cfg.get("behavior", behavior)
+            led_mode = btn_cfg.get("led_mode", led_mode)
+
+        return {
+            "on_color": f"#{on_color}",
+            "off_color": f"#{off_color}",
+            "behavior": behavior,
+            "led_mode": led_mode,
+            "ieee_address": self._ieee,
+            "slot_id": self._slot_id,
+        }
 
     async def async_added_to_hass(self) -> None:
         """Register with the manager for button events and config changes."""
@@ -125,15 +164,16 @@ class Control4ButtonEvent(EventEntity):
             self._unsub_listener = None
 
     def _on_manager_update(self) -> None:
-        """Re-sync name when device config changes."""
-        if self._sync_name_from_config():
+        """Re-sync name and attributes when device config changes."""
+        name_changed = self._sync_name_from_config()
+        if name_changed:
             LOGGER.debug(
                 "Event entity %s name -> %s",
                 self._attr_unique_id,
                 self.name,
             )
             self._update_entity_id()
-            self.async_write_ha_state()
+        self.async_write_ha_state()
 
     def _update_entity_id(self) -> None:
         """Update the entity_id in the HA registry to match the current name."""

@@ -107,16 +107,29 @@ class DeviceState:
         if "c4_device_type" in payload:
             self.device_type = payload["c4_device_type"]
 
-        for btn in range(6):
-            on_key = f"color_button_{btn}_on"
-            off_key = f"color_button_{btn}_off"
-            if on_key in payload:
+        for btn in range(1, 7):
+            # Flat hex LED attributes from slim Z2M converter
+            led_on_key = f"c4_led_{btn}_on"
+            led_off_key = f"c4_led_{btn}_off"
+            if led_on_key in payload:
                 self.led_colors.setdefault(btn, {})["on"] = _extract_color(
-                    payload[on_key]
+                    payload[led_on_key]
                 )
-            if off_key in payload:
+            if led_off_key in payload:
                 self.led_colors.setdefault(btn, {})["off"] = _extract_color(
-                    payload[off_key]
+                    payload[led_off_key]
+                )
+
+            # Legacy Z2M HS color format (for backwards compatibility)
+            color_on_key = f"color_button_{btn}_on"
+            color_off_key = f"color_button_{btn}_off"
+            if color_on_key in payload:
+                self.led_colors.setdefault(btn, {})["on"] = _extract_color(
+                    payload[color_on_key]
+                )
+            if color_off_key in payload:
+                self.led_colors.setdefault(btn, {})["off"] = _extract_color(
+                    payload[color_off_key]
                 )
 
             beh_key = f"button_{btn}_behavior"

@@ -108,18 +108,20 @@ DEVICES = [
     },
 ]
 
+DIMMER_TOP_BUTTON = 2
+
 DIMMER_LED_DEFAULTS = {
-    1: {"on": "ffffff", "off": "000000"},
-    4: {"on": "000000", "off": "0000ff"},
+    2: {"on": "ffffff", "off": "000000"},
+    5: {"on": "000000", "off": "0000ff"},
 }
 
 KEYPAD_LED_DEFAULTS = {
-    0: {"on": "0000cc", "off": "000033"},
     1: {"on": "0000cc", "off": "000033"},
     2: {"on": "0000cc", "off": "000033"},
-    3: {"on": "00cc00", "off": "003300"},
-    4: {"on": "cc0000", "off": "330000"},
-    5: {"on": "cccc00", "off": "333300"},
+    3: {"on": "0000cc", "off": "000033"},
+    4: {"on": "00cc00", "off": "003300"},
+    5: {"on": "cc0000", "off": "330000"},
+    6: {"on": "cccc00", "off": "333300"},
 }
 
 
@@ -177,18 +179,13 @@ def build_device_state(dev: dict) -> dict:
     leds = DIMMER_LED_DEFAULTS if device_type == "dimmer" else KEYPAD_LED_DEFAULTS
     for btn_id, colors in leds.items():
         for mode in ("on", "off"):
-            color_hex = colors[mode]
-            h, s = _hex_to_hs(color_hex)
-            state[f"state_button_{btn_id}_{mode}"] = "ON"
-            state[f"brightness_button_{btn_id}_{mode}"] = 254
-            state[f"color_button_{btn_id}_{mode}"] = {"hue": h, "saturation": s}
-            state[f"color_mode_button_{btn_id}_{mode}"] = "hs"
+            state[f"c4_led_{btn_id}_{mode}"] = colors[mode]
 
-    for btn_id in leds.keys() if device_type == "dimmer" else range(6):
+    for btn_id in leds.keys() if device_type == "dimmer" else range(1, 7):
         if device_type == "dimmer":
-            behavior = "load_on" if btn_id == 1 else "load_off"
+            behavior = "load_on" if btn_id == DIMMER_TOP_BUTTON else "load_off"
             led_mode = "follow_load"
-        elif device_type == "keypaddim" and btn_id == 0:
+        elif device_type == "keypaddim" and btn_id == 1:
             behavior = "toggle_load"
             led_mode = "follow_load"
         else:
@@ -296,31 +293,31 @@ class C4Simulator:
         """
         Convert a c4_cmd string to Z2M-style action strings and button ID.
 
-        Returns a list of actions to fire in sequence:
-            c4.dmx.bp 01 -> ["button_1_press", "button_1_release", "button_1_click_1"]
-            c4.dmx.br 01 -> ["button_1_release"]
-            c4.dmx.cc 01 02 -> ["button_1_click_2"]
+        Wire IDs are 0-based hex; action names are 1-based.
+            c4.dmx.bp 01 -> ["button_2_press", "button_2_release", "button_2_click_1"]
+            c4.dmx.br 01 -> ["button_2_release"]
+            c4.dmx.cc 01 02 -> ["button_2_click_2"]
         """
-        # Button press: fire pressed -> released -> single_tap sequence
         bp_match = re.match(r"c4\.dmx\.bp\s+([0-9a-fA-F]+)", cmd)
         if bp_match:
-            btn = int(bp_match.group(1), 16)
+            wire_id = int(bp_match.group(1), 16)
+            btn = wire_id + 1
             return [
                 f"button_{btn}_press",
                 f"button_{btn}_release",
                 f"button_{btn}_click_1",
             ], btn
 
-        # Button release
         br_match = re.match(r"c4\.dmx\.br\s+([0-9a-fA-F]+)", cmd)
         if br_match:
-            btn = int(br_match.group(1), 16)
+            wire_id = int(br_match.group(1), 16)
+            btn = wire_id + 1
             return [f"button_{btn}_release"], btn
 
-        # Click count (multi-tap)
         cc_match = re.match(r"c4\.dmx\.cc\s+([0-9a-fA-F]+)\s+(\d+)", cmd)
         if cc_match:
-            btn = int(cc_match.group(1), 16)
+            wire_id = int(cc_match.group(1), 16)
+            btn = wire_id + 1
             count = int(cc_match.group(2))
             return [f"button_{btn}_click_{count}"], btn
 
@@ -348,7 +345,7 @@ class C4Simulator:
 
         behavior = state.get(f"button_{btn_id}_behavior", "")
         if not behavior and device_type == "dimmer":
-            behavior = "load_on" if btn_id == 1 else "load_off"
+            behavior = "load_on" if btn_id == DIMMER_TOP_BUTTON else "load_off"
 
         if behavior == "toggle_load":
             if state.get("state") == "ON":

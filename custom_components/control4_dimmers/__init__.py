@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
-from homeassistant.core import CoreState, Event
+from homeassistant.core import CoreState, Event, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN, INTEGRATION_VERSION, LOGGER
@@ -20,10 +20,9 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 PLATFORMS: list[Platform] = [
-    Platform.BUTTON,
     Platform.EVENT,
     Platform.LIGHT,
-    Platform.SELECT,
+    Platform.SENSOR,
 ]
 
 
@@ -193,6 +192,138 @@ async def _ws_event_entities(
     connection.send_result(msg["id"], result)
 
 
+async def _svc_set_led(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle control4_dimmers.set_led service call."""
+    import json  # noqa: PLC0415
+
+    from homeassistant.components import mqtt  # noqa: PLC0415
+
+    entity_id = call.data["entity_id"]
+    mode = call.data["mode"]
+    color = call.data["color"].lstrip("#")
+
+    state = hass.states.get(entity_id)
+    if state is None:
+        LOGGER.error("Entity not found: %s", entity_id)
+        return
+    ieee = state.attributes.get("ieee_address")
+    slot_id = state.attributes.get("slot_id")
+    if not ieee or slot_id is None:
+        LOGGER.error("Entity %s missing ieee_address/slot_id", entity_id)
+        return
+
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return
+    manager: Control4Manager = runtime["manager"]
+
+    device = manager.devices.get(ieee)
+    if device is None:
+        return
+
+    wire_id = slot_id - 1
+    mode_code = "03" if mode == "on" else "04"
+    topic = f"{manager.mqtt_topic}/{device.friendly_name}/set"
+    payload = {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode_code} {color}"}
+    await mqtt.async_publish(hass, topic, json.dumps(payload), qos=1)
+
+    config = manager.store.get_device(ieee)
+    if config:
+        for s in config.slots:
+            if s.slot_id == slot_id:
+                if mode == "on":
+                    s.led_on_color = color
+                else:
+                    s.led_off_color = color
+                break
+        await manager.store.async_save()
+
+    manager.notify_listeners()
+
+
+async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle control4_dimmers.press_button service call."""
+    entity_id = call.data["entity_id"]
+    state = hass.states.get(entity_id)
+    if state is None:
+        LOGGER.error("Entity not found: %s", entity_id)
+        return
+    ieee = state.attributes.get("ieee_address")
+    slot_id = state.attributes.get("slot_id")
+    if not ieee or slot_id is None:
+        LOGGER.error("Entity %s missing ieee_address/slot_id", entity_id)
+        return
+
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return
+    manager: Control4Manager = runtime["manager"]
+    wire_id = slot_id - 1
+    await manager.async_send_mqtt(ieee, {"c4_cmd": f"c4.dmx.bp {wire_id:02x}"})
+
+
+async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle control4_dimmers.set_device_type service call."""
+    entity_id = call.data["entity_id"]
+    device_type = call.data["device_type"]
+    state = hass.states.get(entity_id)
+    if state is None:
+        LOGGER.error("Entity not found: %s", entity_id)
+        return
+    ieee = state.attributes.get("ieee_address")
+    if not ieee:
+        LOGGER.error("Entity %s missing ieee_address", entity_id)
+        return
+
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return
+    manager: Control4Manager = runtime["manager"]
+    await manager.async_configure_device(
+        ieee_address=ieee,
+        device_type_override=device_type,
+    )
+
+
+async def _register_services(hass: HomeAssistant) -> None:
+    """Register custom service calls."""
+    hass.services.async_register(
+        DOMAIN,
+        "set_led",
+        lambda call: _svc_set_led(hass, call),
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): cv.string,
+                vol.Required("mode"): vol.In(["on", "off"]),
+                vol.Required("color"): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "press_button",
+        lambda call: _svc_press_button(hass, call),
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_device_type",
+        lambda call: _svc_set_device_type(hass, call),
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): cv.string,
+                vol.Required("device_type"): vol.In(["dimmer", "keypaddim", "keypad"]),
+            }
+        ),
+    )
+
+
 async def _register_frontend(hass: HomeAssistant) -> None:
     """Register frontend resources when HA is ready."""
     if hass.data.get(f"{DOMAIN}_skip_frontend", False):
@@ -221,6 +352,7 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     """Set up the Control4 Dimmers integration (once, before entries)."""
     hass.data.setdefault(DOMAIN, {})
     await _register_websocket_handlers(hass)
+    await _register_services(hass)
     await _register_frontend(hass)
     return True
 

@@ -115,26 +115,26 @@ class TestManagerProperties:
 
 
 class TestManagerListeners:
-    """Tests for the add_listener / _notify_listeners pattern."""
+    """Tests for the add_listener / notify_listeners pattern."""
 
     def test_add_and_notify_listener(self, manager: Control4Manager) -> None:
         callback = MagicMock()
         manager.add_listener(callback)
-        manager._notify_listeners()
+        manager.notify_listeners()
         callback.assert_called_once()
 
     def test_unsubscribe_listener(self, manager: Control4Manager) -> None:
         callback = MagicMock()
         unsub = manager.add_listener(callback)
         unsub()
-        manager._notify_listeners()
+        manager.notify_listeners()
         callback.assert_not_called()
 
     def test_multiple_listeners(self, manager: Control4Manager) -> None:
         cb1, cb2 = MagicMock(), MagicMock()
         manager.add_listener(cb1)
         manager.add_listener(cb2)
-        manager._notify_listeners()
+        manager.notify_listeners()
         cb1.assert_called_once()
         cb2.assert_called_once()
 
@@ -150,8 +150,8 @@ class TestManagerEventCallbacks:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 1, cb)
-        manager._dispatch_button_action(dimmer_state, "button_1_press")
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
         cb.assert_called_once_with("pressed")
 
     def test_release_action_dispatch(
@@ -159,8 +159,8 @@ class TestManagerEventCallbacks:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 1, cb)
-        manager._dispatch_button_action(dimmer_state, "button_1_release")
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_release")
         cb.assert_called_once_with("released")
 
     def test_click_action_dispatch(
@@ -177,16 +177,16 @@ class TestManagerEventCallbacks:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        unsub = manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        unsub = manager.register_event_callback(IEEE_DIMMER, 2, cb)
         unsub()
-        manager._dispatch_button_action(dimmer_state, "button_1_press")
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
         cb.assert_not_called()
 
     def test_empty_action_ignored(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 0, cb)
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
         manager._dispatch_button_action(dimmer_state, "")
         cb.assert_not_called()
 
@@ -320,10 +320,10 @@ class TestManagerDeviceState:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
         msg = _make_mqtt_msg(
             "zigbee2mqtt/Kitchen",
-            {"action": "button_1_press"},
+            {"action": "button_2_press"},
         )
         await manager._handle_device_state(msg)
         cb.assert_called_once_with("pressed")
@@ -383,14 +383,14 @@ class TestManagerDefaultSlots:
         slots = manager.get_default_slots("dimmer")
         assert len(slots) == 2
         ids = [s.slot_id for s in slots]
-        assert 1 in ids
-        assert 4 in ids
+        assert 2 in ids
+        assert 5 in ids
 
     def test_keypad_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypad")
         assert len(slots) == 6
-        assert slots[0].slot_id == 0
-        assert slots[5].slot_id == 5
+        assert slots[0].slot_id == 1
+        assert slots[5].slot_id == 6
 
     def test_keypaddim_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypaddim")

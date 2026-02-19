@@ -681,21 +681,20 @@ const fzControl4Response = {
 
 // ─── Unified Definition ──────────────────────────────────────────────
 //
-// Single definition for all newer Control4 in-wall devices:
-//   - C4-APD120 (dimmer): uses buttons 1 and 4
-//   - C4-KD120 (keypad dimmer): uses buttons 0–5
-//   - C4-KC120277 (pure keypad): uses buttons 0–5
+// Slim Z2M converter for all newer Control4 in-wall devices:
+//   - C4-APD120 (dimmer): 2 buttons + load
+//   - C4-KD120 (keypad dimmer): 6 buttons + load
+//   - C4-KC120277 (pure keypad): 6 buttons, no load
 //
-// All 6 button slots are always exposed. Users disable unused slots in
-// HA based on their device type (identified via c4_detect).
-//
-// Entity layout per device:
-//   - 12 LED light entities (button_0_on through button_5_off)
-//   - 12 config select entities (button_N_behavior, button_N_led_mode)
-//   - 1 main dimmer light (harmless on pure keypads)
+// Entity layout per device (Z2M side only):
+//   - 1 main dimmer light (standard Zigbee HA, harmless on pure keypads)
 //   - 1 action entity (button press events)
 //   - Utility converters: c4_led, c4_cmd, c4_query, zcl_read, c4_probe,
 //     c4_identify, c4_detect
+//
+// LED colors and button config are managed entirely in HA, not Z2M.
+// LED colors are stored as flat hex attributes (c4_led_N_on/off) in
+// Z2M state, read by the HA integration on startup.
 
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
 const definition = {
@@ -714,40 +713,6 @@ const definition = {
     description: 'Control4 Zigbee Device (Dimmer/Keypad)',
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
-        // ── 12 LED light entities (6 buttons × on/off) ──
-        // Must come BEFORE light() so endpoint-restricted converters are
-        // checked first. Commands to the default endpoint skip these and
-        // fall through to the unrestricted light() converter.
-        ...BUTTONS.flatMap(btn => [
-            c4LedLight({
-                endpointName: `button_${btn.idx}_on`,
-                ledId: btn.id,
-                modeCode: '03',
-                description: `Button ${btn.idx} LED color when active (slot ${btn.id})`,
-            }),
-            c4LedLight({
-                endpointName: `button_${btn.idx}_off`,
-                ledId: btn.id,
-                modeCode: '04',
-                description: `Button ${btn.idx} LED color when inactive (slot ${btn.id})`,
-            }),
-        ]),
-        // ── 12 config select entities (6 buttons × behavior + LED mode) ──
-        ...BUTTONS.flatMap(btn => [
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_behavior`,
-                description: `Button ${btn.idx} press behavior`,
-                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_led_mode`,
-                description: `Button ${btn.idx} LED update mode`,
-                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
-            }),
-        ]),
-        // ── Main dimmer light (standard Zigbee HA on/off + brightness) ──
         light({configureReporting: false}),
     ],
     exposes: [
@@ -760,16 +725,7 @@ const definition = {
         tzControl4ZclRead, tzControl4Probe, tzControl4Identify,
         tzControl4Detect,
     ],
-    meta: {disableDefaultResponse: true, multiEndpoint: true},
-    endpoint: (device) => {
-        const map = {default: 1};
-        for (const btn of BUTTONS) {
-            map[`button_${btn.idx}_on`] = 1;
-            map[`button_${btn.idx}_off`] = 1;
-            map[`button_${btn.idx}`] = 1;
-        }
-        return map;
-    },
+    meta: {disableDefaultResponse: true},
     configure: async (device, coordinatorEndpoint, definition) => {
         const endpoint = device.getEndpoint(1);
         if (!endpoint) return;

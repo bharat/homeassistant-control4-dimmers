@@ -49,17 +49,17 @@ describe('Constants', () => {
         expect(C4_CLUSTER).toBe(1);
     });
 
-    it('BUTTONS has 6 entries with correct IDs', () => {
+    it('BUTTONS has 6 entries with 1-based indices', () => {
         expect(BUTTONS).toHaveLength(6);
-        expect(BUTTONS[0]).toEqual({idx: 0, id: '00'});
-        expect(BUTTONS[5]).toEqual({idx: 5, id: '05'});
+        expect(BUTTONS[0]).toEqual({idx: 1, id: '00'});
+        expect(BUTTONS[5]).toEqual({idx: 6, id: '05'});
     });
 
-    it('LED_IDS maps names to C4 button IDs', () => {
+    it('LED_IDS maps 1-based names to C4 wire IDs', () => {
         expect(LED_IDS.top).toBe('01');
         expect(LED_IDS.bottom).toBe('04');
-        expect(LED_IDS['0']).toBe('00');
-        expect(LED_IDS['5']).toBe('05');
+        expect(LED_IDS['1']).toBe('00');
+        expect(LED_IDS['6']).toBe('05');
     });
 
     it('LED_MODES maps on/off to C4 mode codes', () => {
@@ -67,12 +67,10 @@ describe('Constants', () => {
         expect(LED_MODES.off).toBe('04');
     });
 
-    it('ACTION_VALUES has 24 entries (6 buttons × 4 action types)', () => {
-        // 6 buttons × (press + scene + click_1..4) = 6 × 6 = 36
-        // Wait: press, scene, click_1, click_2, click_3, click_4 = 6 per button
+    it('ACTION_VALUES has 36 entries (6 buttons × 6 action types)', () => {
         expect(ACTION_VALUES).toHaveLength(36);
-        expect(ACTION_VALUES).toContain('button_0_press');
-        expect(ACTION_VALUES).toContain('button_5_click_4');
+        expect(ACTION_VALUES).toContain('button_1_press');
+        expect(ACTION_VALUES).toContain('button_6_click_4');
     });
 
     it('DIM_TYPE_MAP maps dim codes to device types', () => {
@@ -457,8 +455,17 @@ describe('parseResponseSeq', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('parseButtonEvent', () => {
-    it('parses button press (bp)', () => {
+    it('parses button press (bp) — wire 01 becomes button 2', () => {
         const event = parseButtonEvent('0t0001 sa c4.dmx.bp 01');
+        expect(event).toEqual({
+            action: 'button_2_press',
+            buttonId: 2,
+            type: 'press',
+        });
+    });
+
+    it('parses button press for wire 00 — becomes button 1', () => {
+        const event = parseButtonEvent('0ta9c8 sa c4.dmx.bp 00');
         expect(event).toEqual({
             action: 'button_1_press',
             buttonId: 1,
@@ -466,49 +473,40 @@ describe('parseButtonEvent', () => {
         });
     });
 
-    it('parses button press for button 0', () => {
-        const event = parseButtonEvent('0ta9c8 sa c4.dmx.bp 00');
-        expect(event).toEqual({
-            action: 'button_0_press',
-            buttonId: 0,
-            type: 'press',
-        });
-    });
-
-    it('parses button press for button 5', () => {
+    it('parses button press for wire 05 — becomes button 6', () => {
         const event = parseButtonEvent('0tffff sa c4.dmx.bp 05');
         expect(event).toEqual({
-            action: 'button_5_press',
-            buttonId: 5,
+            action: 'button_6_press',
+            buttonId: 6,
             type: 'press',
         });
     });
 
-    it('parses click count (cc)', () => {
+    it('parses click count (cc) — wire 00 becomes button 1', () => {
         const event = parseButtonEvent('0t0001 sa c4.dmx.cc 00 04');
         expect(event).toEqual({
-            action: 'button_0_click_4',
-            buttonId: 0,
+            action: 'button_1_click_4',
+            buttonId: 1,
             clickCount: 4,
             type: 'click',
         });
     });
 
-    it('parses single click', () => {
+    it('parses single click — wire 01 becomes button 2', () => {
         const event = parseButtonEvent('0t0001 sa c4.dmx.cc 01 01');
         expect(event).toEqual({
-            action: 'button_1_click_1',
-            buttonId: 1,
+            action: 'button_2_click_1',
+            buttonId: 2,
             clickCount: 1,
             type: 'click',
         });
     });
 
-    it('parses scene change (sc)', () => {
+    it('parses scene change (sc) — wire 02 becomes button 3', () => {
         const event = parseButtonEvent('0t0001 sa c4.dmx.sc 02');
         expect(event).toEqual({
-            action: 'button_2_scene',
-            buttonId: 2,
+            action: 'button_3_scene',
+            buttonId: 3,
             type: 'scene',
         });
     });
@@ -562,11 +560,11 @@ describe('classifyDeviceType', () => {
 });
 
 describe('getButtonsForDeviceType', () => {
-    it('returns 2 buttons for dimmer (idx 1 and 4)', () => {
+    it('returns 2 buttons for dimmer (idx 2 and 5)', () => {
         const buttons = getButtonsForDeviceType('dimmer');
         expect(buttons).toHaveLength(2);
-        expect(buttons[0].idx).toBe(1);
-        expect(buttons[1].idx).toBe(4);
+        expect(buttons[0].idx).toBe(2);
+        expect(buttons[1].idx).toBe(5);
     });
 
     it('returns 6 buttons for keypaddim', () => {
@@ -584,25 +582,19 @@ describe('getButtonsForDeviceType', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('buildLedColorState', () => {
-    it('builds ON state for white LED', () => {
-        const state = buildLedColorState(1, 'on', 'ffffff');
-        expect(state.state_button_1_on).toBe('ON');
-        expect(state.brightness_button_1_on).toBe(254);
-        expect(state.color_button_1_on).toEqual({hue: 0, saturation: 0});
-        expect(state.color_mode_button_1_on).toBe('hs');
+    it('builds flat hex attribute for white LED', () => {
+        const state = buildLedColorState(2, 'on', 'ffffff');
+        expect(state.c4_led_2_on).toBe('ffffff');
     });
 
-    it('builds OFF state for black (000000)', () => {
-        const state = buildLedColorState(4, 'off', '000000');
-        expect(state.state_button_4_off).toBe('OFF');
-        expect(state.brightness_button_4_off).toBe(0);
+    it('builds flat hex attribute for black LED', () => {
+        const state = buildLedColorState(5, 'off', '000000');
+        expect(state.c4_led_5_off).toBe('000000');
     });
 
-    it('builds state for blue LED', () => {
-        const state = buildLedColorState(0, 'off', '0000ff');
-        expect(state.state_button_0_off).toBe('ON');
-        expect(state.brightness_button_0_off).toBe(254);
-        expect(state.color_button_0_off).toEqual({hue: 240, saturation: 100});
+    it('builds flat hex attribute for blue LED', () => {
+        const state = buildLedColorState(1, 'off', '0000ff');
+        expect(state.c4_led_1_off).toBe('0000ff');
     });
 });
 

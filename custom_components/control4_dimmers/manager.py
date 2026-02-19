@@ -80,7 +80,7 @@ class Control4Manager:
         self._listeners.append(callback)
         return lambda: self._listeners.remove(callback)
 
-    def _notify_listeners(self) -> None:
+    def notify_listeners(self) -> None:
         """Notify all registered listeners of a state change."""
         for callback in self._listeners:
             callback()
@@ -230,7 +230,7 @@ class Control4Manager:
                     len(applied),
                 )
 
-        self._notify_listeners()
+        self.notify_listeners()
 
     async def _handle_device_state(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle per-device state messages from Z2M."""
@@ -269,7 +269,7 @@ class Control4Manager:
         if action:
             self._dispatch_button_action(device, action)
 
-        self._notify_listeners()
+        self.notify_listeners()
 
     def _find_device_by_name(self, friendly_name: str) -> DeviceState | None:
         """Find a device by its Z2M friendly name."""
@@ -338,7 +338,7 @@ class Control4Manager:
         if slots is not None:
             await self._push_slot_config(state, config)
 
-        self._notify_listeners()
+        self.notify_listeners()
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
         """Push slot LED colors to the device via MQTT."""
@@ -375,7 +375,7 @@ class Control4Manager:
         if device_type == DEVICE_TYPE_DIMMER:
             return [
                 SlotConfig(
-                    slot_id=1,
+                    slot_id=2,
                     size=1,
                     name="Top",
                     behavior="load_on",
@@ -384,7 +384,7 @@ class Control4Manager:
                     led_off_color="000000",
                 ),
                 SlotConfig(
-                    slot_id=4,
+                    slot_id=5,
                     size=1,
                     name="Bottom",
                     behavior="load_off",
@@ -397,15 +397,15 @@ class Control4Manager:
             SlotConfig(
                 slot_id=i,
                 size=1,
-                name=f"Button {i + 1}",
+                name=f"Button {i}",
                 behavior="toggle_load"
-                if device_type == DEVICE_TYPE_KEYPADDIM and i == 0
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
                 else "keypad",
                 led_mode="follow_load"
-                if device_type == DEVICE_TYPE_KEYPADDIM and i == 0
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
                 else "programmed",
             )
-            for i in range(SLOT_COUNT)
+            for i in range(1, SLOT_COUNT + 1)
         ]
 
 

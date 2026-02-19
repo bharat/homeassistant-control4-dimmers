@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+When making design or architecture decisions, try to follow the HA style and architecture guidelines as much as possible so that the end result is idiomatically HA.

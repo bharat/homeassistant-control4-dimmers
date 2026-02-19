@@ -201,6 +201,15 @@ const EDITOR_STYLES = `
     color: var(--secondary-text-color);
   }
 
+  .picker-row {
+    display: flex;
+    gap: 12px;
+  }
+  .picker-row .editor-section {
+    flex: 1;
+    min-width: 0;
+  }
+
   /* ── Device config box ── */
 
   .device-config-box {
@@ -1099,22 +1108,21 @@ class Control4CardEditor extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${EDITOR_STYLES}</style>
 
-      <!-- Entity picker -->
-      <div class="editor-section entity-picker">
-        <span class="section-label">Device</span>
-        <select id="entity-select">
-          <option value="">-- Select a device --</option>
-          ${entities.map((e) => `
-            <option value="${e.entity_id}" ${this._config.entity === e.entity_id ? "selected" : ""}>
-              ${e.display_name}
-            </option>
-          `).join("")}
-        </select>
-        ${entities.length === 0 ? `<p class="hint">No Control4 devices found. Ensure the integration is set up and Z2M is running.</p>` : ""}
-      </div>
+      <div class="picker-row">
+        <div class="editor-section entity-picker">
+          <span class="section-label">Device</span>
+          <select id="entity-select">
+            <option value="">-- Select --</option>
+            ${entities.map((e) => `
+              <option value="${e.entity_id}" ${this._config.entity === e.entity_id ? "selected" : ""}>
+                ${e.display_name}
+              </option>
+            `).join("")}
+          </select>
+          ${entities.length === 0 ? `<p class="hint">No Control4 devices found. Ensure the integration is set up and Z2M is running.</p>` : ""}
+        </div>
 
       ${dev ? `
-        <!-- Device type -->
         <div class="editor-section">
           <span class="section-label">Type</span>
           <select class="full-width-select" id="type-select">
@@ -1125,6 +1133,10 @@ class Control4CardEditor extends HTMLElement {
             }).join("")}
           </select>
         </div>
+      ` : ""}
+      </div>
+
+      ${dev ? `
 
         <!-- Button configuration -->
         <div class="device-config-box">

@@ -1294,9 +1294,9 @@ class Control4CardEditor extends HTMLElement {
       link.addEventListener("click", (e) => {
         e.preventDefault();
         const autoId = link.dataset.autoId;
-        if (autoId) {
-          const aid = autoId.replace("automation.", "");
-          window.open(`/config/automation/edit/${aid}`, "_blank");
+        const configId = autoId && this._hass.states[autoId]?.attributes?.id;
+        if (configId) {
+          window.open(`/config/automation/edit/${configId}`, "_blank");
         }
       });
     }

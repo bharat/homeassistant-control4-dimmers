@@ -1148,9 +1148,11 @@ class Control4CardEditor extends HTMLElement {
     const automations = this._slotAutomations[slotKey] || [];
 
     const eventTypes = [
-      { key: "press", label: "Press" },
-      { key: "double_press", label: "Double Press" },
-      { key: "triple_press", label: "Triple Press" },
+      { key: "pressed", label: "Pressed" },
+      { key: "released", label: "Released" },
+      { key: "single_tap", label: "Single Tap" },
+      { key: "double_tap", label: "Double Tap" },
+      { key: "triple_tap", label: "Triple Tap" },
     ];
 
     return `

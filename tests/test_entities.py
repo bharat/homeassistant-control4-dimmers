@@ -153,7 +153,7 @@ class TestControl4ButtonEvent:
     def test_on_button_event(self, manager: Control4Manager) -> None:
         entity = self._make_entity(manager)
         entity.async_write_ha_state = MagicMock()
-        entity._on_button_event("press")
+        entity._on_button_event("pressed")
         entity.async_write_ha_state.assert_called_once()
 
     def test_update_entity_id_on_rename(self, manager: Control4Manager) -> None:

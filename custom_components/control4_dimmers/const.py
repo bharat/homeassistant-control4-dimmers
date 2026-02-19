@@ -55,8 +55,9 @@ DEVICE_TYPE_SLOTS: Final[dict[str, list[int]]] = {
 }
 
 BUTTON_EVENT_TYPES: Final[list[str]] = [
-    "press",
-    "double_press",
-    "triple_press",
-    "quadruple_press",
+    "pressed",
+    "released",
+    "single_tap",
+    "double_tap",
+    "triple_tap",
 ]

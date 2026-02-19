@@ -2,9 +2,9 @@
 Event platform for Control4 Dimmers.
 
 Creates HA event entities for each button slot on a Control4 device.
-When the physical button is pressed (single / double / triple / quadruple),
-the corresponding event entity fires, which can be used as an automation
-trigger.
+When a physical button event occurs (pressed, released, single_tap,
+double_tap, triple_tap), the corresponding event entity fires, which
+can be used as an automation trigger.
 """
 
 from __future__ import annotations

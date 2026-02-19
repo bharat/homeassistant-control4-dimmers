@@ -110,8 +110,14 @@ class Control4Manager:
         press_match = re.match(r"button_(\d+)_press", action_str)
         if press_match:
             slot_id = int(press_match.group(1))
-            event_type = "press"
-            self._fire_event_callback(device.ieee_address, slot_id, event_type)
+            self._fire_event_callback(device.ieee_address, slot_id, "pressed")
+            return
+
+        # button_N_release  (from c4.dmx.br)
+        release_match = re.match(r"button_(\d+)_release", action_str)
+        if release_match:
+            slot_id = int(release_match.group(1))
+            self._fire_event_callback(device.ieee_address, slot_id, "released")
             return
 
         # button_N_click_C  (from c4.dmx.cc)
@@ -404,10 +410,9 @@ class Control4Manager:
 
 
 _CLICK_COUNT_MAP: dict[int, str] = {
-    1: "press",
-    2: "double_press",
-    3: "triple_press",
-    4: "quadruple_press",
+    1: "single_tap",
+    2: "double_tap",
+    3: "triple_tap",
 }
 
 

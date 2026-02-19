@@ -74,10 +74,10 @@ class TestClickCountToEventType:
     @pytest.mark.parametrize(
         ("count", "expected"),
         [
-            (1, "press"),
-            (2, "double_press"),
-            (3, "triple_press"),
-            (4, "quadruple_press"),
+            (1, "single_tap"),
+            (2, "double_tap"),
+            (3, "triple_tap"),
+            (4, "click_4"),
             (5, "click_5"),
             (99, "click_99"),
         ],
@@ -152,7 +152,16 @@ class TestManagerEventCallbacks:
         cb = MagicMock()
         manager.register_event_callback(IEEE_DIMMER, 1, cb)
         manager._dispatch_button_action(dimmer_state, "button_1_press")
-        cb.assert_called_once_with("press")
+        cb.assert_called_once_with("pressed")
+
+    def test_release_action_dispatch(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager._dispatch_button_action(dimmer_state, "button_1_release")
+        cb.assert_called_once_with("released")
 
     def test_click_action_dispatch(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -161,7 +170,7 @@ class TestManagerEventCallbacks:
         cb = MagicMock()
         manager.register_event_callback(IEEE_DIMMER, 3, cb)
         manager._dispatch_button_action(dimmer_state, "button_3_click_2")
-        cb.assert_called_once_with("double_press")
+        cb.assert_called_once_with("double_tap")
 
     def test_unsubscribe_event_callback(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -317,7 +326,7 @@ class TestManagerDeviceState:
             {"action": "button_1_press"},
         )
         await manager._handle_device_state(msg)
-        cb.assert_called_once_with("press")
+        cb.assert_called_once_with("pressed")
 
     @pytest.mark.asyncio
     async def test_ignores_bridge_subtopics(self, manager: Control4Manager) -> None:

@@ -272,16 +272,16 @@ class C4Simulator:
 
         log.info("SET %s: %s", device_name, json.dumps(payload, indent=None))
 
-        # Handle button press commands: echo an action event.
+        # Handle C4 commands: echo action events mimicking real hardware.
         c4_cmd = payload.get("c4_cmd", "")
         if c4_cmd:
-            action, btn_id = self._parse_c4_cmd(c4_cmd)
-            if action:
+            actions, btn_id = self._parse_c4_cmd(c4_cmd)
+            if actions:
                 self._apply_load_control(state, btn_id)
-                log.info("ACTION %s: %s", device_name, action)
-                state["action"] = action
-                self.publish_state(device_name)
-                # Clear the action after publishing (Z2M behavior).
+                for action in actions:
+                    log.info("ACTION %s: %s", device_name, action)
+                    state["action"] = action
+                    self.publish_state(device_name)
                 state["action"] = ""
                 self.publish_state(device_name)
                 return
@@ -292,19 +292,38 @@ class C4Simulator:
         self.publish_state(device_name)
 
     @staticmethod
-    def _parse_c4_cmd(cmd: str) -> tuple[str | None, int | None]:
+    def _parse_c4_cmd(cmd: str) -> tuple[list[str] | None, int | None]:
         """
-        Convert a c4_cmd string to a Z2M-style action string and button ID.
+        Convert a c4_cmd string to Z2M-style action strings and button ID.
 
-        Examples:
-            c4.dmx.bp 00 -> ("button_0_press", 0)
-            c4.dmx.bp 03 -> ("button_3_press", 3)
-
+        Returns a list of actions to fire in sequence:
+            c4.dmx.bp 01 -> ["button_1_press", "button_1_release", "button_1_click_1"]
+            c4.dmx.br 01 -> ["button_1_release"]
+            c4.dmx.cc 01 02 -> ["button_1_click_2"]
         """
+        # Button press: fire pressed -> released -> single_tap sequence
         bp_match = re.match(r"c4\.dmx\.bp\s+([0-9a-fA-F]+)", cmd)
         if bp_match:
             btn = int(bp_match.group(1), 16)
-            return f"button_{btn}_press", btn
+            return [
+                f"button_{btn}_press",
+                f"button_{btn}_release",
+                f"button_{btn}_click_1",
+            ], btn
+
+        # Button release
+        br_match = re.match(r"c4\.dmx\.br\s+([0-9a-fA-F]+)", cmd)
+        if br_match:
+            btn = int(br_match.group(1), 16)
+            return [f"button_{btn}_release"], btn
+
+        # Click count (multi-tap)
+        cc_match = re.match(r"c4\.dmx\.cc\s+([0-9a-fA-F]+)\s+(\d+)", cmd)
+        if cc_match:
+            btn = int(cc_match.group(1), 16)
+            count = int(cc_match.group(2))
+            return [f"button_{btn}_click_{count}"], btn
+
         return None, None
 
     @staticmethod

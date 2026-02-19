@@ -51,8 +51,8 @@ const BEHAVIORS = [
 ];
 
 const LED_MODES = [
-  { value: "follow_load",       label: "Follow Load" },
-  { value: "follow_connection", label: "Follow Connection" },
+  { value: "follow_load",       label: "Follow Load",       loadOnly: true },
+  { value: "follow_connection", label: "Follow Connection", loadOnly: true },
   { value: "push_release",      label: "Push/Release" },
   { value: "programmed",        label: "Programmed" },
 ];
@@ -1200,18 +1200,20 @@ class Control4CardEditor extends HTMLElement {
           <label>Name</label>
           <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slotDisplayNum(slot.slot_id)}">
         </div>
-        <div class="config-row">
-          <label>Behavior</label>
-          <select id="slot-behavior">
-            ${BEHAVIORS.filter((b) => showLoadOptions || b.value === "keypad").map((b) => `
-              <option value="${b.value}" ${slot.behavior === b.value ? "selected" : ""}>${b.label}</option>
-            `).join("")}
-          </select>
-        </div>
+        ${showLoadOptions ? `
+          <div class="config-row">
+            <label>Behavior</label>
+            <select id="slot-behavior">
+              ${BEHAVIORS.map((b) => `
+                <option value="${b.value}" ${slot.behavior === b.value ? "selected" : ""}>${b.label}</option>
+              `).join("")}
+            </select>
+          </div>
+        ` : ""}
         <div class="config-row">
           <label>LED Mode</label>
           <select id="slot-led-mode">
-            ${LED_MODES.map((m) => `
+            ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
               <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
             `).join("")}
           </select>

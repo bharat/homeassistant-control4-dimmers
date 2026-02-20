@@ -49,7 +49,7 @@
     },
     "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
-      "packages": "ffmpeg,libpcap-dev,libturbojpeg0,mosquitto,mosquitto-clients"
+      "packages": "ffmpeg,libpcap-dev,libturbojpeg0,mosquitto,mosquitto-clients,gh"
     }
   },
   "mounts": [

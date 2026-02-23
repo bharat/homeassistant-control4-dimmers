@@ -6,7 +6,7 @@ isal
 mutagen
 pymicro-vad
 pyspeex-noise
-PyTurboJPEG<2
+PyTurboJPEG<3
 pip>=21.3.1
 ruff==0.15.2
 pre_commit==4.5.1

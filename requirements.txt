@@ -8,7 +8,7 @@ pymicro-vad
 pyspeex-noise
 PyTurboJPEG<3
 pip>=21.3.1
-ruff==0.15.4
+ruff==0.15.5
 pre_commit==4.5.1
 paho-mqtt
 pytest>=9.0.0

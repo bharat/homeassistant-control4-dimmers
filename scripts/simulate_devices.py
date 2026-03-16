@@ -163,18 +163,23 @@ def build_bridge_devices(devices: list[dict]) -> list[dict]:
     ]
 
 
-def build_device_state(dev: dict) -> dict:
-    """Build a realistic state payload for a device."""
+def build_initial_state(dev: dict) -> dict:
+    """Build the state a freshly paired device has before c4_detect runs."""
     device_type = dev["type"]
-    state = {
-        "c4_device_type": device_type,
+    state: dict[str, Any] = {
         "linkquality": random.randint(60, 255),  # noqa: S311
     }
-
     if device_type in ("dimmer", "keypaddim"):
         brightness = random.choice([0, 64, 128, 200, 254])  # noqa: S311
         state["state"] = "ON" if brightness > 0 else "OFF"
         state["brightness"] = brightness
+    return state
+
+
+def build_detected_state(dev: dict) -> dict:
+    """Build the additional state fields that c4_detect adds."""
+    device_type = dev["type"]
+    state: dict[str, Any] = {"c4_device_type": device_type}
 
     leds = DIMMER_LED_DEFAULTS if device_type == "dimmer" else KEYPAD_LED_DEFAULTS
     for btn_id, colors in leds.items():
@@ -194,6 +199,20 @@ def build_device_state(dev: dict) -> dict:
         state[f"button_{btn_id}_behavior"] = behavior
         state[f"button_{btn_id}_led_mode"] = led_mode
 
+    state["c4_detect_result"] = {
+        "device_type": device_type,
+        "model": dev["model_id"],
+        "description": dev["definition"]["description"],
+        "colors_read": len(leds) * 2,
+    }
+
+    return state
+
+
+def build_device_state(dev: dict) -> dict:
+    """Build a fully populated state payload (initial + detected)."""
+    state = build_initial_state(dev)
+    state.update(build_detected_state(dev))
     return state
 
 
@@ -220,17 +239,25 @@ def _hex_to_hs(hex_color: str) -> tuple[float, float]:
 class C4Simulator:
     """MQTT-based Control4 device simulator."""
 
-    def __init__(self, broker: str, port: int, topic: str) -> None:
+    def __init__(
+        self, broker: str, port: int, topic: str, *, fresh: bool = False
+    ) -> None:
         """Initialize simulator with MQTT connection parameters."""
         self.broker = broker
         self.port = port
         self.topic = topic
+        self.fresh = fresh
         self.client = mqtt_client.Client(client_id=f"c4-simulator-{os.getpid()}")
         self._connected_once = False
         self.device_states: dict[str, dict] = {}
+        self._device_map: dict[str, dict] = {}
 
         for dev in DEVICES:
-            self.device_states[dev["friendly_name"]] = build_device_state(dev)
+            self._device_map[dev["friendly_name"]] = dev
+            if fresh:
+                self.device_states[dev["friendly_name"]] = build_initial_state(dev)
+            else:
+                self.device_states[dev["friendly_name"]] = build_device_state(dev)
 
     def on_connect(
         self,
@@ -268,6 +295,14 @@ class C4Simulator:
             return
 
         log.info("SET %s: %s", device_name, json.dumps(payload, indent=None))
+
+        if payload.get("c4_detect"):
+            self._handle_detect(device_name)
+            return
+
+        if payload.get("c4_identify"):
+            self._handle_identify(device_name)
+            return
 
         # Handle C4 commands: echo action events mimicking real hardware.
         c4_cmd = payload.get("c4_cmd", "")
@@ -361,6 +396,40 @@ class C4Simulator:
             state["state"] = "OFF"
             state["brightness"] = 0
 
+    def _handle_detect(self, device_name: str) -> None:
+        """Simulate Z2M's c4_detect: probe device type, read LEDs, publish state."""
+        dev = self._device_map.get(device_name)
+        state = self.device_states.get(device_name)
+        if dev is None or state is None:
+            return
+
+        log.info("DETECT %s: probing device type...", device_name)
+        detected = build_detected_state(dev)
+        state.update(detected)
+        log.info(
+            "DETECT %s: type=%s, %d LED colors read",
+            device_name,
+            dev["type"],
+            detected["c4_detect_result"]["colors_read"],
+        )
+        self.publish_state(device_name)
+
+    def _handle_identify(self, device_name: str) -> None:
+        """Simulate Z2M's c4_identify: set manufacturer metadata."""
+        state = self.device_states.get(device_name)
+        if state is None:
+            return
+
+        dev = self._device_map.get(device_name, {})
+        state["c4_identify_result"] = {
+            "ieee_address": dev.get("ieee_address", ""),
+            "manufacturer_name": "Control4",
+            "power_source": "Mains (single phase)",
+            "interview_completed": True,
+        }
+        log.info("IDENTIFY %s: metadata set", device_name)
+        self.publish_state(device_name)
+
     def publish_bridge_devices(self) -> None:
         """Publish the bridge/devices discovery payload."""
         payload = json.dumps(build_bridge_devices(DEVICES))
@@ -409,9 +478,14 @@ def main() -> None:
     parser.add_argument("--broker", default="localhost", help="MQTT broker host")
     parser.add_argument("--port", type=int, default=1883, help="MQTT broker port")
     parser.add_argument("--topic", default="zigbee2mqtt", help="Z2M base topic")
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start devices without c4_device_type (simulates freshly paired)",
+    )
     args = parser.parse_args()
 
-    sim = C4Simulator(args.broker, args.port, args.topic)
+    sim = C4Simulator(args.broker, args.port, args.topic, fresh=args.fresh)
     sim.run()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import TYPE_CHECKING, Any
@@ -55,6 +56,7 @@ class Control4Manager:
         self._subscriptions: list[Callable[[], None]] = []
         self._listeners: list[Callable[[], None]] = []
         self._pending_states: dict[str, dict] = {}  # buffered state payloads
+        self._detect_sent: set[str] = set()  # IEEEs we've already sent c4_detect to
         self._event_callbacks: dict[
             tuple[str, int], Callable[[str], None]
         ] = {}  # (ieee, slot_id) -> callback(event_type)
@@ -221,6 +223,7 @@ class Control4Manager:
                 device = self._find_device_by_name(name)
                 if device is not None:
                     device.update_from_mqtt(payload)
+                    self._maybe_auto_detect(device)
                     applied.append(name)
             for name in applied:
                 del self._pending_states[name]
@@ -268,6 +271,8 @@ class Control4Manager:
         action = payload.get("action")
         if action:
             self._dispatch_button_action(device, action)
+
+        self._maybe_auto_detect(device)
 
         self.notify_listeners()
 
@@ -361,6 +366,21 @@ class Control4Manager:
 
             for payload in [on_payload, off_payload, behavior_payload]:
                 await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
+
+    def _maybe_auto_detect(self, device: DeviceState) -> None:
+        """Send c4_detect if this device hasn't been detected yet."""
+        if device.device_type is None and device.ieee_address not in self._detect_sent:
+            self._detect_sent.add(device.ieee_address)
+            self._hass.async_create_task(
+                self._async_delayed_detect(device.ieee_address),
+                f"c4_detect_{device.ieee_address}",
+            )
+
+    async def _async_delayed_detect(self, ieee_address: str) -> None:
+        """Send c4_detect after a short delay to let Z2M finish device setup."""
+        await asyncio.sleep(3)
+        LOGGER.info("Auto-detecting device type for %s", ieee_address)
+        await self.async_send_mqtt(ieee_address, {"c4_detect": True})
 
     async def async_send_mqtt(self, ieee_address: str, payload: dict[str, Any]) -> None:
         """Send an arbitrary MQTT set command to a device."""

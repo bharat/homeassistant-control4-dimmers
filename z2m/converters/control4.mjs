@@ -770,18 +770,32 @@ const definition = {
         }
 
         // Set metadata that genBasic can't provide (C4 locks it down).
-        let changed = false;
-        if (!device.manufacturerName) {
-            device.manufacturerName = 'Control4';
-            changed = true;
-        }
-        if (!device.powerSource) {
-            device.powerSource = 'Mains (single phase)';
-            changed = true;
-        }
-        if (changed) device.save();
+        // C4 devices fail the standard Zigbee interview because they don't
+        // respond to many genBasic reads, but they work fine otherwise.
+        device.manufacturerName = 'Control4';
+        device.powerSource = 'Mains (single phase)';
+        device.interviewCompleted = true;
+        device.save();
 
-        console.error(`[C4 CONFIG] Device ${device.ieeeAddr} configured. Run {"c4_detect": true} to detect device type and read stored LED colors.`);
+        // ── Auto-detect device type via C4 text protocol ──
+        //
+        // On the very first C4 device pairing, EP 197 was just created above
+        // and EZSP firmware may not have registered it yet — detection will
+        // timeout since responses can't reach us. After a Z2M restart EP 197
+        // is active and detection works. Either way, c4_detect can be run
+        // manually later if needed.
+        try {
+            const deviceType = await detectDeviceType(device);
+            if (!device.meta) device.meta = {};
+            device.meta.c4_device_type = deviceType;
+            device.save();
+            console.error(`[C4 CONFIG] Auto-detected device type: ${deviceType} (${MODEL_NAMES[deviceType] ?? 'unknown'})`);
+        } catch (e) {
+            console.error(`[C4 CONFIG] Auto-detection failed (expected on first pairing before Z2M restart): ${e.message}`);
+            console.error(`[C4 CONFIG] Run {"c4_detect": true} after restarting Z2M to detect device type and read LED colors.`);
+        }
+
+        console.error(`[C4 CONFIG] Device ${device.ieeeAddr} configured.`);
     },
 };
 

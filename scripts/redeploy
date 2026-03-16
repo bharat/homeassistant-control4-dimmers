@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Redeploy Control4 dimmers integration to prod.
+# Pulls latest from git, copies changed files, restarts only what's needed.
+#
+# Usage: ./scripts/redeploy
+#
+# Paths are hardcoded to the prod server layout.
+
+set -euo pipefail
+
+REPO="/data/misc/homeassistant-control4-dimmers"
+Z2M_CONVERTERS="/data/misc/menalto-services/zigbee/zigbee2mqtt/data/external_converters"
+Z2M_COMPOSE="/data/misc/menalto-services"
+HA_COMPONENTS="/data/misc/homeassistant/config/custom_components"
+HA_COMPOSE="/data/misc/homeassistant"
+
+cd "$REPO"
+
+BEFORE=$(git rev-parse HEAD)
+git pull --ff-only
+AFTER=$(git rev-parse HEAD)
+
+if [ "$BEFORE" = "$AFTER" ]; then
+    echo "Already up to date."
+    exit 0
+fi
+
+echo "Updated $BEFORE -> $AFTER"
+CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
+echo "$CHANGED"
+
+RESTART_Z2M=false
+RESTART_HA=false
+
+if echo "$CHANGED" | grep -q '^z2m/converters/'; then
+    echo ""
+    echo "=== Deploying Z2M converters ==="
+    cp z2m/converters/*.mjs "$Z2M_CONVERTERS/"
+    echo "Copied converters to $Z2M_CONVERTERS"
+    RESTART_Z2M=true
+fi
+
+if echo "$CHANGED" | grep -q '^custom_components/'; then
+    echo ""
+    echo "=== Deploying HA integration ==="
+    rsync -a --delete custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/"
+    echo "Synced integration to $HA_COMPONENTS/control4_dimmers"
+    RESTART_HA=true
+fi
+
+if $RESTART_Z2M; then
+    echo ""
+    echo "=== Restarting Zigbee2MQTT ==="
+    docker compose -f "$Z2M_COMPOSE/docker-compose.yml" restart zigbee2mqtt
+fi
+
+if $RESTART_HA; then
+    echo ""
+    echo "=== Restarting Home Assistant ==="
+    docker compose -f "$HA_COMPOSE/docker-compose.yml" restart homeassistant
+fi
+
+if ! $RESTART_Z2M && ! $RESTART_HA; then
+    echo ""
+    echo "No Z2M or HA files changed, nothing to restart."
+fi

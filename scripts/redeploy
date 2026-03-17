@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Redeploy Control4 dimmers integration to prod.
-# Pulls latest from git, copies changed files, restarts only what's needed.
+# Pulls latest from git, compares against deployed files, restarts only what's needed.
 #
 # Usage: ./scripts/redeploy
 #
@@ -16,51 +16,56 @@ HA_COMPOSE="/data/misc/homeassistant"
 
 cd "$REPO"
 
-BEFORE=$(git rev-parse HEAD)
+echo "=== Pulling latest ==="
 git pull --ff-only
-AFTER=$(git rev-parse HEAD)
-
-if [ "$BEFORE" = "$AFTER" ]; then
-    echo "Already up to date."
-    exit 0
-fi
-
-echo "Updated $BEFORE -> $AFTER"
-CHANGED=$(git diff --name-only "$BEFORE" "$AFTER")
-echo "$CHANGED"
+echo ""
 
 RESTART_Z2M=false
 RESTART_HA=false
 
-if echo "$CHANGED" | grep -q '^z2m/converters/'; then
-    echo ""
-    echo "=== Deploying Z2M converters ==="
-    cp z2m/converters/*.mjs "$Z2M_CONVERTERS/"
-    echo "Copied converters to $Z2M_CONVERTERS"
+# Compare repo converters against deployed converters
+echo "=== Checking Z2M converters ==="
+for f in z2m/converters/*.mjs; do
+    name=$(basename "$f")
+    if ! diff -q "$f" "$Z2M_CONVERTERS/$name" &>/dev/null; then
+        echo "  Changed: $name"
+        RESTART_Z2M=true
+    fi
+done
+# Check for stale old monolithic file
+if [ -f "$Z2M_CONVERTERS/control4-dimmer.mjs" ]; then
+    echo "  Removing old control4-dimmer.mjs"
     RESTART_Z2M=true
 fi
 
-if echo "$CHANGED" | grep -q '^custom_components/'; then
-    echo ""
-    echo "=== Deploying HA integration ==="
-    rsync -a --delete custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/"
-    echo "Synced integration to $HA_COMPONENTS/control4_dimmers"
+# Compare repo integration against deployed integration
+echo "=== Checking HA integration ==="
+if ! diff -rq custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/" &>/dev/null; then
+    echo "  Integration files differ"
     RESTART_HA=true
+fi
+
+if ! $RESTART_Z2M && ! $RESTART_HA; then
+    echo ""
+    echo "Everything up to date, nothing to deploy."
+    exit 0
 fi
 
 if $RESTART_Z2M; then
     echo ""
+    echo "=== Deploying Z2M converters ==="
+    cp z2m/converters/*.mjs "$Z2M_CONVERTERS/"
+    rm -f "$Z2M_CONVERTERS/control4-dimmer.mjs"
+    echo "Copied converters to $Z2M_CONVERTERS"
     echo "=== Restarting Zigbee2MQTT ==="
     docker compose -f "$Z2M_COMPOSE/docker-compose.yml" restart zigbee2mqtt
 fi
 
 if $RESTART_HA; then
     echo ""
+    echo "=== Deploying HA integration ==="
+    rsync -a --delete custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/"
+    echo "Synced integration to $HA_COMPONENTS/control4_dimmers"
     echo "=== Restarting Home Assistant ==="
     docker compose -f "$HA_COMPOSE/docker-compose.yml" restart homeassistant
-fi
-
-if ! $RESTART_Z2M && ! $RESTART_HA; then
-    echo ""
-    echo "No Z2M or HA files changed, nothing to restart."
 fi

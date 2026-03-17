@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Watch Z2M and HA logs for Control4 device pairing activity.
+#
+# Usage: ./scripts/watch-pairing [ieee_address]
+#   e.g. ./scripts/watch-pairing 0x000fff0000c552b0
+#
+# Filters Z2M logs for C4 converter messages and device-specific events.
+# Filters HA logs for control4_dimmers integration messages.
+
+set -euo pipefail
+
+DEVICE="${1:-}"
+Z2M_COMPOSE="/data/misc/menalto-services"
+HA_COMPOSE="/data/misc/homeassistant"
+
+FILTER_Z2M='\[C4 |interview|permit_join|c552b0|Control4|c4_detect|c4_identify|43981'
+FILTER_HA='control4_dimmers|c4_detect'
+
+if [ -n "$DEVICE" ]; then
+    SHORT="${DEVICE##*0x}"
+    FILTER_Z2M="$FILTER_Z2M|$SHORT"
+    FILTER_HA="$FILTER_HA|$SHORT"
+fi
+
+echo "=== Watching for Control4 pairing activity ==="
+[ -n "$DEVICE" ] && echo "Device: $DEVICE"
+echo "Press Ctrl+C to stop"
+echo ""
+
+{
+    docker compose -f "$Z2M_COMPOSE/docker-compose.yml" logs -f --tail=0 zigbee2mqtt 2>&1 | \
+        grep -E --line-buffered "$FILTER_Z2M" | \
+        sed -u 's/^/[Z2M] /' &
+
+    docker compose -f "$HA_COMPOSE/docker-compose.yml" logs -f --tail=0 homeassistant 2>&1 | \
+        grep -E --line-buffered "$FILTER_HA" | \
+        sed -u 's/^/[HA]  /' &
+
+    wait
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Redeploy Control4 dimmers integration to prod.
-# Watches the git repo for changes and syncs them to HA and Z2M,
-# restarting services only when needed.
+# On startup, syncs everything to match the repo. Then polls git for
+# new commits and only re-syncs when something changes.
 #
 # Usage: ./scripts/redeploy
 #
@@ -20,23 +20,9 @@ SELF="$(readlink -f "$0")"
 
 cd "$REPO"
 
-echo "=== redeploy started at $(git rev-parse --short HEAD) ==="
-
-while true; do
-    echo ""
-    echo "=== $(date '+%H:%M:%S') Checking for updates ==="
-
-    SELF_BEFORE="$(md5sum "$SELF")"
-    git pull --ff-only 2>&1 | grep -v "^Already up to date.$" || true
-    SELF_AFTER="$(md5sum "$SELF")"
-
-    if [[ "$SELF_BEFORE" != "$SELF_AFTER" ]]; then
-        echo "  redeploy script changed — re-executing at $(git rev-parse --short HEAD)"
-        exec "$SELF" "$@"
-    fi
-
-    RESTART_Z2M=false
-    RESTART_HA=false
+sync_and_restart() {
+    local RESTART_Z2M=false
+    local RESTART_HA=false
 
     # Check HA integration
     if ! diff -rq custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/" &>/dev/null; then
@@ -45,12 +31,15 @@ while true; do
         RESTART_HA=true
     fi
 
-    # Check Z2M converters
-    if ! diff -rq z2m/converters/ "$Z2M_CONVERTERS/" &>/dev/null; then
-        echo "  Z2M converter files differ — syncing"
-        rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
-        RESTART_Z2M=true
-    fi
+    # Check Z2M converters (compare only our files, ignore extras like yale)
+    for f in z2m/converters/*; do
+        if ! diff -q "$f" "$Z2M_CONVERTERS/$(basename "$f")" &>/dev/null; then
+            echo "  Z2M converter files differ — syncing"
+            rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
+            RESTART_Z2M=true
+            break
+        fi
+    done
 
     if $RESTART_HA; then
         echo "  Restarting Home Assistant"
@@ -65,6 +54,31 @@ while true; do
     if ! $RESTART_HA && ! $RESTART_Z2M; then
         echo "  Everything up to date"
     fi
+}
 
+# Initial sync on startup
+echo "=== redeploy started at $(git rev-parse --short HEAD) ==="
+sync_and_restart
+
+# Poll for new commits
+while true; do
     sleep "$POLL_INTERVAL"
+
+    SELF_BEFORE="$(md5sum "$SELF")"
+    git pull --ff-only 2>&1 | grep -v "^Already up to date.$" || true
+    SELF_AFTER="$(md5sum "$SELF")"
+
+    if [[ "$SELF_BEFORE" != "$SELF_AFTER" ]]; then
+        echo "  redeploy script changed — re-executing at $(git rev-parse --short HEAD)"
+        exec "$SELF" "$@"
+    fi
+
+    # Check if HEAD moved (i.e. git pull fetched new commits)
+    CURRENT="$(git rev-parse HEAD)"
+    if [[ "${LAST_HEAD:-}" != "$CURRENT" ]]; then
+        echo ""
+        echo "=== $(date '+%H:%M:%S') New commits detected ($(git rev-parse --short HEAD)) ==="
+        sync_and_restart
+        LAST_HEAD="$CURRENT"
+    fi
 done

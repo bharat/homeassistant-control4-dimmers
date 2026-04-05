@@ -17,5 +17,8 @@ coverage.xml
 config/*
 !config/configuration.yaml
 
+# Claude Code
+.claude/
+
 # Cursor
 .cursor/rules/No-*.mdc

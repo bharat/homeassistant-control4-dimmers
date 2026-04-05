@@ -1006,6 +1006,33 @@ const definition = {
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
         light({configureReporting: false}),
+        // Per-button LED color controls and config selects for all 6 slots
+        ...BUTTONS.flatMap(btn => [
+            c4LedLight({
+                endpointName: `button_${btn.idx}_on`,
+                ledId: btn.id,
+                modeCode: '03',
+                description: `Button ${btn.idx} LED color when load is ON`,
+            }),
+            c4LedLight({
+                endpointName: `button_${btn.idx}_off`,
+                ledId: btn.id,
+                modeCode: '04',
+                description: `Button ${btn.idx} LED color when load is OFF`,
+            }),
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_behavior`,
+                description: `Button ${btn.idx} behavior`,
+                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
+            }),
+            c4ButtonConfig({
+                endpointName: `button_${btn.idx}`,
+                key: `button_${btn.idx}_led_mode`,
+                description: `Button ${btn.idx} LED mode`,
+                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
+            }),
+        ]),
     ],
     exposes: [
         new Enum('action', access.STATE, ACTION_VALUES)

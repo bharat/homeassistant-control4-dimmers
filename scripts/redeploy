@@ -20,26 +20,44 @@ SELF="$(readlink -f "$0")"
 
 cd "$REPO"
 
+ha_differs() {
+    ! diff -rq custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/" &>/dev/null
+}
+
+z2m_differs() {
+    for f in z2m/converters/*; do
+        if ! diff -q "$f" "$Z2M_CONVERTERS/$(basename "$f")" &>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 sync_and_restart() {
     local RESTART_Z2M=false
     local RESTART_HA=false
 
-    # Check HA integration
-    if ! diff -rq custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/" &>/dev/null; then
+    if ha_differs; then
         echo "  HA integration files differ — syncing"
         rsync -a --delete custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/"
+        if ha_differs; then
+            echo "  WARNING: HA files still differ after sync!"
+            diff -rq custom_components/control4_dimmers/ "$HA_COMPONENTS/control4_dimmers/" || true
+        fi
         RESTART_HA=true
     fi
 
-    # Check Z2M converters (compare only our files, ignore extras like yale)
-    for f in z2m/converters/*; do
-        if ! diff -q "$f" "$Z2M_CONVERTERS/$(basename "$f")" &>/dev/null; then
-            echo "  Z2M converter files differ — syncing"
-            rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
-            RESTART_Z2M=true
-            break
+    if z2m_differs; then
+        echo "  Z2M converter files differ — syncing"
+        rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
+        if z2m_differs; then
+            echo "  WARNING: Z2M files still differ after sync!"
+            for f in z2m/converters/*; do
+                diff "$f" "$Z2M_CONVERTERS/$(basename "$f")" || true
+            done
         fi
-    done
+        RESTART_Z2M=true
+    fi
 
     if $RESTART_HA; then
         echo "  Restarting Home Assistant"
@@ -60,6 +78,7 @@ sync_and_restart() {
 echo "=== redeploy started at $(git rev-parse --short HEAD) ==="
 sync_and_restart
 LAST_HEAD="$(git rev-parse HEAD)"
+echo "  Waiting for new commits..."
 
 # Poll for new commits
 while true; do
@@ -76,10 +95,11 @@ while true; do
 
     # Check if HEAD moved (i.e. git pull fetched new commits)
     CURRENT="$(git rev-parse HEAD)"
-    if [[ "${LAST_HEAD:-}" != "$CURRENT" ]]; then
+    if [[ "$LAST_HEAD" != "$CURRENT" ]]; then
         echo ""
         echo "=== $(date '+%H:%M:%S') New commits detected ($(git rev-parse --short HEAD)) ==="
         sync_and_restart
         LAST_HEAD="$CURRENT"
+        echo "  Waiting for new commits..."
     fi
 done

@@ -988,6 +988,45 @@ const fzControl4Response = {
 // LED colors are stored as flat hex attributes (c4_led_N_on/off) in
 // Z2M state, read by the HA integration on startup.
 
+// ─── Per-button toZigbee converters (registered for all 6 slots) ────
+//
+// These handle MQTT set commands for LED colors and button config.
+// Registered for all 6 slots so commands always work; the dynamic
+// exposes function below controls which buttons appear in the Z2M UI.
+
+const perButtonToZigbee = BUTTONS.flatMap(btn => {
+    const ledOn = c4LedLight({
+        endpointName: `button_${btn.idx}_on`,
+        ledId: btn.id,
+        modeCode: '03',
+        description: `Button ${btn.idx} LED color when load is ON`,
+    });
+    const ledOff = c4LedLight({
+        endpointName: `button_${btn.idx}_off`,
+        ledId: btn.id,
+        modeCode: '04',
+        description: `Button ${btn.idx} LED color when load is OFF`,
+    });
+    const behavior = c4ButtonConfig({
+        endpointName: `button_${btn.idx}`,
+        key: `button_${btn.idx}_behavior`,
+        description: `Button ${btn.idx} behavior`,
+        options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
+    });
+    const ledMode = c4ButtonConfig({
+        endpointName: `button_${btn.idx}`,
+        key: `button_${btn.idx}_led_mode`,
+        description: `Button ${btn.idx} LED mode`,
+        options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
+    });
+    return [
+        ...ledOn.toZigbee,
+        ...ledOff.toZigbee,
+        ...behavior.toZigbee,
+        ...ledMode.toZigbee,
+    ];
+});
+
 /** @type{import('zigbee-herdsman-converters/lib/types').DefinitionWithExtend} */
 const definition = {
     zigbeeModel: [
@@ -1006,34 +1045,6 @@ const definition = {
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
         light({configureReporting: false}),
-        // Register toZigbee converters for all 6 slots (harmless if unused).
-        // Exposes are generated dynamically below based on detected device type.
-        ...BUTTONS.flatMap(btn => [
-            c4LedLight({
-                endpointName: `button_${btn.idx}_on`,
-                ledId: btn.id,
-                modeCode: '03',
-                description: `Button ${btn.idx} LED color when load is ON`,
-            }),
-            c4LedLight({
-                endpointName: `button_${btn.idx}_off`,
-                ledId: btn.id,
-                modeCode: '04',
-                description: `Button ${btn.idx} LED color when load is OFF`,
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_behavior`,
-                description: `Button ${btn.idx} behavior`,
-                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_led_mode`,
-                description: `Button ${btn.idx} LED mode`,
-                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
-            }),
-        ]),
     ],
     exposes: (device, options) => {
         const deviceType = device?.meta?.c4_device_type || null;
@@ -1083,6 +1094,7 @@ const definition = {
     },
     fromZigbee: [fzControl4Response],
     toZigbee: [
+        ...perButtonToZigbee,
         tzControl4Led, tzControl4Cmd, tzControl4Query,
         tzControl4ZclRead, tzControl4Probe, tzControl4Identify,
         tzControl4Detect,

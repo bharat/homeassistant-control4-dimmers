@@ -32,7 +32,7 @@ import {
 
     // Color validation
     isValidColorHex, normalizeColorHex,
-} from '../converters/lib/c4-protocol.mjs';
+} from '../converters/control4.mjs';
 
 
 // ═══════════════════════════════════════════════════════════════════════

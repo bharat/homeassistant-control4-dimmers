@@ -25,14 +25,7 @@ ha_differs() {
 }
 
 z2m_differs() {
-    # Compare each file in z2m/converters/ (recursively) against its deployed copy
-    while IFS= read -r f; do
-        local rel="${f#z2m/converters/}"
-        if ! diff -q "$f" "$Z2M_CONVERTERS/$rel" &>/dev/null; then
-            return 0
-        fi
-    done < <(find z2m/converters -type f)
-    return 1
+    ! diff -q z2m/converters/control4.mjs "$Z2M_CONVERTERS/control4.mjs" &>/dev/null
 }
 
 sync_and_restart() {
@@ -50,11 +43,11 @@ sync_and_restart() {
     fi
 
     if z2m_differs; then
-        echo "  Z2M converter files differ — syncing"
-        rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
+        echo "  Z2M converter differs — syncing"
+        cp z2m/converters/control4.mjs "$Z2M_CONVERTERS/control4.mjs"
         if z2m_differs; then
-            echo "  WARNING: Z2M files still differ after sync!"
-            diff -rq z2m/converters/ "$Z2M_CONVERTERS/" || true
+            echo "  WARNING: Z2M converter still differs after sync!"
+            diff z2m/converters/control4.mjs "$Z2M_CONVERTERS/control4.mjs" || true
         fi
         RESTART_Z2M=true
     fi

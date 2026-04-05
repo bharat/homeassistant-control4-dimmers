@@ -48,7 +48,7 @@ import {
     classifyDeviceType, getButtonsForDeviceType, buildLedColorState,
     isValidColorHex, normalizeColorHex,
     DIM_TYPE_MAP, MODEL_NAMES, MODEL_DESCRIPTIONS, GENBASIC_ATTRS,
-} from './c4-protocol.mjs';
+} from './lib/c4-protocol.mjs';
 
 // ─── Core: Send C4 Text Command ─────────────────────────────────────
 //

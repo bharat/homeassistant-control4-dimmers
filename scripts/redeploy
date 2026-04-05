@@ -25,11 +25,13 @@ ha_differs() {
 }
 
 z2m_differs() {
-    for f in z2m/converters/*; do
-        if ! diff -q "$f" "$Z2M_CONVERTERS/$(basename "$f")" &>/dev/null; then
+    # Compare each file in z2m/converters/ (recursively) against its deployed copy
+    while IFS= read -r f; do
+        local rel="${f#z2m/converters/}"
+        if ! diff -q "$f" "$Z2M_CONVERTERS/$rel" &>/dev/null; then
             return 0
         fi
-    done
+    done < <(find z2m/converters -type f)
     return 1
 }
 
@@ -52,9 +54,7 @@ sync_and_restart() {
         rsync -a z2m/converters/ "$Z2M_CONVERTERS/"
         if z2m_differs; then
             echo "  WARNING: Z2M files still differ after sync!"
-            for f in z2m/converters/*; do
-                diff "$f" "$Z2M_CONVERTERS/$(basename "$f")" || true
-            done
+            diff -rq z2m/converters/ "$Z2M_CONVERTERS/" || true
         fi
         RESTART_Z2M=true
     fi

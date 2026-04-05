@@ -33,77 +33,70 @@ log = logging.getLogger("c4-simulator")
 
 # ─── Simulated devices ───
 
+# Simulated devices match the real Z2M bridge/devices format:
+#  - No model_id (C4 devices don't report genBasic)
+#  - definition.vendor (not definition.manufacturer — Z2M doesn't use that)
+#  - definition.model is "C4-Zigbee" (the converter's unified model string)
+#  - "type" here is our internal device type, not part of Z2M's schema
 DEVICES = [
     {
         "ieee_address": "0x000fff0000aaa001",
         "friendly_name": "Kitchen",
-        "model_id": "C4-APD120",
         "type": "dimmer",
         "definition": {
-            "model": "C4-APD120",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Adaptive Phase Dimmer",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
     {
         "ieee_address": "0x000fff0000aaa002",
         "friendly_name": "Living Room",
-        "model_id": "C4-APD120",
         "type": "dimmer",
         "definition": {
-            "model": "C4-APD120",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Adaptive Phase Dimmer",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
     {
         "ieee_address": "0x000fff0000bbb001",
         "friendly_name": "Master Bedroom",
-        "model_id": "C4-KD120",
         "type": "keypaddim",
         "definition": {
-            "model": "C4-KD120",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Keypad Dimmer",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
     {
         "ieee_address": "0x000fff0000bbb002",
         "friendly_name": "Dining Room",
-        "model_id": "C4-KD120",
         "type": "keypaddim",
         "definition": {
-            "model": "C4-KD120",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Keypad Dimmer",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
     {
         "ieee_address": "0x000fff0000ccc001",
         "friendly_name": "Theater",
-        "model_id": "C4-KC120277",
         "type": "keypad",
         "definition": {
-            "model": "C4-KC120277",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Configurable Keypad",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
     {
         "ieee_address": "0x000fff0000ccc002",
         "friendly_name": "Garage",
-        "model_id": "C4-KC120277",
         "type": "keypad",
         "definition": {
-            "model": "C4-KC120277",
+            "model": "C4-Zigbee",
             "vendor": "Control4",
-            "manufacturer": "Control4",
-            "description": "Configurable Keypad",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
 ]
@@ -126,18 +119,25 @@ KEYPAD_LED_DEFAULTS = {
 
 
 def build_bridge_devices(devices: list[dict]) -> list[dict]:
-    """Build the zigbee2mqtt/bridge/devices payload."""
+    """Build the zigbee2mqtt/bridge/devices payload matching real Z2M output."""
     return [
         {
             "ieee_address": dev["ieee_address"],
             "friendly_name": dev["friendly_name"],
-            "model_id": dev["model_id"],
             "manufacturer": "Control4",
-            "type": "EndDevice",
+            "type": "Router",
             "network_address": random.randint(1000, 65000),  # noqa: S311
             "supported": True,
             "disabled": False,
-            "definition": dev["definition"],
+            "interview_completed": True,
+            "interview_state": "SUCCESSFUL",
+            "interviewing": False,
+            "power_source": "Mains (single phase)",
+            "definition": {
+                **dev["definition"],
+                "source": "external",
+                "supports_ota": False,
+            },
             "endpoints": {
                 "1": {
                     "bindings": [],
@@ -199,10 +199,21 @@ def build_detected_state(dev: dict) -> dict:
         state[f"button_{btn_id}_behavior"] = behavior
         state[f"button_{btn_id}_led_mode"] = led_mode
 
+    model_names = {
+        "dimmer": "C4-APD120",
+        "keypaddim": "C4-KD120",
+        "keypad": "C4-KC120277",
+    }
+    model_descs = {
+        "dimmer": "Control4 Adaptive Phase Dimmer",
+        "keypaddim": "Control4 Keypad Dimmer",
+        "keypad": "Control4 Configurable Keypad",
+    }
     state["c4_detect_result"] = {
         "device_type": device_type,
-        "model": dev["model_id"],
-        "description": dev["definition"]["description"],
+        "model": model_names.get(device_type, "unknown"),
+        "description": model_descs.get(device_type, "Unknown Control4 device"),
+        "ieee_address": dev["ieee_address"],
         "colors_read": len(leds) * 2,
     }
 

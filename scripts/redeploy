@@ -59,6 +59,7 @@ sync_and_restart() {
 # Initial sync on startup
 echo "=== redeploy started at $(git rev-parse --short HEAD) ==="
 sync_and_restart
+LAST_HEAD="$(git rev-parse HEAD)"
 
 # Poll for new commits
 while true; do

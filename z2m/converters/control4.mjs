@@ -1006,7 +1006,8 @@ const definition = {
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
         light({configureReporting: false}),
-        // Per-button LED color controls and config selects for all 6 slots
+        // Register toZigbee converters for all 6 slots (harmless if unused).
+        // Exposes are generated dynamically below based on detected device type.
         ...BUTTONS.flatMap(btn => [
             c4LedLight({
                 endpointName: `button_${btn.idx}_on`,
@@ -1034,10 +1035,52 @@ const definition = {
             }),
         ]),
     ],
-    exposes: [
-        new Enum('action', access.STATE, ACTION_VALUES)
-            .withDescription('Button press events'),
-    ],
+    exposes: (device, options) => {
+        const deviceType = device?.meta?.c4_device_type || null;
+        const buttons = deviceType ? getButtonsForDeviceType(deviceType) : BUTTONS;
+
+        const exposes = [];
+
+        // Button LED color lights (on/off) for active buttons only
+        for (const btn of buttons) {
+            exposes.push(
+                new Light()
+                    .withBrightness()
+                    .withColor(['hs'])
+                    .withEndpoint(`button_${btn.idx}_on`)
+                    .withDescription(`Button ${btn.idx} LED color when load is ON`),
+                new Light()
+                    .withBrightness()
+                    .withColor(['hs'])
+                    .withEndpoint(`button_${btn.idx}_off`)
+                    .withDescription(`Button ${btn.idx} LED color when load is OFF`),
+                new Enum(`button_${btn.idx}_behavior`, access.STATE_SET,
+                    ['keypad', 'toggle_load', 'load_on', 'load_off'])
+                    .withEndpoint(`button_${btn.idx}`)
+                    .withDescription(`Button ${btn.idx} behavior`),
+                new Enum(`button_${btn.idx}_led_mode`, access.STATE_SET,
+                    ['follow_load', 'follow_connection', 'push_release', 'programmed'])
+                    .withEndpoint(`button_${btn.idx}`)
+                    .withDescription(`Button ${btn.idx} LED mode`),
+            );
+        }
+
+        // Action events for active buttons only
+        const actionValues = buttons.flatMap(btn => [
+            `button_${btn.idx}_press`,
+            `button_${btn.idx}_scene`,
+            `button_${btn.idx}_click_1`,
+            `button_${btn.idx}_click_2`,
+            `button_${btn.idx}_click_3`,
+            `button_${btn.idx}_click_4`,
+        ]);
+        exposes.push(
+            new Enum('action', access.STATE, actionValues)
+                .withDescription('Button press events'),
+        );
+
+        return exposes;
+    },
     fromZigbee: [fzControl4Response],
     toZigbee: [
         tzControl4Led, tzControl4Cmd, tzControl4Query,

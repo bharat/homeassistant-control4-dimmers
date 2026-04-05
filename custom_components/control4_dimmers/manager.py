@@ -444,10 +444,15 @@ def _click_count_to_event_type(count: int) -> str:
 def _is_control4_device(device_info: dict) -> bool:
     """Check if a Z2M device info dict is a Control4 device."""
     definition = device_info.get("definition") or {}
-    manufacturer = definition.get("manufacturer", "")
-    model = definition.get("model", "")
-    if C4_MANUFACTURER_NAME.lower() in manufacturer.lower():
+    c4 = C4_MANUFACTURER_NAME.lower()
+    # Z2M uses "vendor" in definition, but check both for safety
+    for key in ("vendor", "manufacturer"):
+        if c4 in definition.get(key, "").lower():
+            return True
+    # Top-level "manufacturer" field
+    if c4 in device_info.get("manufacturer", "").lower():
         return True
+    model = definition.get("model", "")
     if model in C4_MODEL_IDS:
         return True
     model_id = device_info.get("model_id", "")

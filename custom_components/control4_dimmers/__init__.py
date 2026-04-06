@@ -254,31 +254,42 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)
     if state is None:
-        LOGGER.error("Entity not found: %s", entity_id)
+        LOGGER.error("press_button: entity not found: %s", entity_id)
         return
     ieee = state.attributes.get("ieee_address")
     slot_id = state.attributes.get("slot_id")
     behavior = state.attributes.get("behavior", "keypad")
+    LOGGER.info(
+        "press_button: entity=%s ieee=%s slot=%s behavior=%s",
+        entity_id,
+        ieee,
+        slot_id,
+        behavior,
+    )
     if not ieee or slot_id is None:
-        LOGGER.error("Entity %s missing ieee_address/slot_id", entity_id)
+        LOGGER.error("press_button: missing ieee_address/slot_id")
         return
 
     if _get_runtime(hass) is None:
+        LOGGER.error("press_button: runtime not loaded")
         return
 
     if behavior in ("load_on", "load_off", "toggle_load"):
-        # Find the light entity for this device
         light_entity_id = _find_light_entity(hass, ieee)
+        LOGGER.info("press_button: light_entity=%s", light_entity_id)
         if not light_entity_id:
-            LOGGER.error("No light entity found for device %s", ieee)
+            LOGGER.error("press_button: no light entity for %s", ieee)
             return
 
         service_data = {"entity_id": light_entity_id}
         if behavior == "load_on":
+            LOGGER.info("press_button: calling light.turn_on on %s", light_entity_id)
             await hass.services.async_call("light", "turn_on", service_data)
         elif behavior == "load_off":
+            LOGGER.info("press_button: calling light.turn_off on %s", light_entity_id)
             await hass.services.async_call("light", "turn_off", service_data)
         elif behavior == "toggle_load":
+            LOGGER.info("press_button: calling light.toggle on %s", light_entity_id)
             await hass.services.async_call("light", "toggle", service_data)
     else:
         # Keypad button — fire the event entity

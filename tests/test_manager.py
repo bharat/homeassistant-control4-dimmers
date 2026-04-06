@@ -404,27 +404,27 @@ class TestManagerDefaultSlots:
         ids = [s.slot_id for s in slots]
         assert 2 in ids
         assert 5 in ids
-        # Verify action fields are set
+        # Verify HA-native action format
         top = next(s for s in slots if s.slot_id == 2)
-        assert top.tap_action["action"] == "call-service"
-        assert top.tap_action["service"] == "light.turn_on"
+        assert top.tap_action["action"] == "light.turn_on"
+        assert "service" not in top.tap_action
 
     def test_keypad_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypad")
         assert len(slots) == 6
         assert slots[0].slot_id == 1
         assert slots[5].slot_id == 6
-        # All keypad buttons should fire events
-        assert slots[0].tap_action == {"action": "fire-event"}
+        # All keypad buttons have no action
+        assert slots[0].tap_action is None
 
     def test_keypaddim_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypaddim")
         assert len(slots) == 6
         # First slot should toggle load
-        assert slots[0].tap_action["action"] == "toggle"
+        assert slots[0].tap_action["action"] == "light.toggle"
         assert slots[0].tap_action["target"]["entity_id"] == "__self_load__"
-        # Other slots should fire events
-        assert slots[1].tap_action == {"action": "fire-event"}
+        # Other slots have no action
+        assert slots[1].tap_action is None
 
 
 # ── Manager: configure_device ────────────────────────────────────────
@@ -479,10 +479,10 @@ class TestManagerConfigureDevice:
 
 
 class TestExecuteSlotAction:
-    """Tests for the _execute_slot_action method."""
+    """Tests for execute_slot_action with HA-native action format."""
 
     @pytest.mark.asyncio
-    async def test_fire_event_action(
+    async def test_null_action_does_nothing(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
@@ -490,15 +490,14 @@ class TestExecuteSlotAction:
             ieee_address=IEEE_DIMMER,
             friendly_name="Kitchen",
             device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, tap_action={"action": "fire-event"})],
+            slots=[SlotConfig(slot_id=2, tap_action=None)],
         )
         manager._store._devices[IEEE_DIMMER] = config
-        # fire-event should not call any service
         await manager.execute_slot_action(IEEE_DIMMER, 2, "tap")
         manager._hass.services.async_call.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_toggle_action(
+    async def test_light_toggle_action(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
@@ -510,7 +509,7 @@ class TestExecuteSlotAction:
                 SlotConfig(
                     slot_id=2,
                     tap_action={
-                        "action": "toggle",
+                        "action": "light.toggle",
                         "target": {"entity_id": "light.kitchen"},
                     },
                 )
@@ -524,7 +523,7 @@ class TestExecuteSlotAction:
         )
 
     @pytest.mark.asyncio
-    async def test_call_service_action(
+    async def test_light_turn_on_action(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
@@ -536,8 +535,7 @@ class TestExecuteSlotAction:
                 SlotConfig(
                     slot_id=2,
                     tap_action={
-                        "action": "call-service",
-                        "service": "light.turn_on",
+                        "action": "light.turn_on",
                         "target": {"entity_id": "light.kitchen"},
                     },
                 )
@@ -563,14 +561,13 @@ class TestExecuteSlotAction:
                 SlotConfig(
                     slot_id=2,
                     tap_action={
-                        "action": "toggle",
+                        "action": "light.toggle",
                         "target": {"entity_id": "__self_load__"},
                     },
                 )
             ],
         )
         manager._store._devices[IEEE_DIMMER] = config
-        # Mock Z2M light entity lookup
         light_state = MagicMock()
         light_state.entity_id = "light.kitchen"
         light_state.attributes = {"friendly_name": "Kitchen"}
@@ -580,21 +577,6 @@ class TestExecuteSlotAction:
         manager._hass.services.async_call.assert_awaited_once_with(
             "light", "toggle", {"entity_id": "light.kitchen"}
         )
-
-    @pytest.mark.asyncio
-    async def test_none_action_does_nothing(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        manager._devices[IEEE_DIMMER] = dimmer_state
-        config = DeviceConfig(
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, tap_action={"action": "none"})],
-        )
-        manager._store._devices[IEEE_DIMMER] = config
-        await manager.execute_slot_action(IEEE_DIMMER, 2, "tap")
-        manager._hass.services.async_call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_double_tap_action(
@@ -608,9 +590,9 @@ class TestExecuteSlotAction:
             slots=[
                 SlotConfig(
                     slot_id=2,
-                    tap_action={"action": "fire-event"},
+                    tap_action=None,
                     double_tap_action={
-                        "action": "toggle",
+                        "action": "light.toggle",
                         "target": {"entity_id": "light.bedroom"},
                     },
                 )
@@ -628,7 +610,6 @@ class TestExecuteSlotAction:
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
-        # No config stored
         await manager.execute_slot_action(IEEE_DIMMER, 2, "tap")
         manager._hass.services.async_call.assert_not_called()
 
@@ -648,7 +629,15 @@ class TestDispatchWithActions:
             ieee_address=IEEE_DIMMER,
             friendly_name="Kitchen",
             device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, tap_action={"action": "fire-event"})],
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    tap_action={
+                        "action": "light.toggle",
+                        "target": {"entity_id": "light.kitchen"},
+                    },
+                )
+            ],
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager._dispatch_button_action(dimmer_state, "button_2_press")
@@ -667,9 +656,12 @@ class TestDispatchWithActions:
             slots=[
                 SlotConfig(
                     slot_id=2,
-                    tap_action={"action": "fire-event"},
+                    tap_action={
+                        "action": "light.toggle",
+                        "target": {"entity_id": "light.kitchen"},
+                    },
                     double_tap_action={
-                        "action": "toggle",
+                        "action": "light.toggle",
                         "target": {"entity_id": "light.x"},
                     },
                 )
@@ -699,7 +691,7 @@ class TestSetupLightTrackingActions:
                 SlotConfig(
                     slot_id=2,
                     tap_action={
-                        "action": "toggle",
+                        "action": "light.toggle",
                         "target": {"entity_id": "light.kitchen"},
                     },
                     led_track_entity_id="light.kitchen",
@@ -719,7 +711,7 @@ class TestSetupLightTrackingActions:
             ieee_address=IEEE_DIMMER,
             friendly_name="Kitchen",
             device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, tap_action={"action": "fire-event"})],
+            slots=[SlotConfig(slot_id=2, tap_action=None)],
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager.setup_light_tracking()

@@ -7,9 +7,9 @@
  * Config: { type: "custom:control4-dimmer-card", entity: "sensor.xxx" }
  */
 
-// Ensure HA's entity picker component is loaded (it's lazily loaded)
+// Ensure HA's entity picker and service picker components are loaded (lazily loaded)
 (async () => {
-  if (customElements.get("ha-entity-picker")) return;
+  if (customElements.get("ha-entity-picker") && customElements.get("ha-service-picker")) return;
   const helpers = await (window.loadCardHelpers?.() ?? Promise.resolve());
   if (helpers?.createCardElement) {
     // Creating a temporary entities card triggers HA to load its dependencies
@@ -54,22 +54,18 @@ const DEVICE_TYPES = {
   keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
 };
 
-const TAP_ACTIONS = [
-  { value: "fire-event",    label: "Fire Event (Keypad)", needsLoad: false },
-  { value: "toggle",        label: "Toggle",               needsLoad: false },
-  { value: "call-service",  label: "Call Service",          needsLoad: false },
-  { value: "none",          label: "None",                  needsLoad: false },
-];
-
-const COMMON_SERVICES = [
-  { value: "light.toggle",   label: "Light: Toggle" },
-  { value: "light.turn_on",  label: "Light: Turn On" },
-  { value: "light.turn_off", label: "Light: Turn Off" },
-  { value: "switch.toggle",  label: "Switch: Toggle" },
-  { value: "switch.turn_on", label: "Switch: Turn On" },
-  { value: "switch.turn_off",label: "Switch: Turn Off" },
-  { value: "homeassistant.toggle", label: "HA: Toggle" },
-];
+/** Format an HA-native action dict as a compact label, e.g. "light.toggle → Kitchen" */
+function actionLabel(action, hass) {
+  if (!action) return null;
+  const service = action.action || "";
+  const entityId = (action.target || {}).entity_id || "";
+  const entityName = entityId === "__self_load__"
+    ? "this device"
+    : (hass?.states[entityId]?.attributes?.friendly_name || entityId || "");
+  const parts = [service];
+  if (entityName) parts.push(`→ ${entityName}`);
+  return parts.join(" ");
+}
 
 const LED_MODES = [
   { value: "follow_load",       label: "Follow Load",       loadOnly: true },
@@ -401,62 +397,70 @@ const EDITOR_STYLES = `
     color: var(--text-primary-color, #fff);
   }
 
-  /* ── Automations section ── */
+  /* ── Action rows ── */
 
-  .automations-section {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--divider-color);
-  }
-  .automations-section .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--secondary-text-color);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 8px;
-  }
-  .automations-section .event-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 6px;
+  .btn-add-action {
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px dashed var(--primary-color);
+    background: transparent;
+    color: var(--primary-color);
     font-size: 13px;
-  }
-  .automations-section .event-type-label {
+    font-family: inherit;
+    cursor: pointer;
     font-weight: 500;
+  }
+  .btn-add-action:hover { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+
+  .action-summary {
+    flex: 1;
+    font-size: 13px;
     color: var(--primary-text-color);
-    min-width: 90px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .automations-section .auto-link {
-    color: var(--primary-color);
-    cursor: pointer;
-    text-decoration: none;
-    font-size: 13px;
-  }
-  .automations-section .auto-link:hover { text-decoration: underline; }
-  .automations-section .auto-none {
-    color: var(--disabled-text-color, #999);
-    font-size: 13px;
-    font-style: italic;
-  }
-  .automations-section .create-auto-link {
-    display: inline-block;
-    margin-top: 8px;
-    font-size: 13px;
-    color: var(--primary-color);
-    cursor: pointer;
-    text-decoration: none;
-    font-weight: 500;
-  }
-  .automations-section .create-auto-link:hover { text-decoration: underline; }
-  .automations-section .event-entity-id {
-    font-size: 11px;
+
+  .btn-remove-action {
+    padding: 2px 6px;
+    border: none;
+    background: transparent;
     color: var(--secondary-text-color);
-    font-family: monospace;
-    margin-top: 2px;
-    margin-bottom: 6px;
-    word-break: break-all;
+    font-size: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+    border-radius: 4px;
+  }
+  .btn-remove-action:hover { color: var(--error-color, #db4437); background: var(--secondary-background-color); }
+
+  .action-edit {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .action-edit ha-service-picker,
+  .action-edit ha-entity-picker { width: 100%; }
+  .action-edit-buttons {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .action-edit-buttons button {
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--divider-color);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .action-edit-buttons .btn-action-ok {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: var(--text-primary-color, #fff);
   }
 
   /* ── Setup prompt ── */
@@ -555,7 +559,7 @@ function computeLayout(slotConfigs, deviceType) {
     if (!used.has(id)) {
       buttons.push({
         startSlot: id, size: 1,
-        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off, tap_action: { action: "fire-event" } }],
+        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
       });
     }
   }
@@ -570,9 +574,9 @@ function defaultSlotsForType(deviceType) {
   if (deviceType === "dimmer") {
     return [
       { slot_id: 2, size: 1, name: "Top", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000",
-        tap_action: { action: "call-service", service: "light.turn_on", target: { entity_id: "__self_load__" } } },
+        tap_action: { action: "light.turn_on", target: { entity_id: "__self_load__" } } },
       { slot_id: 5, size: 1, name: "Bottom", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff",
-        tap_action: { action: "call-service", service: "light.turn_off", target: { entity_id: "__self_load__" } } },
+        tap_action: { action: "light.turn_off", target: { entity_id: "__self_load__" } } },
     ];
   }
   return meta.slots.map((id) => {
@@ -582,8 +586,8 @@ function defaultSlotsForType(deviceType) {
       led_mode: isTopLoad ? "follow_load" : "programmed",
       led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
       tap_action: isTopLoad
-        ? { action: "toggle", target: { entity_id: "__self_load__" } }
-        : { action: "fire-event" },
+        ? { action: "light.toggle", target: { entity_id: "__self_load__" } }
+        : null,
     };
   });
 }
@@ -878,8 +882,7 @@ class Control4CardEditor extends HTMLElement {
     this._dirty = false;
     this._saving = false;
     this._lastDetectedType = null;
-    this._eventEntities = {};   // { "slot_N": "event.xxx" }
-    this._slotAutomations = {}; // { "slot_N": [{entity_id, name}] }
+    this._editingAction = null; // which action field is being edited
   }
 
   set hass(hass) {
@@ -928,17 +931,6 @@ class Control4CardEditor extends HTMLElement {
       });
   }
 
-  _getLightEntities() {
-    if (!this._hass) return [];
-    return Object.keys(this._hass.states)
-      .filter((eid) => eid.startsWith("light."))
-      .map((eid) => ({
-        entity_id: eid,
-        name: this._hass.states[eid]?.attributes?.friendly_name || eid,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }
-
   async _fetchDevice() {
     if (!this._hass || !this._config.entity) return;
     try {
@@ -956,68 +948,8 @@ class Control4CardEditor extends HTMLElement {
         }
       }
       this._render();
-
-      // Fetch event entities for this device (async, non-blocking).
-      if (info.ieee_address) {
-        this._fetchEventEntities(info.ieee_address);
-      }
     } catch (err) {
       console.error("Editor: failed to fetch device", err);
-    }
-  }
-
-  async _fetchEventEntities(ieee) {
-    try {
-      const result = await this._hass.connection.sendMessagePromise({
-        type: `${DOMAIN}/event_entities`,
-        ieee_address: ieee,
-      });
-      this._eventEntities = result || {};
-
-      // For each event entity, fetch linked automations via search/related.
-      const autoMap = {};
-      for (const [slotKey, entityId] of Object.entries(this._eventEntities)) {
-        try {
-          const related = await this._hass.connection.sendMessagePromise({
-            type: "search/related",
-            item_type: "entity",
-            item_id: entityId,
-          });
-          const autoIds = related?.automation || [];
-          const autos = [];
-          for (const aid of autoIds) {
-            const st = this._hass.states[aid];
-            let triggerEventTypes = [];
-            try {
-              const configId = st?.attributes?.id;
-              if (configId) {
-                const resp = await this._hass.callApi("GET", `config/automation/config/${configId}`);
-                const triggers = resp?.triggers || resp?.trigger || [];
-                const triggerList = Array.isArray(triggers) ? triggers : [triggers];
-                for (const t of triggerList) {
-                  const ids = Array.isArray(t.entity_id) ? t.entity_id : [t.entity_id];
-                  if (ids.includes(entityId) && t.attribute === "event_type") {
-                    const toVals = Array.isArray(t.to) ? t.to : t.to ? [t.to] : [];
-                    triggerEventTypes.push(...toVals);
-                  }
-                }
-              }
-            } catch { /* config not available */ }
-            autos.push({
-              entity_id: aid,
-              name: st?.attributes?.friendly_name || aid,
-              event_types: triggerEventTypes,
-            });
-          }
-          autoMap[slotKey] = autos;
-        } catch {
-          autoMap[slotKey] = [];
-        }
-      }
-      this._slotAutomations = autoMap;
-      this._render();
-    } catch (err) {
-      console.debug("Failed to fetch event entities", err);
     }
   }
 
@@ -1067,6 +999,7 @@ class Control4CardEditor extends HTMLElement {
 
   _handleSlotClick(slotId) {
     this._selectedSlotId = this._selectedSlotId === slotId ? null : slotId;
+    this._editingAction = null;
     this._render();
   }
 
@@ -1087,9 +1020,6 @@ class Control4CardEditor extends HTMLElement {
         const label = slotEl.querySelector(".slot-label");
         if (label) label.textContent = displayName;
       }
-      // Update the automations section title to match.
-      const autoTitle = root?.querySelector(".automations-section .section-title");
-      if (autoTitle) autoTitle.textContent = `${displayName} Automations`;
       // Enable save/reset buttons if they were disabled.
       const saveBtn = root?.getElementById("save-btn");
       if (saveBtn) saveBtn.disabled = false;
@@ -1136,7 +1066,7 @@ class Control4CardEditor extends HTMLElement {
         slot_id: startSlot, size: newSize, name: `Button ${startSlot}`,
         led_mode: "programmed",
         led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
-        tap_action: { action: "fire-event" },
+        tap_action: null,
       };
       this._localSlots.push(mainSlot);
     }
@@ -1148,7 +1078,7 @@ class Control4CardEditor extends HTMLElement {
           slot_id: id, size: 1, name: `Button ${id}`,
           led_mode: "programmed",
           led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
-          tap_action: { action: "fire-event" },
+          tap_action: null,
         });
       }
     }
@@ -1283,35 +1213,12 @@ class Control4CardEditor extends HTMLElement {
   _renderSlotConfig(slot, effectiveType, typeMeta) {
     const showLoadOptions = effectiveType !== "keypad";
     const showSize = typeMeta && !typeMeta.fixedLayout;
-    const slotKey = `slot_${slot.slot_id}`;
-    const eventEntityId = this._eventEntities[slotKey] || null;
-    const automations = this._slotAutomations[slotKey] || [];
 
-    const eventTypes = [
-      { key: "pressed", label: "Pressed" },
-      { key: "released", label: "Released" },
-      { key: "single_tap", label: "Single Tap" },
-      { key: "double_tap", label: "Double Tap" },
-      { key: "triple_tap", label: "Triple Tap" },
+    const actionConfigs = [
+      { field: "tap_action", label: "Tap" },
+      { field: "double_tap_action", label: "Double Tap" },
+      { field: "hold_action", label: "Hold" },
     ];
-
-    const tapAction = slot.tap_action || { action: "fire-event" };
-    const tapActionType = tapAction.action || "fire-event";
-    const tapTarget = (tapAction.target || {}).entity_id || "";
-    const tapService = tapAction.service || "";
-
-    const doubleTapAction = slot.double_tap_action || null;
-    const doubleTapType = doubleTapAction ? (doubleTapAction.action || "none") : "none";
-    const doubleTapTarget = doubleTapAction ? ((doubleTapAction.target || {}).entity_id || "") : "";
-    const doubleTapService = doubleTapAction ? (doubleTapAction.service || "") : "";
-
-    const holdAction = slot.hold_action || null;
-    const holdType = holdAction ? (holdAction.action || "none") : "none";
-    const holdTarget = holdAction ? ((holdAction.target || {}).entity_id || "") : "";
-    const holdService = holdAction ? (holdAction.service || "") : "";
-
-    const needsEntity = (type) => type === "toggle" || type === "call-service";
-    const needsService = (type) => type === "call-service";
 
     return `
       <div class="slot-config">
@@ -1332,85 +1239,31 @@ class Control4CardEditor extends HTMLElement {
           <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slot.slot_id}">
         </div>
 
-        <!-- Tap Action -->
-        <div class="config-row">
-          <label>Tap Action</label>
-          <select id="tap-action-type">
-            ${TAP_ACTIONS.map((a) => `
-              <option value="${a.value}" ${tapActionType === a.value ? "selected" : ""}>${a.label}</option>
-            `).join("")}
-          </select>
-        </div>
-        ${needsService(tapActionType) ? `
-          <div class="config-row">
-            <label>Service</label>
-            <select id="tap-action-service">
-              ${COMMON_SERVICES.map((s) => `
-                <option value="${s.value}" ${tapService === s.value ? "selected" : ""}>${s.label}</option>
-              `).join("")}
-            </select>
-          </div>
-        ` : ""}
-        ${needsEntity(tapActionType) ? `
-          <div class="config-row">
-            <label>Target Entity</label>
-            <ha-entity-picker id="tap-action-entity" allow-custom-entity></ha-entity-picker>
-          </div>
-        ` : ""}
-
-        <!-- Double Tap Action -->
-        <div class="config-row">
-          <label>Double Tap</label>
-          <select id="double-tap-action-type">
-            <option value="none" ${doubleTapType === "none" ? "selected" : ""}>None</option>
-            ${TAP_ACTIONS.filter((a) => a.value !== "none").map((a) => `
-              <option value="${a.value}" ${doubleTapType === a.value ? "selected" : ""}>${a.label}</option>
-            `).join("")}
-          </select>
-        </div>
-        ${needsService(doubleTapType) ? `
-          <div class="config-row">
-            <label>Service</label>
-            <select id="double-tap-action-service">
-              ${COMMON_SERVICES.map((s) => `
-                <option value="${s.value}" ${doubleTapService === s.value ? "selected" : ""}>${s.label}</option>
-              `).join("")}
-            </select>
-          </div>
-        ` : ""}
-        ${needsEntity(doubleTapType) ? `
-          <div class="config-row">
-            <label>Target Entity</label>
-            <ha-entity-picker id="double-tap-action-entity" allow-custom-entity></ha-entity-picker>
-          </div>
-        ` : ""}
-
-        <!-- Hold Action -->
-        <div class="config-row">
-          <label>Hold</label>
-          <select id="hold-action-type">
-            <option value="none" ${holdType === "none" ? "selected" : ""}>None</option>
-            ${TAP_ACTIONS.filter((a) => a.value !== "none").map((a) => `
-              <option value="${a.value}" ${holdType === a.value ? "selected" : ""}>${a.label}</option>
-            `).join("")}
-          </select>
-        </div>
-        ${needsService(holdType) ? `
-          <div class="config-row">
-            <label>Service</label>
-            <select id="hold-action-service">
-              ${COMMON_SERVICES.map((s) => `
-                <option value="${s.value}" ${holdService === s.value ? "selected" : ""}>${s.label}</option>
-              `).join("")}
-            </select>
-          </div>
-        ` : ""}
-        ${needsEntity(holdType) ? `
-          <div class="config-row">
-            <label>Target Entity</label>
-            <ha-entity-picker id="hold-action-entity" allow-custom-entity></ha-entity-picker>
-          </div>
-        ` : ""}
+        ${actionConfigs.map(({ field, label }) => {
+          const action = slot[field] || null;
+          const summary = actionLabel(action, this._hass);
+          const isEditing = this._editingAction === field;
+          return `
+            <div class="config-row action-row">
+              <label>${label}</label>
+              ${!action && !isEditing ? `
+                <button class="btn-add-action" data-field="${field}">+ Perform action</button>
+              ` : isEditing ? `
+                <div class="action-edit" data-field="${field}">
+                  <ha-service-picker id="${field}-service"></ha-service-picker>
+                  <ha-entity-picker id="${field}-entity" allow-custom-entity></ha-entity-picker>
+                  <div class="action-edit-buttons">
+                    <button class="btn-action-ok" data-field="${field}">OK</button>
+                    <button class="btn-action-cancel" data-field="${field}">Cancel</button>
+                  </div>
+                </div>
+              ` : `
+                <span class="action-summary">${summary}</span>
+                <button class="btn-remove-action" data-field="${field}" title="Remove">✕</button>
+              `}
+            </div>
+          `;
+        }).join("")}
 
         <!-- LED Tracking -->
         <div class="config-row">
@@ -1436,28 +1289,6 @@ class Control4CardEditor extends HTMLElement {
             <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
           </div>
         </div>
-
-        ${eventEntityId ? `
-          <div class="automations-section">
-            <div class="section-title">${slot.name || `Button ${slot.slot_id}`} Automations</div>
-            <div class="event-entity-id">${eventEntityId}</div>
-            ${eventTypes.map((et) => {
-              const linked = automations.filter((a) =>
-                a.event_types.length === 0 || a.event_types.includes(et.key)
-              );
-              return `
-                <div class="event-row">
-                  <span class="event-type-label">${et.label}</span>
-                  ${linked.length > 0
-                    ? linked.map((a) => `<a class="auto-link" data-auto-id="${a.entity_id}">${a.name}</a>`).join(", ")
-                    : `<span class="auto-none">None</span>`
-                  }
-                </div>
-              `;
-            }).join("")}
-            <a class="create-auto-link" data-action="create-automation">+ Create Automation</a>
-          </div>
-        ` : ""}
       </div>
     `;
   }
@@ -1489,52 +1320,57 @@ class Control4CardEditor extends HTMLElement {
     const nameInput = root.getElementById("slot-name");
     if (nameInput) nameInput.addEventListener("input", (e) => this._updateSlot(this._selectedSlotId, "name", e.target.value));
 
-    // Action type selectors for tap/double_tap/hold
-    const actionConfigs = [
-      { prefix: "tap", field: "tap_action" },
-      { prefix: "double-tap", field: "double_tap_action" },
-      { prefix: "hold", field: "hold_action" },
-    ];
-    for (const { prefix, field } of actionConfigs) {
-      const typeSel2 = root.getElementById(`${prefix}-action-type`);
-      if (typeSel2) typeSel2.addEventListener("change", (e) => {
-        const val = e.target.value;
-        if (val === "none") {
-          this._updateSlot(this._selectedSlotId, field, null);
-        } else {
-          const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
-          // Build a clean action dict with only the fields relevant to this type
-          const newAction = { action: val };
-          if (val === "toggle" || val === "call-service") {
-            if (currentAction.target) newAction.target = currentAction.target;
-          }
-          if (val === "call-service") {
-            newAction.service = currentAction.service || "light.toggle";
-          }
-          this._updateSlot(this._selectedSlotId, field, newAction);
+    // "+ Perform action" buttons
+    for (const btn of root.querySelectorAll(".btn-add-action")) {
+      btn.addEventListener("click", () => {
+        this._editingAction = btn.dataset.field;
+        this._render();
+      });
+    }
+
+    // Remove action buttons
+    for (const btn of root.querySelectorAll(".btn-remove-action")) {
+      btn.addEventListener("click", () => {
+        this._updateSlot(this._selectedSlotId, btn.dataset.field, null);
+        this._render();
+      });
+    }
+
+    // Action editor: service picker, entity picker, OK/Cancel
+    const actionFields = ["tap_action", "double_tap_action", "hold_action"];
+    for (const field of actionFields) {
+      const svcPicker = root.getElementById(`${field}-service`);
+      if (svcPicker) {
+        svcPicker.hass = this._hass;
+        const curAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field];
+        svcPicker.value = curAction?.action || "";
+      }
+
+      const entityPicker = root.getElementById(`${field}-entity`);
+      if (entityPicker) {
+        entityPicker.hass = this._hass;
+        const curAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field];
+        entityPicker.value = (curAction?.target || {}).entity_id || "";
+      }
+
+      const okBtn = root.querySelector(`.btn-action-ok[data-field="${field}"]`);
+      if (okBtn) okBtn.addEventListener("click", () => {
+        const svc = root.getElementById(`${field}-service`)?.value || "";
+        const eid = root.getElementById(`${field}-entity`)?.value || "";
+        if (svc) {
+          const action = { action: svc };
+          if (eid) action.target = { entity_id: eid };
+          this._updateSlot(this._selectedSlotId, field, action);
         }
+        this._editingAction = null;
         this._render();
       });
 
-      const svcSel = root.getElementById(`${prefix}-action-service`);
-      if (svcSel) svcSel.addEventListener("change", (e) => {
-        const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
-        this._updateSlot(this._selectedSlotId, field, { ...currentAction, service: e.target.value });
+      const cancelBtn = root.querySelector(`.btn-action-cancel[data-field="${field}"]`);
+      if (cancelBtn) cancelBtn.addEventListener("click", () => {
+        this._editingAction = null;
+        this._render();
       });
-
-      const entityPicker = root.getElementById(`${prefix}-action-entity`);
-      if (entityPicker) {
-        entityPicker.hass = this._hass;
-        const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
-        entityPicker.value = (currentAction.target || {}).entity_id || "";
-        entityPicker.addEventListener("value-changed", (e) => {
-          const curAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
-          this._updateSlot(this._selectedSlotId, field, {
-            ...curAction,
-            target: { entity_id: e.detail.value },
-          });
-        });
-      }
     }
 
     // LED tracking entity picker
@@ -1560,49 +1396,6 @@ class Control4CardEditor extends HTMLElement {
 
     const resetBtn = root.getElementById("reset-btn");
     if (resetBtn) resetBtn.addEventListener("click", () => this._handleReset());
-
-    // Automation links: navigate to automation edit page.
-    const autoLinks = root.querySelectorAll(".auto-link");
-    for (const link of autoLinks) {
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        const autoId = link.dataset.autoId;
-        const configId = autoId && this._hass.states[autoId]?.attributes?.id;
-        if (configId) {
-          window.open(`/config/automation/edit/${configId}`, "_blank");
-        }
-      });
-    }
-
-    // Create automation link: prefill trigger with this button's event entity.
-    const createLink = root.querySelector(".create-auto-link");
-    if (createLink) {
-      createLink.addEventListener("click", (e) => {
-        e.preventDefault();
-        const slot = this._localSlots.find((s) => s.slot_id === this._selectedSlotId);
-        const eventEntityId = this._eventEntities?.[`slot_${this._selectedSlotId}`];
-        const name = slot?.name || `Button ${this._selectedSlotId}`;
-        if (eventEntityId) {
-          // Create a draft automation via HA API with trigger prefilled
-          this._hass.callApi("POST", "config/automation/config", {
-            alias: `${name} automation`,
-            triggers: [{
-              trigger: "state",
-              entity_id: [eventEntityId],
-              attribute: "event_type",
-              to: "single_tap",
-            }],
-            conditions: [],
-            actions: [],
-          }).then((resp) => {
-            const id = resp?.result;
-            window.open(id ? `/config/automation/edit/${id}` : "/config/automation/edit/new", "_blank");
-          }).catch(() => window.open("/config/automation/edit/new", "_blank"));
-        } else {
-          window.open("/config/automation/edit/new", "_blank");
-        }
-      });
-    }
   }
 }
 

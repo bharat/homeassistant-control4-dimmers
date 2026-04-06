@@ -447,7 +447,12 @@ class Control4Manager:
     async def execute_slot_action(
         self, ieee: str, slot_id: int, trigger: str = "tap"
     ) -> None:
-        """Execute the action dict for a slot based on the trigger type."""
+        """
+        Execute the HA-native action dict for a slot.
+
+        Action format: { action: "domain.service", target: { entity_id: "..." } }
+        where `action` is a standard HA service name (e.g. "light.toggle").
+        """
         config = self._store.get_device(ieee)
         if not config:
             return
@@ -461,39 +466,27 @@ class Control4Manager:
             "hold": slot.hold_action,
         }
         action = action_map.get(trigger)
-        if not action or action.get("action") in ("none", "fire-event"):
+        if not action:
             return
 
-        action_type = action.get("action", "")
+        service = action.get("action", "")
+        if "." not in service:
+            LOGGER.error("Invalid action service: %s", service)
+            return
+
+        domain, svc_name = service.split(".", 1)
         target = action.get("target", {})
         entity_id = self._resolve_entity_id(ieee, target.get("entity_id", ""))
+        if not entity_id:
+            LOGGER.error("No entity for %s slot %d action %s", ieee, slot_id, service)
+            return
 
-        if action_type == "toggle":
-            if not entity_id:
-                LOGGER.error("toggle action: no entity for %s slot %d", ieee, slot_id)
-                return
-            if slot.led_track_entity_id:
-                await self.async_optimistic_led(ieee, slot_id)
-            domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
-            await self._hass.services.async_call(
-                domain, "toggle", {"entity_id": entity_id}
-            )
-        elif action_type == "call-service":
-            service = action.get("service", "")
-            if "." not in service:
-                LOGGER.error("call-service: invalid service %s", service)
-                return
-            if not entity_id:
-                LOGGER.error("call-service: no entity for %s slot %d", ieee, slot_id)
-                return
-            svc_domain, svc_name = service.split(".", 1)
-            service_data = dict(action.get("data", {}))
-            service_data["entity_id"] = entity_id
-            if slot.led_track_entity_id:
-                await self.async_optimistic_led(ieee, slot_id)
-            await self._hass.services.async_call(svc_domain, svc_name, service_data)
-        else:
-            LOGGER.warning("Unknown action type: %s", action_type)
+        if slot.led_track_entity_id:
+            await self.async_optimistic_led(ieee, slot_id)
+
+        service_data = dict(action.get("data", {}))
+        service_data["entity_id"] = entity_id
+        await self._hass.services.async_call(domain, svc_name, service_data)
 
     async def async_optimistic_led(self, ieee: str, slot_id: int) -> None:
         """
@@ -625,8 +618,7 @@ class Control4Manager:
                     led_on_color="ffffff",
                     led_off_color="000000",
                     tap_action={
-                        "action": "call-service",
-                        "service": "light.turn_on",
+                        "action": "light.turn_on",
                         "target": {"entity_id": "__self_load__"},
                     },
                 ),
@@ -638,8 +630,7 @@ class Control4Manager:
                     led_on_color="000000",
                     led_off_color="0000ff",
                     tap_action={
-                        "action": "call-service",
-                        "service": "light.turn_off",
+                        "action": "light.turn_off",
                         "target": {"entity_id": "__self_load__"},
                     },
                 ),
@@ -653,11 +644,11 @@ class Control4Manager:
                 if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
                 else "programmed",
                 tap_action={
-                    "action": "toggle",
+                    "action": "light.toggle",
                     "target": {"entity_id": "__self_load__"},
                 }
                 if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
-                else {"action": "fire-event"},
+                else None,
             )
             for i in range(1, SLOT_COUNT + 1)
         ]

@@ -88,17 +88,20 @@ def _derive_behavior(
 
 
 def _behavior_from_action(tap_action: dict) -> str:
-    """Map a tap_action dict to a legacy behavior string."""
-    action = tap_action.get("action", "")
+    """Map an HA-native tap_action dict to a legacy behavior string."""
+    service = tap_action.get("action", "")
     target_eid = (tap_action.get("target") or {}).get("entity_id", "")
-    if action == "toggle":
-        return "toggle_load" if target_eid == "__self_load__" else "control_light"
-    if action == "call-service":
-        svc = tap_action.get("service", "")
-        return {"light.turn_on": "load_on", "light.turn_off": "load_off"}.get(
-            svc, "call-service"
-        )
-    return "keypad"
+    behavior_map = {
+        "light.turn_on": "load_on",
+        "light.turn_off": "load_off",
+    }
+    if service in behavior_map:
+        return behavior_map[service]
+    if service.endswith(".toggle") and target_eid == "__self_load__":
+        return "toggle_load"
+    if service.endswith(".toggle"):
+        return "control_light"
+    return service or "keypad"
 
 
 class Control4ButtonEvent(EventEntity):

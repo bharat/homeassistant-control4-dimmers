@@ -84,7 +84,7 @@ class TestSlotConfig:
         assert slot.led_track_entity_id is None
 
     def test_tap_action_in_to_dict(self) -> None:
-        action = {"action": "toggle", "target": {"entity_id": "light.kitchen"}}
+        action = {"action": "light.toggle", "target": {"entity_id": "light.kitchen"}}
         slot = SlotConfig(slot_id=1, tap_action=action)
         d = slot.to_dict()
         assert d["tap_action"] == action
@@ -100,18 +100,33 @@ class TestSlotConfig:
     def test_action_fields_from_dict(self) -> None:
         data = {
             "slot_id": 1,
-            "tap_action": {"action": "toggle", "target": {"entity_id": "light.x"}},
-            "double_tap_action": {"action": "fire-event"},
-            "hold_action": {"action": "none"},
+            "tap_action": {
+                "action": "light.toggle",
+                "target": {"entity_id": "light.x"},
+            },
+            "double_tap_action": {
+                "action": "switch.turn_on",
+                "target": {"entity_id": "switch.y"},
+            },
+            "hold_action": {
+                "action": "light.turn_off",
+                "target": {"entity_id": "light.x"},
+            },
             "led_track_entity_id": "light.x",
         }
         slot = SlotConfig.from_dict(data)
         assert slot.tap_action == {
-            "action": "toggle",
+            "action": "light.toggle",
             "target": {"entity_id": "light.x"},
         }
-        assert slot.double_tap_action == {"action": "fire-event"}
-        assert slot.hold_action == {"action": "none"}
+        assert slot.double_tap_action == {
+            "action": "switch.turn_on",
+            "target": {"entity_id": "switch.y"},
+        }
+        assert slot.hold_action == {
+            "action": "light.turn_off",
+            "target": {"entity_id": "light.x"},
+        }
         assert slot.led_track_entity_id == "light.x"
 
     def test_roundtrip(self) -> None:
@@ -129,7 +144,10 @@ class TestSlotConfig:
     def test_roundtrip_with_actions(self) -> None:
         original = SlotConfig(
             slot_id=1,
-            tap_action={"action": "toggle", "target": {"entity_id": "light.kitchen"}},
+            tap_action={
+                "action": "light.toggle",
+                "target": {"entity_id": "light.kitchen"},
+            },
             led_track_entity_id="light.kitchen",
         )
         rebuilt = SlotConfig.from_dict(original.to_dict())

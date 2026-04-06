@@ -244,8 +244,8 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     """
     Handle control4_dimmers.press_button service call.
 
-    Executes the tap_action for the slot, which handles all behavior types
-    (toggle, call-service, fire-event) through the unified action system.
+    Executes the tap_action for the slot using HA-native action format
+    (e.g. { action: "light.toggle", target: { entity_id: "..." } }).
     """
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)

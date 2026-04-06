@@ -91,8 +91,8 @@ class TestControl4Store:
         assert store.get_device(IEEE_DIMMER) is config
 
     @pytest.mark.asyncio
-    async def test_migration_on_load(self, store: Control4Store) -> None:
-        """Loading old-format configs should auto-migrate behavior to tap_action."""
+    async def test_migration_from_behavior(self, store: Control4Store) -> None:
+        """Loading old behavior-format configs should migrate to HA-native."""
         store._store.async_load.return_value = {
             "devices": {
                 IEEE_DIMMER: {
@@ -110,22 +110,22 @@ class TestControl4Store:
         config = store.get_device(IEEE_DIMMER)
         assert config is not None
         top = config.slots[0]
-        assert top.tap_action is not None
-        assert top.tap_action["action"] == "call-service"
-        assert top.tap_action["service"] == "light.turn_on"
+        assert top.tap_action == {
+            "action": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
         bottom = config.slots[1]
-        assert bottom.tap_action["action"] == "call-service"
-        assert bottom.tap_action["service"] == "light.turn_off"
-        # behavior should be reset
-        assert top.behavior == "keypad"
-        # Store should have been saved
+        assert bottom.tap_action == {
+            "action": "light.turn_off",
+            "target": {"entity_id": "__self_load__"},
+        }
         store._store.async_save.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_no_migration_when_already_migrated(
+    async def test_migration_from_intermediate_format(
         self, store: Control4Store
     ) -> None:
-        """Slots that already have tap_action should not be re-migrated."""
+        """Migrate intermediate fire-event/toggle/call-service to HA-native."""
         store._store.async_load.return_value = {
             "devices": {
                 IEEE_DIMMER: {
@@ -135,8 +135,22 @@ class TestControl4Store:
                     "slots": [
                         {
                             "slot_id": 2,
-                            "name": "Top",
                             "tap_action": {"action": "fire-event"},
+                        },
+                        {
+                            "slot_id": 3,
+                            "tap_action": {
+                                "action": "call-service",
+                                "service": "light.turn_on",
+                                "target": {"entity_id": "__self_load__"},
+                            },
+                        },
+                        {
+                            "slot_id": 4,
+                            "tap_action": {
+                                "action": "toggle",
+                                "target": {"entity_id": "light.kitchen"},
+                            },
                         },
                     ],
                 }
@@ -145,54 +159,137 @@ class TestControl4Store:
         await store.async_load()
         config = store.get_device(IEEE_DIMMER)
         assert config is not None
-        assert config.slots[0].tap_action == {"action": "fire-event"}
+        # fire-event → None
+        assert config.slots[0].tap_action is None
+        # call-service → flattened
+        assert config.slots[1].tap_action == {
+            "action": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
+        # toggle → domain.toggle
+        assert config.slots[2].tap_action == {
+            "action": "light.toggle",
+            "target": {"entity_id": "light.kitchen"},
+        }
+        store._store.async_save.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_migration_when_already_native(self, store: Control4Store) -> None:
+        """Slots already in HA-native format should not be re-migrated."""
+        store._store.async_load.return_value = {
+            "devices": {
+                IEEE_DIMMER: {
+                    "ieee_address": IEEE_DIMMER,
+                    "friendly_name": "Kitchen",
+                    "device_type": "dimmer",
+                    "slots": [
+                        {
+                            "slot_id": 2,
+                            "tap_action": {
+                                "action": "light.toggle",
+                                "target": {"entity_id": "light.kitchen"},
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+        await store.async_load()
+        config = store.get_device(IEEE_DIMMER)
+        assert config is not None
+        assert config.slots[0].tap_action == {
+            "action": "light.toggle",
+            "target": {"entity_id": "light.kitchen"},
+        }
         store._store.async_save.assert_not_awaited()
 
 
 class TestMigrateSlot:
     """Tests for the _migrate_slot helper."""
 
-    def test_migrate_keypad(self) -> None:
+    def test_migrate_keypad_behavior(self) -> None:
         slot = SlotConfig(slot_id=1, behavior="keypad")
         assert _migrate_slot(slot) is True
-        assert slot.tap_action == {"action": "fire-event"}
+        assert slot.tap_action is None
         assert slot.behavior == "keypad"
-        assert slot.led_track_entity_id is None
 
-    def test_migrate_control_light(self) -> None:
+    def test_migrate_control_light_behavior(self) -> None:
         slot = SlotConfig(
             slot_id=1, behavior="control_light", target_entity_id="light.kitchen"
         )
         assert _migrate_slot(slot) is True
         assert slot.tap_action == {
-            "action": "toggle",
+            "action": "light.toggle",
             "target": {"entity_id": "light.kitchen"},
         }
         assert slot.led_track_entity_id == "light.kitchen"
         assert slot.target_entity_id is None
 
-    def test_migrate_toggle_load(self) -> None:
+    def test_migrate_toggle_load_behavior(self) -> None:
         slot = SlotConfig(slot_id=1, behavior="toggle_load")
         assert _migrate_slot(slot) is True
         assert slot.tap_action == {
-            "action": "toggle",
+            "action": "light.toggle",
             "target": {"entity_id": "__self_load__"},
         }
 
-    def test_migrate_load_on(self) -> None:
+    def test_migrate_load_on_behavior(self) -> None:
         slot = SlotConfig(slot_id=2, behavior="load_on")
         assert _migrate_slot(slot) is True
-        assert slot.tap_action["action"] == "call-service"
-        assert slot.tap_action["service"] == "light.turn_on"
+        assert slot.tap_action == {
+            "action": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
 
-    def test_migrate_load_off(self) -> None:
+    def test_migrate_load_off_behavior(self) -> None:
         slot = SlotConfig(slot_id=5, behavior="load_off")
         assert _migrate_slot(slot) is True
-        assert slot.tap_action["action"] == "call-service"
-        assert slot.tap_action["service"] == "light.turn_off"
+        assert slot.tap_action == {
+            "action": "light.turn_off",
+            "target": {"entity_id": "__self_load__"},
+        }
 
-    def test_skip_already_migrated(self) -> None:
+    def test_migrate_fire_event_to_null(self) -> None:
         slot = SlotConfig(slot_id=1, tap_action={"action": "fire-event"})
+        assert _migrate_slot(slot) is True
+        assert slot.tap_action is None
+
+    def test_migrate_none_to_null(self) -> None:
+        slot = SlotConfig(slot_id=1, tap_action={"action": "none"})
+        assert _migrate_slot(slot) is True
+        assert slot.tap_action is None
+
+    def test_migrate_intermediate_toggle(self) -> None:
+        slot = SlotConfig(
+            slot_id=1,
+            tap_action={"action": "toggle", "target": {"entity_id": "light.x"}},
+        )
+        assert _migrate_slot(slot) is True
+        assert slot.tap_action == {
+            "action": "light.toggle",
+            "target": {"entity_id": "light.x"},
+        }
+
+    def test_migrate_intermediate_call_service(self) -> None:
+        slot = SlotConfig(
+            slot_id=1,
+            tap_action={
+                "action": "call-service",
+                "service": "light.turn_on",
+                "target": {"entity_id": "__self_load__"},
+            },
+        )
+        assert _migrate_slot(slot) is True
+        assert slot.tap_action == {
+            "action": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
+
+    def test_skip_already_native(self) -> None:
+        slot = SlotConfig(
+            slot_id=1,
+            tap_action={"action": "light.toggle", "target": {"entity_id": "light.x"}},
+        )
         assert _migrate_slot(slot) is False
 
     def test_skip_empty_behavior(self) -> None:

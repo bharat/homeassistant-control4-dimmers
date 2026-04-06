@@ -115,6 +115,8 @@ class Control4Manager:
         if press_match:
             slot_id = int(press_match.group(1))
             self._fire_event_callback(device.ieee_address, slot_id, "pressed")
+            # Auto-toggle for control_light buttons on physical press
+            self._maybe_toggle_control_light(device.ieee_address, slot_id)
             return
 
         # button_N_release  (from c4.dmx.br)
@@ -379,6 +381,25 @@ class Control4Manager:
                     f"button_{slot.slot_id}_led_mode": slot.led_mode,
                 },
             )
+
+    def _maybe_toggle_control_light(self, ieee: str, slot_id: int) -> None:
+        """Toggle the target light if this is a control_light button."""
+        config = self._store.get_device(ieee)
+        if not config:
+            return
+        for slot in config.slots:
+            if (
+                slot.slot_id == slot_id
+                and slot.behavior == "control_light"
+                and slot.target_entity_id
+            ):
+                self._hass.async_create_task(
+                    self._hass.services.async_call(
+                        "light", "toggle", {"entity_id": slot.target_entity_id}
+                    ),
+                    f"c4_toggle_{ieee}_{slot_id}",
+                )
+                return
 
     def setup_light_tracking(self) -> None:
         """

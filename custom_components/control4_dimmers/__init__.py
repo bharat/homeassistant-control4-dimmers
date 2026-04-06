@@ -242,7 +242,15 @@ async def _svc_set_led(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle control4_dimmers.press_button service call."""
+    """
+    Handle control4_dimmers.press_button service call.
+
+    For load buttons (load_on, load_off, toggle_load): controls the dimmer
+    load via the light entity using standard Zigbee genOnOff/genLevelCtrl.
+    Real C4 devices reject simulated button presses (c4.dmx.bp).
+
+    For keypad buttons: fires the event entity so HA automations trigger.
+    """
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)
     if state is None:
@@ -250,16 +258,45 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         return
     ieee = state.attributes.get("ieee_address")
     slot_id = state.attributes.get("slot_id")
+    behavior = state.attributes.get("behavior", "keypad")
     if not ieee or slot_id is None:
         LOGGER.error("Entity %s missing ieee_address/slot_id", entity_id)
         return
 
-    runtime = _get_runtime(hass)
-    if runtime is None:
+    if _get_runtime(hass) is None:
         return
-    manager: Control4Manager = runtime["manager"]
-    wire_id = slot_id - 1
-    await manager.async_send_mqtt(ieee, {"c4_cmd": f"c4.dmx.bp {wire_id:02x}"})
+
+    if behavior in ("load_on", "load_off", "toggle_load"):
+        # Find the light entity for this device
+        light_entity_id = _find_light_entity(hass, ieee)
+        if not light_entity_id:
+            LOGGER.error("No light entity found for device %s", ieee)
+            return
+
+        service_data = {"entity_id": light_entity_id}
+        if behavior == "load_on":
+            await hass.services.async_call("light", "turn_on", service_data)
+        elif behavior == "load_off":
+            await hass.services.async_call("light", "turn_off", service_data)
+        elif behavior == "toggle_load":
+            await hass.services.async_call("light", "toggle", service_data)
+    else:
+        # Keypad button — fire the event entity
+        bus_data = {
+            "entity_id": entity_id,
+            "ieee_address": ieee,
+            "slot_id": slot_id,
+        }
+        hass.bus.async_fire(f"{DOMAIN}_button_press", bus_data)
+        LOGGER.debug("Fired keypad button event for %s slot %s", ieee, slot_id)
+
+
+def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:
+    """Find the dimmer light entity for a device by IEEE address."""
+    for eid, state in hass.states.async_all("light"):
+        if state.attributes.get("ieee_address") == ieee:
+            return eid
+    return None
 
 
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:

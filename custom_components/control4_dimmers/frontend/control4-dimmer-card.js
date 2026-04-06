@@ -181,15 +181,14 @@ const CARD_STYLES = `
 
   /* ── Chassis (faceplate) ── */
   /* Fixed height so dimmer (2 btn) and keypad (6 btn) match exactly. */
-  /* 6 × 28px slots + 8px padding = 176px.  Buttons flex-fill. */
 
   .chassis {
     display: flex;
     flex-direction: column;
     border-radius: 10px;
     background: var(--secondary-background-color);
-    padding: 4px;
-    height: 176px;
+    padding: 6px;
+    height: 210px;
     box-sizing: border-box;
     margin: 0 10px 10px;
   }

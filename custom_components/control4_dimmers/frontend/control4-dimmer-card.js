@@ -54,14 +54,26 @@ const DEVICE_TYPES = {
   keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
 };
 
-/** Format an HA-native action as chip HTML, e.g. "Light 'Toggle'" + "Kitchen" chips */
+const DOMAIN_ICONS = {
+  light: "mdi:lightbulb", switch: "mdi:toggle-switch", cover: "mdi:window-shutter",
+  fan: "mdi:fan", climate: "mdi:thermostat", media_player: "mdi:cast",
+  scene: "mdi:palette", script: "mdi:script-text", homeassistant: "mdi:home-assistant",
+  automation: "mdi:robot", input_boolean: "mdi:toggle-switch-outline",
+};
+
+/** Format an HA-native action as chip HTML matching HA's automation UI style */
 function actionChipsHtml(action, hass) {
   if (!action) return null;
   const service = action.action || "";
   const [domain, svcName] = service.includes(".") ? service.split(".", 2) : ["", service];
   const domainLabel = domain.charAt(0).toUpperCase() + domain.slice(1);
   const svcLabel = svcName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const serviceChip = `<span class="action-chip service-chip">${domainLabel} '${svcLabel}'</span>`;
+  const svcIcon = DOMAIN_ICONS[domain] || "mdi:cog";
+  const serviceChip = `
+    <span class="action-chip service-chip">
+      <ha-icon icon="${svcIcon}"></ha-icon>
+      ${domainLabel} '${svcLabel}'
+    </span>`;
 
   const entityId = (action.target || {}).entity_id || "";
   let entityChip = "";
@@ -69,7 +81,13 @@ function actionChipsHtml(action, hass) {
     const entityName = entityId === "__self_load__"
       ? "This Device"
       : (hass?.states[entityId]?.attributes?.friendly_name || entityId);
-    entityChip = `<span class="action-chip entity-chip">${entityName}</span>`;
+    const stateObj = entityId !== "__self_load__" && hass?.states[entityId];
+    const entityIcon = stateObj?.attributes?.icon || DOMAIN_ICONS[entityId.split(".")[0]] || "mdi:eye";
+    entityChip = `
+      <span class="action-chip entity-chip">
+        <ha-icon icon="${entityIcon}"></ha-icon>
+        ${entityName}
+      </span>`;
   }
   return serviceChip + entityChip;
 }
@@ -80,6 +98,9 @@ const LED_MODES = [
   { value: "push_release",      label: "Push/Release" },
   { value: "programmed",        label: "Programmed" },
 ];
+// "Programmed" mode optionally tracks an entity's on/off state.
+// If led_track_entity_id is set, the LED color follows that entity.
+// If not, the LED stays at the configured off-color.
 
 const DEFAULT_COLORS = { on: "0000ff", off: "000000" };
 
@@ -444,21 +465,28 @@ const EDITOR_STYLES = `
   .action-chip {
     display: inline-flex;
     align-items: center;
-    padding: 3px 10px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-weight: 500;
+    gap: 4px;
+    padding: 6px 12px;
+    border-radius: 18px;
+    font-size: 14px;
+    font-weight: 400;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
+    line-height: 20px;
+  }
+  .action-chip ha-icon {
+    --mdc-icon-size: 18px;
+    flex-shrink: 0;
+    color: var(--secondary-text-color);
   }
   .service-chip {
-    background: var(--secondary-background-color);
+    background: transparent;
     color: var(--primary-text-color);
   }
   .entity-chip {
-    background: var(--divider-color);
+    background: var(--secondary-background-color);
     color: var(--primary-text-color);
   }
 
@@ -923,8 +951,7 @@ class Control4CardEditor extends HTMLElement {
     this._dirty = false;
     this._saving = false;
     this._lastDetectedType = null;
-    this._editingAction = null;  // which action field is being edited
-    this._editingLedMode = null; // virtual LED mode being configured
+    this._editingAction = null; // which action field is being edited
   }
 
   set hass(hass) {
@@ -1042,7 +1069,6 @@ class Control4CardEditor extends HTMLElement {
   _handleSlotClick(slotId) {
     this._selectedSlotId = this._selectedSlotId === slotId ? null : slotId;
     this._editingAction = null;
-    this._editingLedMode = null;
     this._render();
   }
 
@@ -1317,12 +1343,11 @@ class Control4CardEditor extends HTMLElement {
             ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
               <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
             `).join("")}
-            <option value="track_entity" ${slot.led_track_entity_id ? "selected" : ""}>Track Entity</option>
           </select>
         </div>
-        ${slot.led_track_entity_id || this._editingLedMode === "track_entity" ? `
+        ${slot.led_mode === "programmed" ? `
           <div class="config-row">
-            <label></label>
+            <label>Track</label>
             <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
           </div>
         ` : ""}
@@ -1430,18 +1455,12 @@ class Control4CardEditor extends HTMLElement {
       });
     }
 
-    // LED mode selector — "track_entity" is a virtual mode
     const ledModeSel = root.getElementById("slot-led-mode");
     if (ledModeSel) ledModeSel.addEventListener("change", (e) => {
-      const val = e.target.value;
-      if (val === "track_entity") {
-        // Set firmware to "programmed" (we control the LED), show entity picker
-        this._updateSlot(this._selectedSlotId, "led_mode", "programmed");
-        this._editingLedMode = "track_entity";
-      } else {
-        this._updateSlot(this._selectedSlotId, "led_mode", val);
+      this._updateSlot(this._selectedSlotId, "led_mode", e.target.value);
+      // Clear tracking entity when switching away from Programmed
+      if (e.target.value !== "programmed") {
         this._updateSlot(this._selectedSlotId, "led_track_entity_id", null);
-        this._editingLedMode = null;
       }
       this._render();
     });

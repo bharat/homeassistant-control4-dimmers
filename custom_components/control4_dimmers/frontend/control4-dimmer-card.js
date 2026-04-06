@@ -187,12 +187,14 @@ const CARD_STYLES = `
   }
   .chassis-btn.size-2 { height: 59px; }
   .chassis-btn.size-3 { height: 90px; }
+  .chassis-btn.size-4 { height: 121px; }
+  .chassis-btn.size-5 { height: 152px; }
+  .chassis-btn.size-6 { height: 183px; }
 
   .btn-inner {
     display: flex;
     align-items: center;
-    width: 13em;
-    max-width: 100%;
+    width: 80%;
   }
   .btn-label {
     white-space: nowrap;
@@ -615,8 +617,8 @@ function ledRingStyle(hex) {
   const g = parseInt(h.substring(2, 4), 16) || 0;
   const b = parseInt(h.substring(4, 6), 16) || 0;
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  const ring = lum > 0.45 ? "rgba(0,0,0,0.35)" : "rgba(255,255,255,0.5)";
-  return `box-shadow: 0 0 0 2px ${ring}, inset 0 1px 2px rgba(0,0,0,0.15);`;
+  const ring = lum > 0.45 ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.5)";
+  return `box-shadow: 0 0 0 2px ${ring};`;
 }
 
 function computeLayout(slotConfigs, deviceType) {
@@ -915,18 +917,24 @@ class Control4Card extends HTMLElement {
           </h1>
 
           <div class="chassis">
-            ${layout.map((btn) => {
-              const cfg = btn.slots[0];
-              const color = ledColor(cfg, devState);
-              return `
-                <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                  <div class="btn-inner">
-                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+            ${(() => {
+              // Dimmer (2 buttons) should visually match 6-slot keypad height
+              const totalSlots = layout.reduce((sum, btn) => sum + btn.size, 0);
+              const sizeMultiplier = totalSlots < 6 ? Math.floor(6 / totalSlots) : 1;
+              return layout.map((btn) => {
+                const cfg = btn.slots[0];
+                const color = ledColor(cfg, devState);
+                const visualSize = btn.size * sizeMultiplier;
+                return `
+                  <div class="chassis-btn size-${visualSize}" data-slot="${btn.startSlot}">
+                    <div class="btn-inner">
+                      <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                      <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                    </div>
                   </div>
-                </div>
-              `;
-            }).join("")}
+                `;
+              }).join("");
+            })()}
           </div>
         `}
       </ha-card>

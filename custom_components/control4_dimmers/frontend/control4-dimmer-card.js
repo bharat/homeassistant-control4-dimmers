@@ -119,9 +119,10 @@ const CARD_STYLES = `
   .card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin: -12px -12px 0;
-    padding: 8px 12px 10px;
+    padding: 10px 12px;
+    min-height: 20px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -129,15 +130,15 @@ const CARD_STYLES = `
     opacity: 0.7;
   }
   .entity-icon {
-    --mdc-icon-size: 20px;
+    --mdc-icon-size: 16px;
     flex-shrink: 0;
   }
   .card-header .name {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--primary-text-color);
-    line-height: 1.2;
+    line-height: 20px;
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
@@ -166,6 +167,7 @@ const CARD_STYLES = `
   .chassis-btn {
     height: 28px;
     border-radius: 6px;
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -173,7 +175,7 @@ const CARD_STYLES = `
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding: 0 8px;
+    padding: 0 24px 0 8px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
   }
@@ -191,26 +193,24 @@ const CARD_STYLES = `
   .chassis-btn.size-5 { height: 152px; }
   .chassis-btn.size-6 { height: 183px; }
 
-  .btn-inner {
-    display: flex;
-    align-items: center;
-    width: 80%;
-  }
   .btn-label {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
     font-size: 12px;
     font-weight: 400;
     color: var(--primary-text-color);
+    text-align: center;
   }
   .led {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    flex-shrink: 0;
-    margin-left: 6px;
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 1.5px solid var(--divider-color);
   }
 
 `;
@@ -927,10 +927,8 @@ class Control4Card extends HTMLElement {
                 const visualSize = btn.size * sizeMultiplier;
                 return `
                   <div class="chassis-btn size-${visualSize}" data-slot="${btn.startSlot}">
-                    <div class="btn-inner">
-                      <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                      <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
-                    </div>
+                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
                   </div>
                 `;
               }).join("");

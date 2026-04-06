@@ -110,8 +110,9 @@ const CARD_STYLES = `
   }
 
   ha-card {
-    padding: 12px;
+    padding: 0;
     max-width: 16em;
+    overflow: hidden;
   }
 
   /* ── Header ── */
@@ -120,9 +121,9 @@ const CARD_STYLES = `
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: -12px -12px 0;
-    padding: 10px 12px;
-    min-height: 20px;
+    padding: 8px 10px;
+    height: 16px;
+    box-sizing: content-box;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -138,7 +139,7 @@ const CARD_STYLES = `
     font-size: 13px;
     font-weight: 500;
     color: var(--primary-text-color);
-    line-height: 20px;
+    line-height: 16px;
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
@@ -149,7 +150,7 @@ const CARD_STYLES = `
 
   .no-entity {
     text-align: center;
-    padding: 16px 12px;
+    padding: 16px;
     color: var(--secondary-text-color);
     font-size: 0.8rem;
   }
@@ -170,12 +171,11 @@ const CARD_STYLES = `
     position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
     cursor: pointer;
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding: 0 24px 0 8px;
+    padding: 0 24px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
   }
@@ -200,7 +200,6 @@ const CARD_STYLES = `
     font-size: 12px;
     font-weight: 400;
     color: var(--primary-text-color);
-    text-align: center;
   }
   .led {
     width: 10px;
@@ -911,10 +910,10 @@ class Control4Card extends HTMLElement {
         ` : !dev ? `
           <div class="no-entity"><p>Loading...</p></div>
         ` : `
-          <h1 class="card-header">
+          <div class="card-header">
             ${hasDimmer ? `<ha-icon class="entity-icon" icon="mdi:lightbulb" style="${iconStyle}"></ha-icon>` : ""}
             <div class="name">${dev.friendly_name}</div>
-          </h1>
+          </div>
 
           <div class="chassis">
             ${(() => {

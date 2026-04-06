@@ -54,17 +54,24 @@ const DEVICE_TYPES = {
   keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
 };
 
-/** Format an HA-native action dict as a compact label, e.g. "light.toggle → Kitchen" */
-function actionLabel(action, hass) {
+/** Format an HA-native action as chip HTML, e.g. "Light 'Toggle'" + "Kitchen" chips */
+function actionChipsHtml(action, hass) {
   if (!action) return null;
   const service = action.action || "";
+  const [domain, svcName] = service.includes(".") ? service.split(".", 2) : ["", service];
+  const domainLabel = domain.charAt(0).toUpperCase() + domain.slice(1);
+  const svcLabel = svcName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const serviceChip = `<span class="action-chip service-chip">${domainLabel} '${svcLabel}'</span>`;
+
   const entityId = (action.target || {}).entity_id || "";
-  const entityName = entityId === "__self_load__"
-    ? "this device"
-    : (hass?.states[entityId]?.attributes?.friendly_name || entityId || "");
-  const parts = [service];
-  if (entityName) parts.push(`→ ${entityName}`);
-  return parts.join(" ");
+  let entityChip = "";
+  if (entityId) {
+    const entityName = entityId === "__self_load__"
+      ? "This Device"
+      : (hass?.states[entityId]?.attributes?.friendly_name || entityId);
+    entityChip = `<span class="action-chip entity-chip">${entityName}</span>`;
+  }
+  return serviceChip + entityChip;
 }
 
 const LED_MODES = [
@@ -412,13 +419,47 @@ const EDITOR_STYLES = `
   }
   .btn-add-action:hover { background: var(--primary-color); color: var(--text-primary-color, #fff); }
 
-  .action-summary {
+  .action-box {
     flex: 1;
-    font-size: 13px;
-    color: var(--primary-text-color);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--divider-color);
+    background: var(--card-background-color, #fff);
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+  }
+  .action-box:hover { border-color: var(--primary-color); }
+  .action-chips {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .action-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .service-chip {
+    background: var(--secondary-background-color);
+    color: var(--primary-text-color);
+  }
+  .entity-chip {
+    background: var(--divider-color);
+    color: var(--primary-text-color);
   }
 
   .btn-remove-action {
@@ -882,7 +923,8 @@ class Control4CardEditor extends HTMLElement {
     this._dirty = false;
     this._saving = false;
     this._lastDetectedType = null;
-    this._editingAction = null; // which action field is being edited
+    this._editingAction = null;  // which action field is being edited
+    this._editingLedMode = null; // virtual LED mode being configured
   }
 
   set hass(hass) {
@@ -1000,6 +1042,7 @@ class Control4CardEditor extends HTMLElement {
   _handleSlotClick(slotId) {
     this._selectedSlotId = this._selectedSlotId === slotId ? null : slotId;
     this._editingAction = null;
+    this._editingLedMode = null;
     this._render();
   }
 
@@ -1241,7 +1284,7 @@ class Control4CardEditor extends HTMLElement {
 
         ${actionConfigs.map(({ field, label }) => {
           const action = slot[field] || null;
-          const summary = actionLabel(action, this._hass);
+          const chips = actionChipsHtml(action, this._hass);
           const isEditing = this._editingAction === field;
           return `
             <div class="config-row action-row">
@@ -1258,18 +1301,14 @@ class Control4CardEditor extends HTMLElement {
                   </div>
                 </div>
               ` : `
-                <span class="action-summary">${summary}</span>
-                <button class="btn-remove-action" data-field="${field}" title="Remove">✕</button>
+                <div class="action-box" data-field="${field}">
+                  <div class="action-chips">${chips}</div>
+                  <button class="btn-remove-action" data-field="${field}" title="Remove">✕</button>
+                </div>
               `}
             </div>
           `;
         }).join("")}
-
-        <!-- LED Tracking -->
-        <div class="config-row">
-          <label>LED Tracking</label>
-          <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
-        </div>
 
         <!-- LED Mode & Colors -->
         <div class="config-row">
@@ -1278,8 +1317,15 @@ class Control4CardEditor extends HTMLElement {
             ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
               <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
             `).join("")}
+            <option value="track_entity" ${slot.led_track_entity_id ? "selected" : ""}>Track Entity</option>
           </select>
         </div>
+        ${slot.led_track_entity_id || this._editingLedMode === "track_entity" ? `
+          <div class="config-row">
+            <label></label>
+            <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
+          </div>
+        ` : ""}
         <div class="config-row">
           <label>Colors</label>
           <div class="color-pair">
@@ -1328,9 +1374,20 @@ class Control4CardEditor extends HTMLElement {
       });
     }
 
+    // Click action box to edit
+    for (const box of root.querySelectorAll(".action-box")) {
+      box.addEventListener("click", (e) => {
+        // Don't trigger edit if clicking the remove button
+        if (e.target.closest(".btn-remove-action")) return;
+        this._editingAction = box.dataset.field;
+        this._render();
+      });
+    }
+
     // Remove action buttons
     for (const btn of root.querySelectorAll(".btn-remove-action")) {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
         this._updateSlot(this._selectedSlotId, btn.dataset.field, null);
         this._render();
       });
@@ -1373,7 +1430,23 @@ class Control4CardEditor extends HTMLElement {
       });
     }
 
-    // LED tracking entity picker
+    // LED mode selector — "track_entity" is a virtual mode
+    const ledModeSel = root.getElementById("slot-led-mode");
+    if (ledModeSel) ledModeSel.addEventListener("change", (e) => {
+      const val = e.target.value;
+      if (val === "track_entity") {
+        // Set firmware to "programmed" (we control the LED), show entity picker
+        this._updateSlot(this._selectedSlotId, "led_mode", "programmed");
+        this._editingLedMode = "track_entity";
+      } else {
+        this._updateSlot(this._selectedSlotId, "led_mode", val);
+        this._updateSlot(this._selectedSlotId, "led_track_entity_id", null);
+        this._editingLedMode = null;
+      }
+      this._render();
+    });
+
+    // LED tracking entity picker (shown when mode is "track_entity")
     const ledTrackPicker = root.getElementById("led-track-entity");
     if (ledTrackPicker) {
       ledTrackPicker.hass = this._hass;
@@ -1381,9 +1454,6 @@ class Control4CardEditor extends HTMLElement {
       ledTrackPicker.includeDomains = ["light", "switch"];
       ledTrackPicker.addEventListener("value-changed", (e) => this._updateSlot(this._selectedSlotId, "led_track_entity_id", e.detail.value || null));
     }
-
-    const ledModeSel = root.getElementById("slot-led-mode");
-    if (ledModeSel) ledModeSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "led_mode", e.target.value));
 
     const onColor = root.getElementById("slot-on-color");
     if (onColor) onColor.addEventListener("input", (e) => this._updateSlot(this._selectedSlotId, "led_on_color", inputColorToHex(e.target.value)));

@@ -1244,31 +1244,39 @@ class Control4CardEditor extends HTMLElement {
         ${slot.behavior === "control_light" ? `
           <div class="config-row">
             <label>Target Light</label>
-            <select id="slot-target-entity">
-              <option value="">Select a light...</option>
-              ${this._getLightEntities().map((e) => `
-                <option value="${e.entity_id}" ${slot.target_entity_id === e.entity_id ? "selected" : ""}>${e.name}</option>
+            <ha-entity-picker
+              id="slot-target-entity"
+              allow-custom-entity
+            ></ha-entity-picker>
+          </div>
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">On:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Off:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
+          </div>
+        ` : `
+          <div class="config-row">
+            <label>LED Mode</label>
+            <select id="slot-led-mode">
+              ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
+                <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
               `).join("")}
             </select>
           </div>
-        ` : ""}
-        <div class="config-row">
-          <label>LED Mode</label>
-          <select id="slot-led-mode">
-            ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
-              <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
-            `).join("")}
-          </select>
-        </div>
-        <div class="config-row">
-          <label>Colors</label>
-          <div class="color-pair">
-            <span class="color-label">On:</span>
-            <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
-            <span class="color-label">Off:</span>
-            <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">On:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Off:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
           </div>
-        </div>
+        `}
 
         ${eventEntityId ? `
           <div class="automations-section">
@@ -1328,8 +1336,13 @@ class Control4CardEditor extends HTMLElement {
       this._render(); // re-render to show/hide entity picker
     });
 
-    const targetSel = root.getElementById("slot-target-entity");
-    if (targetSel) targetSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "target_entity_id", e.target.value));
+    const targetPicker = root.getElementById("slot-target-entity");
+    if (targetPicker) {
+      targetPicker.hass = this._hass;
+      targetPicker.value = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.target_entity_id || "";
+      targetPicker.includeDomains = ["light"];
+      targetPicker.addEventListener("value-changed", (e) => this._updateSlot(this._selectedSlotId, "target_entity_id", e.detail.value));
+    }
 
     const ledModeSel = root.getElementById("slot-led-mode");
     if (ledModeSel) ledModeSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "led_mode", e.target.value));

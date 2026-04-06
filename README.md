@@ -65,8 +65,11 @@ The resulting image is a drop-in replacement for the stock
 
 ### Manual (without Docker)
 
-1. Copy `z2m/converters/control4.mjs` and `z2m/converters/c4-protocol.mjs`
-   into your Zigbee2MQTT `external_converters/` directory.
+1. Copy `z2m/converters/control4.mjs` into your Zigbee2MQTT
+   `external_converters/` directory. This is a single self-contained file
+   (the protocol logic is bundled in). Do **not** copy any other `.mjs`
+   files — Z2M auto-loads every `.mjs` in that directory as a converter
+   and will reject helper modules.
 2. Patch zigbee-herdsman to accept the C4 profile:
    apply `z2m/herdsman-c4-profile.patch` to the source.
 3. Restart Zigbee2MQTT.
@@ -86,16 +89,105 @@ Control4 devices from Zigbee2MQTT and provides:
 - **Light entities** for dimmers with brightness control via the native HA
   more-info dialog.
 
-## Adding a Device
+## Migrating a Device from Control4
 
-1. Factory reset the device: press **top 13x, bottom 4x, top 13x**.
-2. Enable Permit Join in the Zigbee2MQTT web UI.
-3. Wait for the device to appear (interview may partially fail -- this is
-   normal for C4 devices).
-4. Detect the device type and read stored LED colors:
-   ```
-   mosquitto_pub -t zigbee2mqtt/DEVICE_NAME/set -m '{"c4_detect": true}'
-   ```
+This guide walks through moving a C4 device from an existing Control4
+system onto your Zigbee2MQTT mesh. The device retains its LED colors
+from the C4 Director — no manual reconfiguration needed.
+
+### Step 1: Factory reset the device
+
+Press **top 4x** on the device. (The 13-4-13 sequence is an alternative
+full reset.) The LEDs will flash to confirm.
+
+### Step 2: Pair with Zigbee2MQTT
+
+1. Open the Z2M web UI and enable **Permit Join** (Settings → Permit Join).
+2. The device should appear within 30 seconds.
+3. **The interview will fail** — this is normal. C4 devices don't support
+   standard Zigbee genBasic reads, so Z2M can't read model/manufacturer
+   via the usual interview. The converter handles this.
+4. Despite the failed interview, Z2M will show the device as
+   **Supported: external** with model **C4-Zigbee**.
+
+### Step 3: Auto-detection
+
+The converter automatically detects the device type during the
+`configure` step. Check Z2M logs for:
+
+```
+[C4 DETECT] Device type: dimmer        (C4-APD120, 2 buttons + load)
+[C4 DETECT] Device type: keypaddim     (C4-KD120, 6 buttons + load)
+[C4 DETECT] Device type: keypad        (C4-KC120277, 6 buttons, no load)
+```
+
+If auto-detection failed (e.g., EP 197 wasn't registered yet on the
+first pairing), run it manually:
+
+```bash
+mosquitto_pub -t 'zigbee2mqtt/DEVICE_NAME/set' -m '{"c4_detect": true}'
+```
+
+Detection also reads all stored LED colors from the device firmware and
+publishes them as `c4_led_N_on` / `c4_led_N_off` attributes.
+
+### Step 4: Rename in Z2M
+
+Give the device a friendly name in Z2M (About tab → click the edit
+icon next to the IEEE address). For example: "Kitchen Dimmer", "Kitchen
+Keypad". This name is used throughout HA.
+
+### Step 5: Reload the HA integration
+
+Go to **Settings → Devices & Services → Control4 Dimmers → ⋮ → Reload**.
+This ensures the integration picks up the new device with its friendly
+name. The device should now appear in the Control4 Dimmers card editor
+dropdown.
+
+### Step 6: Configure in the card editor
+
+1. Add a **Control4 Dimmers** card to your dashboard.
+2. In the card editor, select the device from the dropdown.
+3. For each button:
+   - **Name**: label for the button (e.g., "Top", "Scene 1").
+   - **Behavior**: `load_on`, `load_off`, `toggle_load`, or `keypad`.
+     Load behaviors control the physical dimmer load via standard Zigbee.
+     `keypad` fires HA events for automations.
+   - **LED Mode**: `follow_load`, `follow_connection`, `push_release`,
+     or `programmed`.
+   - **Colors**: on-color (shown when load is ON) and off-color (shown
+     when load is OFF). Click the color swatches to pick.
+4. Click **Save** to push colors and config to the device.
+
+### What to expect per device type
+
+| Type | Buttons | Load | Light entity | Notes |
+|------|---------|------|:---:|-------|
+| **Dimmer** (C4-APD120) | 2 (top/bottom rocker) | Yes | Yes | Top = on, Bottom = off |
+| **Keypad Dimmer** (C4-KD120) | 6 (rocker + 4 keypad) | Yes | Yes | Button 1 = toggle load, 2-6 = keypad |
+| **Keypad** (C4-KC120277) | 6 (all configurable) | No | No | All buttons are keypad events |
+
+### Troubleshooting
+
+- **Device shows as "Unsupported"**: The external converter isn't loaded.
+  Verify `control4.mjs` is in Z2M's `external_converters/` directory and
+  restart Z2M. Only copy `control4.mjs` — do not copy other `.mjs` files.
+
+- **Device not appearing in HA card**: The HA integration discovers
+  devices from `zigbee2mqtt/bridge/devices`. Verify the device shows
+  as "Supported: external" in Z2M, then reload the integration.
+
+- **Detection shows "unknown"**: Run `{"c4_detect": true}` manually.
+  On first pairing, the coordinator's EP 197 may not be registered yet —
+  restart Z2M once and try again.
+
+- **LED colors not changing**: Make sure you clicked **Save** in the card
+  editor. Colors are pushed to the device firmware via `c4.dmx.led`
+  commands on save — they persist across power cycles.
+
+- **Buttons don't control the light**: Verify the button's behavior is
+  set to `load_on`/`load_off`/`toggle_load` (not `keypad`). The card
+  uses the HA light entity for load control, not the C4 text protocol.
 
 ## How it works
 

@@ -244,11 +244,8 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     """
     Handle control4_dimmers.press_button service call.
 
-    For load buttons (load_on, load_off, toggle_load): controls the dimmer
-    load via the light entity using standard Zigbee genOnOff/genLevelCtrl.
-    Real C4 devices reject simulated button presses (c4.dmx.bp).
-
-    For keypad buttons: fires the event entity so HA automations trigger.
+    Executes the tap_action for the slot, which handles all behavior types
+    (toggle, call-service, fire-event) through the unified action system.
     """
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)
@@ -257,96 +254,24 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         return
     ieee = state.attributes.get("ieee_address")
     slot_id = state.attributes.get("slot_id")
-    behavior = state.attributes.get("behavior", "keypad")
     LOGGER.debug(
-        "press_button: entity=%s ieee=%s slot=%s behavior=%s",
+        "press_button: entity=%s ieee=%s slot=%s",
         entity_id,
         ieee,
         slot_id,
-        behavior,
     )
     if not ieee or slot_id is None:
         LOGGER.error("press_button: missing ieee_address/slot_id")
         return
 
-    if _get_runtime(hass) is None:
+    runtime = _get_runtime(hass)
+    if runtime is None:
         LOGGER.error("press_button: runtime not loaded")
         return
 
-    LOGGER.debug("press_button: behavior=%s ieee=%s slot=%s", behavior, ieee, slot_id)
-    if behavior == "control_light":
-        await _press_control_light(hass, ieee, slot_id)
-    elif behavior in ("load_on", "load_off", "toggle_load"):
-        await _press_load_button(hass, ieee, behavior)
-    else:
-        runtime = _get_runtime(hass)
-        if runtime:
-            runtime["manager"].fire_button_event(ieee, slot_id, "pressed")
-
-
-async def _press_control_light(hass: HomeAssistant, ieee: str, slot_id: int) -> None:
-    """Toggle a remote light and send optimistic LED update."""
-    target = _find_target_entity(hass, ieee, slot_id)
-    if not target:
-        LOGGER.error("press_button: no target_entity_id for %s slot %s", ieee, slot_id)
-        return
-    # Send optimistic LED FIRST (instant), then toggle (slow Zigbee round trip).
-    # This matches the physical button path which fires both in parallel.
-    runtime = _get_runtime(hass)
-    if runtime:
-        await runtime["manager"].async_optimistic_led(ieee, slot_id)
-    await hass.services.async_call("light", "toggle", {"entity_id": target})
-
-
-async def _press_load_button(hass: HomeAssistant, ieee: str, behavior: str) -> None:
-    """Control the device's own dimmer load."""
-    light_entity_id = _find_light_entity(hass, ieee)
-    if not light_entity_id:
-        LOGGER.error("press_button: no light entity for %s", ieee)
-        return
-    svc = {"load_on": "turn_on", "load_off": "turn_off", "toggle_load": "toggle"}[
-        behavior
-    ]
-    await hass.services.async_call("light", svc, {"entity_id": light_entity_id})
-
-
-def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:
-    """
-    Find the Z2M light entity for a C4 device.
-
-    MQTT+ approach: we don't create our own light entity. Z2M creates
-    one via auto-discovery (e.g. light.kitchen for a device named
-    "Kitchen"). We find it by matching the friendly_name attribute.
-    """
-    runtime = _get_runtime(hass)
-    if runtime is None:
-        return None
     manager: Control4Manager = runtime["manager"]
-    device = manager.devices.get(ieee)
-    if device is None:
-        return None
-
-    # Z2M light entities have friendly_name matching the device name
-    for state in hass.states.async_all("light"):
-        friendly = state.attributes.get("friendly_name", "")
-        if friendly == device.friendly_name:
-            return state.entity_id
-    return None
-
-
-def _find_target_entity(hass: HomeAssistant, ieee: str, slot_id: int) -> str | None:
-    """Find the target_entity_id for a control_light slot."""
-    runtime = _get_runtime(hass)
-    if runtime is None:
-        return None
-    manager: Control4Manager = runtime["manager"]
-    config = manager.store.get_device(ieee)
-    if not config:
-        return None
-    for s in config.slots:
-        if s.slot_id == slot_id:
-            return s.target_entity_id
-    return None
+    manager.fire_button_event(ieee, slot_id, "pressed")
+    await manager.execute_slot_action(ieee, slot_id, "tap")
 
 
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:

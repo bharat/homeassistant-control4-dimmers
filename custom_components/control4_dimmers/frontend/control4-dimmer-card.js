@@ -2,7 +2,7 @@
  * Control4 Dimmers — Lovelace Card
  *
  * CARD:   Interactive control surface — press buttons, see LED states.
- * EDITOR: Full device configuration — slots, behaviors, LED colors, device type.
+ * EDITOR: Full device configuration — slots, actions, LED colors, device type.
  *
  * Config: { type: "custom:control4-dimmer-card", entity: "sensor.xxx" }
  */
@@ -54,12 +54,21 @@ const DEVICE_TYPES = {
   keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
 };
 
-const BEHAVIORS = [
-  { value: "keypad",        label: "Keypad",        needsLoad: false },
-  { value: "control_light", label: "Control Light",  needsLoad: false },
-  { value: "toggle_load",   label: "Toggle Load",    needsLoad: true },
-  { value: "load_on",       label: "Load On",        needsLoad: true },
-  { value: "load_off",      label: "Load Off",       needsLoad: true },
+const TAP_ACTIONS = [
+  { value: "fire-event",    label: "Fire Event (Keypad)", needsLoad: false },
+  { value: "toggle",        label: "Toggle",               needsLoad: false },
+  { value: "call-service",  label: "Call Service",          needsLoad: false },
+  { value: "none",          label: "None",                  needsLoad: false },
+];
+
+const COMMON_SERVICES = [
+  { value: "light.toggle",   label: "Light: Toggle" },
+  { value: "light.turn_on",  label: "Light: Turn On" },
+  { value: "light.turn_off", label: "Light: Turn Off" },
+  { value: "switch.toggle",  label: "Switch: Toggle" },
+  { value: "switch.turn_on", label: "Switch: Turn On" },
+  { value: "switch.turn_off",label: "Switch: Turn Off" },
+  { value: "homeassistant.toggle", label: "HA: Toggle" },
 ];
 
 const LED_MODES = [
@@ -546,7 +555,7 @@ function computeLayout(slotConfigs, deviceType) {
     if (!used.has(id)) {
       buttons.push({
         startSlot: id, size: 1,
-        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, behavior: "keypad", led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
+        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off, tap_action: { action: "fire-event" } }],
       });
     }
   }
@@ -560,17 +569,21 @@ function defaultSlotsForType(deviceType) {
   if (!meta) return [];
   if (deviceType === "dimmer") {
     return [
-      { slot_id: 2, size: 1, name: "Top", behavior: "load_on", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
-      { slot_id: 5, size: 1, name: "Bottom", behavior: "load_off", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
+      { slot_id: 2, size: 1, name: "Top", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000",
+        tap_action: { action: "call-service", service: "light.turn_on", target: { entity_id: "__self_load__" } } },
+      { slot_id: 5, size: 1, name: "Bottom", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff",
+        tap_action: { action: "call-service", service: "light.turn_off", target: { entity_id: "__self_load__" } } },
     ];
   }
   return meta.slots.map((id) => {
     const isTopLoad = deviceType === "keypaddim" && id === 1;
     return {
       slot_id: id, size: 1, name: `Button ${id}`,
-      behavior: isTopLoad ? "toggle_load" : "keypad",
       led_mode: isTopLoad ? "follow_load" : "programmed",
       led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
+      tap_action: isTopLoad
+        ? { action: "toggle", target: { entity_id: "__self_load__" } }
+        : { action: "fire-event" },
     };
   });
 }
@@ -632,8 +645,8 @@ class Control4Card extends HTMLElement {
   _updateControlLightLeds(hass) {
     if (!this._slots || !this.shadowRoot) return;
     for (const slot of this._slots) {
-      if (slot.behavior !== "control_light" || !slot.target_entity_id) continue;
-      const targetState = hass.states[slot.target_entity_id];
+      if (!slot.led_track_entity_id) continue;
+      const targetState = hass.states[slot.led_track_entity_id];
       if (!targetState) continue;
       const isOn = targetState.state === "on";
       const color = isOn ? (slot.led_on_color || "ffffff") : (slot.led_off_color || "000000");
@@ -1121,8 +1134,9 @@ class Control4CardEditor extends HTMLElement {
     if (!mainSlot) {
       mainSlot = {
         slot_id: startSlot, size: newSize, name: `Button ${startSlot}`,
-        behavior: "keypad", led_mode: "programmed",
+        led_mode: "programmed",
         led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
+        tap_action: { action: "fire-event" },
       };
       this._localSlots.push(mainSlot);
     }
@@ -1132,8 +1146,9 @@ class Control4CardEditor extends HTMLElement {
       if (!this._localSlots.find((s) => s.slot_id === id) && (id < startSlot || id >= startSlot + newSize)) {
         this._localSlots.push({
           slot_id: id, size: 1, name: `Button ${id}`,
-          behavior: "keypad", led_mode: "programmed",
+          led_mode: "programmed",
           led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
+          tap_action: { action: "fire-event" },
         });
       }
     }
@@ -1280,6 +1295,24 @@ class Control4CardEditor extends HTMLElement {
       { key: "triple_tap", label: "Triple Tap" },
     ];
 
+    const tapAction = slot.tap_action || { action: "fire-event" };
+    const tapActionType = tapAction.action || "fire-event";
+    const tapTarget = (tapAction.target || {}).entity_id || "";
+    const tapService = tapAction.service || "";
+
+    const doubleTapAction = slot.double_tap_action || null;
+    const doubleTapType = doubleTapAction ? (doubleTapAction.action || "none") : "none";
+    const doubleTapTarget = doubleTapAction ? ((doubleTapAction.target || {}).entity_id || "") : "";
+    const doubleTapService = doubleTapAction ? (doubleTapAction.service || "") : "";
+
+    const holdAction = slot.hold_action || null;
+    const holdType = holdAction ? (holdAction.action || "none") : "none";
+    const holdTarget = holdAction ? ((holdAction.target || {}).entity_id || "") : "";
+    const holdService = holdAction ? (holdAction.service || "") : "";
+
+    const needsEntity = (type) => type === "toggle" || type === "call-service";
+    const needsService = (type) => type === "call-service";
+
     return `
       <div class="slot-config">
         ${showSize ? `
@@ -1298,52 +1331,113 @@ class Control4CardEditor extends HTMLElement {
           <label>Name</label>
           <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slot.slot_id}">
         </div>
+
+        <!-- Tap Action -->
         <div class="config-row">
-          <label>Behavior</label>
-          <select id="slot-behavior">
-            ${BEHAVIORS.filter((b) => showLoadOptions || !b.needsLoad).map((b) => `
-              <option value="${b.value}" ${slot.behavior === b.value ? "selected" : ""}>${b.label}</option>
+          <label>Tap Action</label>
+          <select id="tap-action-type">
+            ${TAP_ACTIONS.map((a) => `
+              <option value="${a.value}" ${tapActionType === a.value ? "selected" : ""}>${a.label}</option>
             `).join("")}
           </select>
         </div>
-        ${slot.behavior === "control_light" ? `
+        ${needsService(tapActionType) ? `
           <div class="config-row">
-            <label>Target Light</label>
-            <ha-entity-picker
-              id="slot-target-entity"
-              allow-custom-entity
-            ></ha-entity-picker>
-          </div>
-          <div class="config-row">
-            <label>Colors</label>
-            <div class="color-pair">
-              <span class="color-label">On:</span>
-              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
-              <span class="color-label">Off:</span>
-              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
-            </div>
-          </div>
-        ` : `
-          <div class="config-row">
-            <label>LED Mode</label>
-            <select id="slot-led-mode">
-              ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
-                <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
+            <label>Service</label>
+            <select id="tap-action-service">
+              ${COMMON_SERVICES.map((s) => `
+                <option value="${s.value}" ${tapService === s.value ? "selected" : ""}>${s.label}</option>
               `).join("")}
             </select>
           </div>
+        ` : ""}
+        ${needsEntity(tapActionType) ? `
           <div class="config-row">
-            <label>Colors</label>
-            <div class="color-pair">
-              <span class="color-label">On:</span>
-              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
-              <span class="color-label">Off:</span>
-              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
-            </div>
+            <label>Target Entity</label>
+            <ha-entity-picker id="tap-action-entity" allow-custom-entity></ha-entity-picker>
           </div>
-        `}
+        ` : ""}
 
-        ${eventEntityId && slot.behavior !== "control_light" ? `
+        <!-- Double Tap Action -->
+        <div class="config-row">
+          <label>Double Tap</label>
+          <select id="double-tap-action-type">
+            <option value="none" ${doubleTapType === "none" ? "selected" : ""}>None</option>
+            ${TAP_ACTIONS.filter((a) => a.value !== "none").map((a) => `
+              <option value="${a.value}" ${doubleTapType === a.value ? "selected" : ""}>${a.label}</option>
+            `).join("")}
+          </select>
+        </div>
+        ${needsService(doubleTapType) ? `
+          <div class="config-row">
+            <label>Service</label>
+            <select id="double-tap-action-service">
+              ${COMMON_SERVICES.map((s) => `
+                <option value="${s.value}" ${doubleTapService === s.value ? "selected" : ""}>${s.label}</option>
+              `).join("")}
+            </select>
+          </div>
+        ` : ""}
+        ${needsEntity(doubleTapType) ? `
+          <div class="config-row">
+            <label>Target Entity</label>
+            <ha-entity-picker id="double-tap-action-entity" allow-custom-entity></ha-entity-picker>
+          </div>
+        ` : ""}
+
+        <!-- Hold Action -->
+        <div class="config-row">
+          <label>Hold</label>
+          <select id="hold-action-type">
+            <option value="none" ${holdType === "none" ? "selected" : ""}>None</option>
+            ${TAP_ACTIONS.filter((a) => a.value !== "none").map((a) => `
+              <option value="${a.value}" ${holdType === a.value ? "selected" : ""}>${a.label}</option>
+            `).join("")}
+          </select>
+        </div>
+        ${needsService(holdType) ? `
+          <div class="config-row">
+            <label>Service</label>
+            <select id="hold-action-service">
+              ${COMMON_SERVICES.map((s) => `
+                <option value="${s.value}" ${holdService === s.value ? "selected" : ""}>${s.label}</option>
+              `).join("")}
+            </select>
+          </div>
+        ` : ""}
+        ${needsEntity(holdType) ? `
+          <div class="config-row">
+            <label>Target Entity</label>
+            <ha-entity-picker id="hold-action-entity" allow-custom-entity></ha-entity-picker>
+          </div>
+        ` : ""}
+
+        <!-- LED Tracking -->
+        <div class="config-row">
+          <label>LED Tracking</label>
+          <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
+        </div>
+
+        <!-- LED Mode & Colors -->
+        <div class="config-row">
+          <label>LED Mode</label>
+          <select id="slot-led-mode">
+            ${LED_MODES.filter((m) => showLoadOptions || !m.loadOnly).map((m) => `
+              <option value="${m.value}" ${slot.led_mode === m.value ? "selected" : ""}>${m.label}</option>
+            `).join("")}
+          </select>
+        </div>
+        <div class="config-row">
+          <label>Colors</label>
+          <div class="color-pair">
+            <span class="color-label">On:</span>
+            <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+            <span class="color-label">Off:</span>
+            <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+          </div>
+        </div>
+
+        ${eventEntityId ? `
           <div class="automations-section">
             <div class="section-title">${slot.name || `Button ${slot.slot_id}`} Automations</div>
             <div class="event-entity-id">${eventEntityId}</div>
@@ -1395,18 +1489,61 @@ class Control4CardEditor extends HTMLElement {
     const nameInput = root.getElementById("slot-name");
     if (nameInput) nameInput.addEventListener("input", (e) => this._updateSlot(this._selectedSlotId, "name", e.target.value));
 
-    const behaviorSel = root.getElementById("slot-behavior");
-    if (behaviorSel) behaviorSel.addEventListener("change", (e) => {
-      this._updateSlot(this._selectedSlotId, "behavior", e.target.value);
-      this._render(); // re-render to show/hide entity picker
-    });
+    // Action type selectors for tap/double_tap/hold
+    const actionConfigs = [
+      { prefix: "tap", field: "tap_action" },
+      { prefix: "double-tap", field: "double_tap_action" },
+      { prefix: "hold", field: "hold_action" },
+    ];
+    for (const { prefix, field } of actionConfigs) {
+      const typeSel2 = root.getElementById(`${prefix}-action-type`);
+      if (typeSel2) typeSel2.addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (val === "none") {
+          this._updateSlot(this._selectedSlotId, field, null);
+        } else {
+          const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
+          // Build a clean action dict with only the fields relevant to this type
+          const newAction = { action: val };
+          if (val === "toggle" || val === "call-service") {
+            if (currentAction.target) newAction.target = currentAction.target;
+          }
+          if (val === "call-service") {
+            newAction.service = currentAction.service || "light.toggle";
+          }
+          this._updateSlot(this._selectedSlotId, field, newAction);
+        }
+        this._render();
+      });
 
-    const targetPicker = root.getElementById("slot-target-entity");
-    if (targetPicker) {
-      targetPicker.hass = this._hass;
-      targetPicker.value = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.target_entity_id || "";
-      targetPicker.includeDomains = ["light"];
-      targetPicker.addEventListener("value-changed", (e) => this._updateSlot(this._selectedSlotId, "target_entity_id", e.detail.value));
+      const svcSel = root.getElementById(`${prefix}-action-service`);
+      if (svcSel) svcSel.addEventListener("change", (e) => {
+        const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
+        this._updateSlot(this._selectedSlotId, field, { ...currentAction, service: e.target.value });
+      });
+
+      const entityPicker = root.getElementById(`${prefix}-action-entity`);
+      if (entityPicker) {
+        entityPicker.hass = this._hass;
+        const currentAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
+        entityPicker.value = (currentAction.target || {}).entity_id || "";
+        entityPicker.addEventListener("value-changed", (e) => {
+          const curAction = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.[field] || {};
+          this._updateSlot(this._selectedSlotId, field, {
+            ...curAction,
+            target: { entity_id: e.detail.value },
+          });
+        });
+      }
+    }
+
+    // LED tracking entity picker
+    const ledTrackPicker = root.getElementById("led-track-entity");
+    if (ledTrackPicker) {
+      ledTrackPicker.hass = this._hass;
+      ledTrackPicker.value = this._localSlots.find((s) => s.slot_id === this._selectedSlotId)?.led_track_entity_id || "";
+      ledTrackPicker.includeDomains = ["light", "switch"];
+      ledTrackPicker.addEventListener("value-changed", (e) => this._updateSlot(this._selectedSlotId, "led_track_entity_id", e.detail.value || null));
     }
 
     const ledModeSel = root.getElementById("slot-led-mode");

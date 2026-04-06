@@ -76,6 +76,44 @@ class TestSlotConfig:
         slot = SlotConfig.from_dict({"slot_id": 1, "target_entity_id": "light.bedroom"})
         assert slot.target_entity_id == "light.bedroom"
 
+    def test_action_fields_default_none(self) -> None:
+        slot = SlotConfig(slot_id=1)
+        assert slot.tap_action is None
+        assert slot.double_tap_action is None
+        assert slot.hold_action is None
+        assert slot.led_track_entity_id is None
+
+    def test_tap_action_in_to_dict(self) -> None:
+        action = {"action": "toggle", "target": {"entity_id": "light.kitchen"}}
+        slot = SlotConfig(slot_id=1, tap_action=action)
+        d = slot.to_dict()
+        assert d["tap_action"] == action
+
+    def test_action_fields_omitted_when_none(self) -> None:
+        slot = SlotConfig(slot_id=1)
+        d = slot.to_dict()
+        assert "tap_action" not in d
+        assert "double_tap_action" not in d
+        assert "hold_action" not in d
+        assert "led_track_entity_id" not in d
+
+    def test_action_fields_from_dict(self) -> None:
+        data = {
+            "slot_id": 1,
+            "tap_action": {"action": "toggle", "target": {"entity_id": "light.x"}},
+            "double_tap_action": {"action": "fire-event"},
+            "hold_action": {"action": "none"},
+            "led_track_entity_id": "light.x",
+        }
+        slot = SlotConfig.from_dict(data)
+        assert slot.tap_action == {
+            "action": "toggle",
+            "target": {"entity_id": "light.x"},
+        }
+        assert slot.double_tap_action == {"action": "fire-event"}
+        assert slot.hold_action == {"action": "none"}
+        assert slot.led_track_entity_id == "light.x"
+
     def test_roundtrip(self) -> None:
         original = SlotConfig(slot_id=1, name="Top", led_on_color="ffffff")
         rebuilt = SlotConfig.from_dict(original.to_dict())
@@ -84,6 +122,15 @@ class TestSlotConfig:
     def test_roundtrip_with_target(self) -> None:
         original = SlotConfig(
             slot_id=1, behavior="control_light", target_entity_id="light.kitchen"
+        )
+        rebuilt = SlotConfig.from_dict(original.to_dict())
+        assert rebuilt == original
+
+    def test_roundtrip_with_actions(self) -> None:
+        original = SlotConfig(
+            slot_id=1,
+            tap_action={"action": "toggle", "target": {"entity_id": "light.kitchen"}},
+            led_track_entity_id="light.kitchen",
         )
         rebuilt = SlotConfig.from_dict(original.to_dict())
         assert rebuilt == original

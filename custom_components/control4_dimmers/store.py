@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.storage import Store
 
-from .const import STORAGE_KEY, STORAGE_VERSION
-from .models import DeviceConfig
+from .const import LOGGER, STORAGE_KEY, STORAGE_VERSION
+from .models import DeviceConfig, SlotConfig
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -37,6 +37,16 @@ class Control4Store:
         for ieee, data in stored.get("devices", {}).items():
             self._devices[ieee] = DeviceConfig.from_dict(data)
 
+        # One-time migration: convert legacy behavior fields to action dicts
+        migrated = False
+        for config in self._devices.values():
+            for slot in config.slots:
+                if _migrate_slot(slot):
+                    migrated = True
+        if migrated:
+            LOGGER.info("Migrated legacy behavior configs to action system")
+            await self.async_save()
+
     async def async_save(self) -> None:
         """Persist device configs to storage."""
         payload = {
@@ -54,3 +64,41 @@ class Control4Store:
         """Save or update a device config."""
         self._devices[config.ieee_address] = config
         await self.async_save()
+
+
+def _migrate_slot(slot: SlotConfig) -> bool:
+    """Migrate a slot from legacy behavior to action dicts. Returns True if migrated."""
+    if slot.tap_action is not None or not slot.behavior:
+        return False
+
+    behavior = slot.behavior
+    target = slot.target_entity_id
+
+    if behavior == "keypad":
+        slot.tap_action = {"action": "fire-event"}
+    elif behavior == "control_light" and target:
+        slot.tap_action = {"action": "toggle", "target": {"entity_id": target}}
+        slot.led_track_entity_id = target
+    elif behavior == "toggle_load":
+        slot.tap_action = {
+            "action": "toggle",
+            "target": {"entity_id": "__self_load__"},
+        }
+    elif behavior == "load_on":
+        slot.tap_action = {
+            "action": "call-service",
+            "service": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
+    elif behavior == "load_off":
+        slot.tap_action = {
+            "action": "call-service",
+            "service": "light.turn_off",
+            "target": {"entity_id": "__self_load__"},
+        }
+    else:
+        return False
+
+    slot.behavior = "keypad"
+    slot.target_entity_id = None
+    return True

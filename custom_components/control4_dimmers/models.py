@@ -18,6 +18,10 @@ class SlotConfig:
     led_on_color: str = "0000ff"
     led_off_color: str = "000000"
     target_entity_id: str | None = None
+    tap_action: dict | None = None
+    double_tap_action: dict | None = None
+    hold_action: dict | None = None
+    led_track_entity_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
@@ -32,6 +36,14 @@ class SlotConfig:
         }
         if self.target_entity_id:
             d["target_entity_id"] = self.target_entity_id
+        if self.tap_action is not None:
+            d["tap_action"] = self.tap_action
+        if self.double_tap_action is not None:
+            d["double_tap_action"] = self.double_tap_action
+        if self.hold_action is not None:
+            d["hold_action"] = self.hold_action
+        if self.led_track_entity_id is not None:
+            d["led_track_entity_id"] = self.led_track_entity_id
         return d
 
     @classmethod
@@ -46,6 +58,10 @@ class SlotConfig:
             led_on_color=data.get("led_on_color", "0000ff"),
             led_off_color=data.get("led_off_color", "000000"),
             target_entity_id=data.get("target_entity_id"),
+            tap_action=data.get("tap_action"),
+            double_tap_action=data.get("double_tap_action"),
+            hold_action=data.get("hold_action"),
+            led_track_entity_id=data.get("led_track_entity_id"),
         )
 
 

@@ -121,8 +121,14 @@ class Control4Manager:
         if press_match:
             slot_id = int(press_match.group(1))
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
-            # Auto-toggle for control_light buttons on physical press
-            self._maybe_toggle_control_light(device.ieee_address, slot_id)
+            # If no double_tap_action configured, execute tap immediately
+            config = self._store.get_device(device.ieee_address)
+            slot = self._find_slot(config, slot_id) if config else None
+            if not slot or not slot.double_tap_action:
+                self._hass.async_create_task(
+                    self.execute_slot_action(device.ieee_address, slot_id, "tap"),
+                    f"c4_action_{device.ieee_address}_{slot_id}",
+                )
             return
 
         # button_N_release  (from c4.dmx.br)
@@ -139,6 +145,23 @@ class Control4Manager:
             count = int(click_match.group(2))
             event_type = _click_count_to_event_type(count)
             self.fire_button_event(device.ieee_address, slot_id, event_type)
+            # Execute action based on click count
+            if count == 1:
+                # Only fires when double_tap is configured (debounced)
+                config = self._store.get_device(device.ieee_address)
+                slot = self._find_slot(config, slot_id) if config else None
+                if slot and slot.double_tap_action:
+                    self._hass.async_create_task(
+                        self.execute_slot_action(device.ieee_address, slot_id, "tap"),
+                        f"c4_action_{device.ieee_address}_{slot_id}",
+                    )
+            elif count == 2:  # noqa: PLR2004
+                self._hass.async_create_task(
+                    self.execute_slot_action(
+                        device.ieee_address, slot_id, "double_tap"
+                    ),
+                    f"c4_action_{device.ieee_address}_{slot_id}",
+                )
             return
 
     def fire_button_event(self, ieee: str, slot_id: int, event_type: str) -> None:
@@ -396,28 +419,81 @@ class Control4Manager:
                 },
             )
 
-    def _maybe_toggle_control_light(self, ieee: str, slot_id: int) -> None:
-        """Toggle the target light if this is a control_light button."""
+    @staticmethod
+    def _find_slot(config: DeviceConfig, slot_id: int) -> SlotConfig | None:
+        """Find a slot config by slot ID."""
+        for slot in config.slots:
+            if slot.slot_id == slot_id:
+                return slot
+        return None
+
+    def _find_light_entity(self, ieee: str) -> str | None:
+        """Find the Z2M light entity for a C4 device by friendly_name match."""
+        device = self._devices.get(ieee)
+        if device is None:
+            return None
+        for state in self._hass.states.async_all("light"):
+            friendly = state.attributes.get("friendly_name", "")
+            if friendly == device.friendly_name:
+                return state.entity_id
+        return None
+
+    def _resolve_entity_id(self, ieee: str, entity_id: str) -> str | None:
+        """Resolve __self_load__ to the actual light entity, or return as-is."""
+        if entity_id == "__self_load__":
+            return self._find_light_entity(ieee)
+        return entity_id
+
+    async def execute_slot_action(
+        self, ieee: str, slot_id: int, trigger: str = "tap"
+    ) -> None:
+        """Execute the action dict for a slot based on the trigger type."""
         config = self._store.get_device(ieee)
         if not config:
             return
-        for slot in config.slots:
-            if (
-                slot.slot_id == slot_id
-                and slot.behavior == "control_light"
-                and slot.target_entity_id
-            ):
-                self._hass.async_create_task(
-                    self._hass.services.async_call(
-                        "light", "toggle", {"entity_id": slot.target_entity_id}
-                    ),
-                    f"c4_toggle_{ieee}_{slot_id}",
-                )
-                self._hass.async_create_task(
-                    self.async_optimistic_led(ieee, slot_id),
-                    f"c4_led_{ieee}_{slot_id}",
-                )
+        slot = self._find_slot(config, slot_id)
+        if not slot:
+            return
+
+        action_map = {
+            "tap": slot.tap_action,
+            "double_tap": slot.double_tap_action,
+            "hold": slot.hold_action,
+        }
+        action = action_map.get(trigger)
+        if not action or action.get("action") in ("none", "fire-event"):
+            return
+
+        action_type = action.get("action", "")
+        target = action.get("target", {})
+        entity_id = self._resolve_entity_id(ieee, target.get("entity_id", ""))
+
+        if action_type == "toggle":
+            if not entity_id:
+                LOGGER.error("toggle action: no entity for %s slot %d", ieee, slot_id)
                 return
+            if slot.led_track_entity_id:
+                await self.async_optimistic_led(ieee, slot_id)
+            domain = entity_id.split(".")[0] if "." in entity_id else "homeassistant"
+            await self._hass.services.async_call(
+                domain, "toggle", {"entity_id": entity_id}
+            )
+        elif action_type == "call-service":
+            service = action.get("service", "")
+            if "." not in service:
+                LOGGER.error("call-service: invalid service %s", service)
+                return
+            if not entity_id:
+                LOGGER.error("call-service: no entity for %s slot %d", ieee, slot_id)
+                return
+            svc_domain, svc_name = service.split(".", 1)
+            service_data = dict(action.get("data", {}))
+            service_data["entity_id"] = entity_id
+            if slot.led_track_entity_id:
+                await self.async_optimistic_led(ieee, slot_id)
+            await self._hass.services.async_call(svc_domain, svc_name, service_data)
+        else:
+            LOGGER.warning("Unknown action type: %s", action_type)
 
     async def async_optimistic_led(self, ieee: str, slot_id: int) -> None:
         """
@@ -430,8 +506,11 @@ class Control4Manager:
         if not config:
             return
         for slot in config.slots:
-            if slot.slot_id == slot_id and slot.target_entity_id:
-                target_state = self._hass.states.get(slot.target_entity_id)
+            if slot.slot_id == slot_id and slot.led_track_entity_id:
+                track_entity = self._resolve_entity_id(ieee, slot.led_track_entity_id)
+                if not track_entity:
+                    return
+                target_state = self._hass.states.get(track_entity)
                 is_on = target_state and target_state.state == "on"
                 color = slot.led_off_color if is_on else slot.led_on_color
                 wire_id = slot_id - 1
@@ -454,20 +533,22 @@ class Control4Manager:
             unsub()
         self._light_track_unsubs.clear()
 
-        # Build a map: target_entity_id -> [(ieee, slot_id, on_color, off_color)]
+        # Build a map: resolved_entity_id -> [(ieee, slot_id, on_color, off_color)]
         tracking: dict[str, list[tuple[str, int, str, str]]] = {}
         for ieee in self._devices:
             config = self._store.get_device(ieee)
             if not config:
                 continue
             for slot in config.slots:
-                if slot.behavior == "control_light" and slot.target_entity_id:
-                    tracking.setdefault(slot.target_entity_id, []).append(
-                        (ieee, slot.slot_id, slot.led_on_color, slot.led_off_color)
-                    )
+                if slot.led_track_entity_id:
+                    resolved = self._resolve_entity_id(ieee, slot.led_track_entity_id)
+                    if resolved:
+                        tracking.setdefault(resolved, []).append(
+                            (ieee, slot.slot_id, slot.led_on_color, slot.led_off_color)
+                        )
 
         if not tracking:
-            LOGGER.debug("Light tracking: no control_light buttons found")
+            LOGGER.debug("Light tracking: no tracked entities found")
             return
 
         async def _on_state_changed(event: Any) -> None:
@@ -540,19 +621,27 @@ class Control4Manager:
                     slot_id=2,
                     size=1,
                     name="Top",
-                    behavior="load_on",
                     led_mode="follow_load",
                     led_on_color="ffffff",
                     led_off_color="000000",
+                    tap_action={
+                        "action": "call-service",
+                        "service": "light.turn_on",
+                        "target": {"entity_id": "__self_load__"},
+                    },
                 ),
                 SlotConfig(
                     slot_id=5,
                     size=1,
                     name="Bottom",
-                    behavior="load_off",
                     led_mode="follow_load",
                     led_on_color="000000",
                     led_off_color="0000ff",
+                    tap_action={
+                        "action": "call-service",
+                        "service": "light.turn_off",
+                        "target": {"entity_id": "__self_load__"},
+                    },
                 ),
             ]
         return [
@@ -560,12 +649,15 @@ class Control4Manager:
                 slot_id=i,
                 size=1,
                 name=f"Button {i}",
-                behavior="toggle_load"
-                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
-                else "keypad",
                 led_mode="follow_load"
                 if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
                 else "programmed",
+                tap_action={
+                    "action": "toggle",
+                    "target": {"entity_id": "__self_load__"},
+                }
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
+                else {"action": "fire-event"},
             )
             for i in range(1, SLOT_COUNT + 1)
         ]

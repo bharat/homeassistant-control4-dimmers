@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.control4_dimmers import (
-    _find_light_entity,
     _get_runtime,
     async_setup,
     async_setup_entry,
     async_unload_entry,
 )
 from custom_components.control4_dimmers.const import DOMAIN
+from custom_components.control4_dimmers.manager import Control4Manager
 from custom_components.control4_dimmers.models import DeviceState
 
 
@@ -119,45 +119,49 @@ class TestUnloadEntry:
 
 
 class TestFindLightEntity:
-    """Tests for the _find_light_entity helper (MQTT+ approach)."""
+    """Tests for the _find_light_entity helper (MQTT+ approach), now on manager."""
 
-    def _setup_runtime(
+    def _make_manager(
         self, mock_hass: MagicMock, friendly_name: str = "Kitchen"
-    ) -> None:
-        """Set up a mock runtime with a device."""
-        mock_manager = MagicMock()
-        mock_manager.devices = {
-            "0xAABB": DeviceState(ieee_address="0xAABB", friendly_name=friendly_name)
-        }
-        mock_hass.data = {DOMAIN: {"entry": {"manager": mock_manager}}}
+    ) -> Control4Manager:
+        """Create a manager with a device."""
+        entry = MagicMock()
+        entry.data = {"mqtt_topic": "zigbee2mqtt"}
+        entry.options = {}
+        store = MagicMock()
+        mgr = Control4Manager(mock_hass, entry, store)
+        mgr._devices["0xAABB"] = DeviceState(
+            ieee_address="0xAABB", friendly_name=friendly_name
+        )
+        return mgr
 
     def test_finds_z2m_light_by_friendly_name(self, mock_hass: MagicMock) -> None:
-        self._setup_runtime(mock_hass, "Kitchen")
+        mgr = self._make_manager(mock_hass, "Kitchen")
         light_state = MagicMock()
         light_state.entity_id = "light.kitchen"
         light_state.attributes = {"friendly_name": "Kitchen"}
         mock_hass.states.async_all.return_value = [light_state]
 
-        result = _find_light_entity(mock_hass, "0xAABB")
+        result = mgr._find_light_entity("0xAABB")
         assert result == "light.kitchen"
 
     def test_returns_none_when_no_match(self, mock_hass: MagicMock) -> None:
-        self._setup_runtime(mock_hass, "Kitchen")
+        mgr = self._make_manager(mock_hass, "Kitchen")
         light_state = MagicMock()
         light_state.entity_id = "light.other"
         light_state.attributes = {"friendly_name": "Other Room"}
         mock_hass.states.async_all.return_value = [light_state]
 
-        result = _find_light_entity(mock_hass, "0xAABB")
+        result = mgr._find_light_entity("0xAABB")
         assert result is None
 
     def test_returns_none_when_no_lights(self, mock_hass: MagicMock) -> None:
-        self._setup_runtime(mock_hass)
+        mgr = self._make_manager(mock_hass)
         mock_hass.states.async_all.return_value = []
-        result = _find_light_entity(mock_hass, "0xAABB")
+        result = mgr._find_light_entity("0xAABB")
         assert result is None
 
-    def test_returns_none_when_no_runtime(self, mock_hass: MagicMock) -> None:
-        mock_hass.data = {}
-        result = _find_light_entity(mock_hass, "0xAABB")
+    def test_returns_none_for_unknown_device(self, mock_hass: MagicMock) -> None:
+        mgr = self._make_manager(mock_hass)
+        result = mgr._find_light_entity("0xNONE")
         assert result is None

@@ -29,6 +29,7 @@ def mock_hass() -> MagicMock:
     hass.config_entries = MagicMock()
     hass.bus = MagicMock()
     hass.state = MagicMock()
+    hass.services = MagicMock()
     return hass
 
 

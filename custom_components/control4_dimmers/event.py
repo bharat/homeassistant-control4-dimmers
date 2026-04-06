@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .manager import Control4Manager
+    from .models import DeviceState, SlotConfig
 
 
 async def async_setup_entry(
@@ -68,6 +69,36 @@ async def async_setup_entry(
 
     _check_new_devices()
     manager.add_listener(_check_new_devices)
+
+
+def _derive_behavior(
+    slot_cfg: SlotConfig | None,
+    device: DeviceState | None,
+    slot_id: int,
+) -> str:
+    """Derive legacy behavior string from tap_action for backward compat."""
+    if slot_cfg and slot_cfg.tap_action:
+        return _behavior_from_action(slot_cfg.tap_action)
+    if slot_cfg:
+        return slot_cfg.behavior or "keypad"
+    if device:
+        btn_cfg = device.button_configs.get(slot_id, {})
+        return btn_cfg.get("behavior", "keypad")
+    return "keypad"
+
+
+def _behavior_from_action(tap_action: dict) -> str:
+    """Map a tap_action dict to a legacy behavior string."""
+    action = tap_action.get("action", "")
+    target_eid = (tap_action.get("target") or {}).get("entity_id", "")
+    if action == "toggle":
+        return "toggle_load" if target_eid == "__self_load__" else "control_light"
+    if action == "call-service":
+        svc = tap_action.get("service", "")
+        return {"light.turn_on": "load_on", "light.turn_off": "load_off"}.get(
+            svc, "call-service"
+        )
+    return "keypad"
 
 
 class Control4ButtonEvent(EventEntity):
@@ -124,27 +155,29 @@ class Control4ButtonEvent(EventEntity):
 
         on_color = led_colors.get("on", "0000ff")
         off_color = led_colors.get("off", "000000")
-        behavior = "keypad"
         led_mode = "programmed"
 
         if slot_cfg:
             on_color = slot_cfg.led_on_color or on_color
             off_color = slot_cfg.led_off_color or off_color
-            behavior = slot_cfg.behavior or behavior
             led_mode = slot_cfg.led_mode or led_mode
         elif device:
             btn_cfg = device.button_configs.get(self._slot_id, {})
-            behavior = btn_cfg.get("behavior", behavior)
             led_mode = btn_cfg.get("led_mode", led_mode)
 
-        return {
+        attrs: dict[str, Any] = {
             "on_color": f"#{on_color}",
             "off_color": f"#{off_color}",
-            "behavior": behavior,
             "led_mode": led_mode,
             "ieee_address": self._ieee,
             "slot_id": self._slot_id,
+            "tap_action": slot_cfg.tap_action if slot_cfg else None,
+            "led_track_entity_id": slot_cfg.led_track_entity_id if slot_cfg else None,
         }
+        # Derive behavior for backward compat with existing automations
+        attrs["behavior"] = _derive_behavior(slot_cfg, device, self._slot_id)
+
+        return attrs
 
     async def async_added_to_hass(self) -> None:
         """Register with the manager for button events and config changes."""

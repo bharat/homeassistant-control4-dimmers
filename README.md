@@ -113,10 +113,13 @@ full reset.) The LEDs will flash to confirm.
 4. Despite the failed interview, Z2M will show the device as
    **Supported: external** with model **C4-Zigbee**.
 
-### Step 3: Auto-detection
+### Step 3: Auto-detection (automatic)
 
-The converter automatically detects the device type during the
-`configure` step. Check Z2M logs for:
+Device type detection happens automatically — both at pairing time
+(via Z2M's `configure` step) and when the HA integration starts (for
+any device without a detected type). No manual action is needed.
+
+You can verify detection in the Z2M logs:
 
 ```
 [C4 DETECT] Device type: dimmer        (C4-APD120, 2 buttons + load)
@@ -124,15 +127,14 @@ The converter automatically detects the device type during the
 [C4 DETECT] Device type: keypad        (C4-KC120277, 6 buttons, no load)
 ```
 
-If auto-detection failed (e.g., EP 197 wasn't registered yet on the
-first pairing), run it manually:
+If detection didn't work (rare — e.g., EP 197 wasn't registered on
+the very first pairing), you can trigger it manually:
 
 ```bash
 mosquitto_pub -t 'zigbee2mqtt/DEVICE_NAME/set' -m '{"c4_detect": true}'
 ```
 
-Detection also reads all stored LED colors from the device firmware and
-publishes them as `c4_led_N_on` / `c4_led_N_off` attributes.
+Detection also reads stored LED colors from the device firmware.
 
 ### Step 4: Rename in Z2M (do this BEFORE reloading HA)
 

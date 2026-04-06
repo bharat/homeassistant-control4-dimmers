@@ -1390,6 +1390,7 @@ class Control4CardEditor extends HTMLElement {
             }).join("")}
           </select>
         </div>
+        ` : ""}
         <div class="editor-section">
           <span class="section-label">Color</span>
           <div class="faceplate-swatches">
@@ -1399,7 +1400,6 @@ class Control4CardEditor extends HTMLElement {
             `).join("")}
           </div>
         </div>
-        ` : ""}
       ` : ""}
       ${!this._embedded ? `</div>` : ""}
 
@@ -1769,9 +1769,11 @@ class Control4DimmerGrid extends HTMLElement {
 
   setConfig(config) {
     this._config = config || {};
-    // Re-apply faceplate color to existing cards
+    // Re-apply colors to existing cards (per-device override or grid default)
+    const overrides = this._config.overrides || {};
     for (const [eid, card] of this._cards) {
-      card.setConfig({ entity: eid, faceplate_color: this._config.faceplate_color });
+      const color = overrides[eid]?.faceplate_color || this._config.faceplate_color;
+      card.setConfig({ entity: eid, faceplate_color: color });
     }
   }
 
@@ -1797,10 +1799,12 @@ class Control4DimmerGrid extends HTMLElement {
     const currentIds = new Set(this._cards.keys());
     const newIds = new Set(entities);
 
+    const overrides = this._config.overrides || {};
     for (const eid of entities) {
       if (!this._cards.has(eid)) {
         const card = document.createElement(CARD_TAG);
-        card.setConfig({ entity: eid, faceplate_color: this._config.faceplate_color });
+        const color = overrides[eid]?.faceplate_color || this._config.faceplate_color;
+        card.setConfig({ entity: eid, faceplate_color: color });
         this._cards.set(eid, card);
       }
     }
@@ -1997,8 +2001,21 @@ class Control4DimmerGridEditor extends HTMLElement {
         this._subEditor = document.createElement(EDITOR_TAG);
         this._subEditor._embedded = true;
         this._subEditor.hass = this._hass;
-        this._subEditor.setConfig({ entity: selected.entity_id });
-        this._subEditor.addEventListener("config-changed", (e) => e.stopPropagation());
+        // Pass per-device color override or fall back to grid default
+        const overrides = this._config.overrides || {};
+        const deviceColor = overrides[selected.entity_id]?.faceplate_color || this._config.faceplate_color;
+        this._subEditor.setConfig({ entity: selected.entity_id, faceplate_color: deviceColor });
+        this._subEditor.addEventListener("config-changed", (e) => {
+          e.stopPropagation();
+          // Capture per-device color override
+          const subConfig = e.detail?.config;
+          if (subConfig?.faceplate_color) {
+            const newOverrides = { ...this._config.overrides };
+            newOverrides[selected.entity_id] = { faceplate_color: subConfig.faceplate_color };
+            this._config = { ...this._config, overrides: newOverrides };
+            this._fireConfigChanged();
+          }
+        });
         container.appendChild(this._subEditor);
       }
     }

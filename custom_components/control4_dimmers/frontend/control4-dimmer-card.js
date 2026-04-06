@@ -843,8 +843,11 @@ class Control4Card extends HTMLElement {
   }
 
   _getEffectiveType() {
-    if (!this._deviceInfo) return "keypad";
-    return this._deviceInfo.config?.device_type_override || this._deviceInfo.device_type || "keypad";
+    if (!this._deviceInfo) return null;
+    return this._deviceInfo.config?.device_type_override
+      || this._deviceInfo.device_type
+      || this._deviceInfo.config?.device_type
+      || "keypad";
   }
 
   async _pressButton(slotId) {
@@ -1065,8 +1068,11 @@ class Control4CardEditor extends HTMLElement {
   }
 
   _getEffectiveType() {
-    if (!this._deviceInfo) return "keypad";
-    return this._deviceInfo.config?.device_type_override || this._deviceInfo.device_type || "keypad";
+    if (!this._deviceInfo) return null;
+    return this._deviceInfo.config?.device_type_override
+      || this._deviceInfo.device_type
+      || this._deviceInfo.config?.device_type
+      || "keypad";
   }
 
   _handleEntityChange(entityId) {

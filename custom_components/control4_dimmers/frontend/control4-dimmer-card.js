@@ -201,7 +201,8 @@ const CARD_STYLES = `
   .btn-inner {
     display: flex;
     align-items: center;
-    width: 70%;
+    width: 10em;
+    max-width: 90%;
   }
   .btn-label {
     white-space: nowrap;

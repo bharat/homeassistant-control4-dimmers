@@ -405,6 +405,7 @@ class Control4Manager:
                     )
 
         if not tracking:
+            LOGGER.info("Light tracking: no control_light buttons found")
             return
 
         async def _on_state_changed(event: Any) -> None:
@@ -418,12 +419,15 @@ class Control4Manager:
             for ieee, slot_id, on_color, off_color in tracking[entity_id]:
                 wire_id = slot_id - 1
                 color = on_color if is_on else off_color
-                await self.async_send_mqtt(
-                    ieee,
-                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {color}"},
-                )
-                LOGGER.debug(
-                    "LED tracking: %s slot %d -> %s (%s)",
+                # Send both on (03) and off (04) modes so the LED shows the
+                # correct color regardless of the device's LED mode setting.
+                for mode in ("03", "04"):
+                    await self.async_send_mqtt(
+                        ieee,
+                        {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode} {color}"},
+                    )
+                LOGGER.info(
+                    "LED tracking: %s slot %d -> #%s (%s)",
                     ieee,
                     slot_id,
                     color,
@@ -432,7 +436,11 @@ class Control4Manager:
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)
-        LOGGER.debug("Light tracking set up for %d target entities", len(tracking))
+        LOGGER.info(
+            "Light tracking: set up for %d target entities: %s",
+            len(tracking),
+            list(tracking.keys()),
+        )
 
     def _maybe_auto_detect(self, device: DeviceState) -> None:
         """Send c4_detect if this device hasn't been detected yet."""

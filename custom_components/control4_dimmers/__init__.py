@@ -293,9 +293,9 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
 
 def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:
     """Find the dimmer light entity for a device by IEEE address."""
-    for eid, state in hass.states.async_all("light"):
+    for state in hass.states.async_all("light"):
         if state.attributes.get("ieee_address") == ieee:
-            return eid
+            return state.entity_id
     return None
 
 

@@ -19,6 +19,7 @@ config/*
 
 # Claude Code
 .claude/
+.devcontainer/.claude.json
 
 # macOS / temp
 .DS_Store

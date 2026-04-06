@@ -766,7 +766,10 @@ class Control4Card extends HTMLElement {
           );
           if (btn) {
             const led = btn.querySelector(".led");
-            if (led) led.style.background = `#${color}`;
+            if (led) {
+              led.style.background = `#${color}`;
+              led.style.visibility = color === "000000" ? "hidden" : "";
+            }
           }
         }
       }
@@ -782,7 +785,10 @@ class Control4Card extends HTMLElement {
       const btn = this.shadowRoot.querySelector(`.chassis-btn[data-slot="${slot.slot_id}"]`);
       if (btn) {
         const led = btn.querySelector(".led");
-        if (led) led.style.background = `#${color}`;
+        if (led) {
+          led.style.background = `#${color}`;
+          led.style.visibility = color === "000000" ? "hidden" : "";
+        }
       }
     }
   }
@@ -964,7 +970,7 @@ class Control4Card extends HTMLElement {
                   <div class="chassis-btn size-${visualSize}" data-slot="${btn.startSlot}">
                     <div class="btn-inner">
                       <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                      <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                      <div class="led" style="background:#${color}; ${ledRingStyle(color)}; ${color === "000000" ? "visibility:hidden" : ""}"></div>
                     </div>
                   </div>
                 `;

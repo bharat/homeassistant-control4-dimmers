@@ -273,6 +273,7 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         LOGGER.error("press_button: runtime not loaded")
         return
 
+    LOGGER.warning("press_button: behavior=%s ieee=%s slot=%s", behavior, ieee, slot_id)
     if behavior == "control_light":
         await _press_control_light(hass, ieee, slot_id)
     elif behavior in ("load_on", "load_off", "toggle_load"):

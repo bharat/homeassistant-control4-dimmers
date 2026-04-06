@@ -428,7 +428,14 @@ class Control4Manager:
         """
         config = self._store.get_device(ieee)
         if not config:
+            LOGGER.warning("optimistic_led: no config for %s", ieee)
             return
+        LOGGER.warning(
+            "optimistic_led: %s slot %d, slots=%s",
+            ieee,
+            slot_id,
+            [(s.slot_id, s.behavior, s.target_entity_id) for s in config.slots],
+        )
         for slot in config.slots:
             if slot.slot_id == slot_id and slot.target_entity_id:
                 target_state = self._hass.states.get(slot.target_entity_id)
@@ -467,14 +474,14 @@ class Control4Manager:
                     )
 
         if not tracking:
-            LOGGER.debug("Light tracking: no control_light buttons found")
+            LOGGER.warning("Light tracking: no control_light buttons found")
             return
 
         async def _on_state_changed(event: Any) -> None:
             entity_id = event.data.get("entity_id")
             if entity_id not in tracking:
                 return
-            LOGGER.debug("LED tracking: state change detected for %s", entity_id)
+            LOGGER.warning("LED tracking: state change detected for %s", entity_id)
             new_state = event.data.get("new_state")
             if new_state is None:
                 return
@@ -496,7 +503,7 @@ class Control4Manager:
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)
-        LOGGER.debug(
+        LOGGER.warning(
             "Light tracking: set up for %d target entities: %s",
             len(tracking),
             list(tracking.keys()),

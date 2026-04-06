@@ -185,6 +185,7 @@ class TestControl4Store:
                     "slots": [
                         {
                             "slot_id": 2,
+                            "led_mode": "fixed",
                             "tap_action": {
                                 "action": "light.toggle",
                                 "target": {"entity_id": "light.kitchen"},
@@ -208,10 +209,12 @@ class TestMigrateSlot:
     """Tests for the _migrate_slot helper."""
 
     def test_migrate_keypad_behavior(self) -> None:
+        """Keypad behavior has no action to migrate, but led_mode migrates."""
         slot = SlotConfig(slot_id=1, behavior="keypad")
         assert _migrate_slot(slot) is True
         assert slot.tap_action is None
         assert slot.behavior == "keypad"
+        assert slot.led_mode == "fixed"  # Phase 3: programmed→fixed
 
     def test_migrate_control_light_behavior(self) -> None:
         slot = SlotConfig(
@@ -288,10 +291,24 @@ class TestMigrateSlot:
     def test_skip_already_native(self) -> None:
         slot = SlotConfig(
             slot_id=1,
+            led_mode="fixed",
             tap_action={"action": "light.toggle", "target": {"entity_id": "light.x"}},
         )
         assert _migrate_slot(slot) is False
 
     def test_skip_empty_behavior(self) -> None:
-        slot = SlotConfig(slot_id=1, behavior="")
+        slot = SlotConfig(slot_id=1, behavior="", led_mode="fixed")
+        assert _migrate_slot(slot) is False
+
+    def test_migrate_programmed_without_tracking_to_fixed(self) -> None:
+        slot = SlotConfig(slot_id=1, led_mode="programmed")
+        assert _migrate_slot(slot) is True
+        assert slot.led_mode == "fixed"
+
+    def test_keep_programmed_with_tracking(self) -> None:
+        slot = SlotConfig(
+            slot_id=1,
+            led_mode="programmed",
+            led_track_entity_id="light.kitchen",
+        )
         assert _migrate_slot(slot) is False

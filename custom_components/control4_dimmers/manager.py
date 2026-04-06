@@ -411,11 +411,15 @@ class Control4Manager:
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
             # Store button behavior and LED mode in Z2M state
+            # "fixed" is our UI concept; firmware only knows "programmed"
+            firmware_led_mode = (
+                "programmed" if slot.led_mode == "fixed" else slot.led_mode
+            )
             await self.async_send_mqtt(
                 state.ieee_address,
                 {
                     f"button_{slot.slot_id}_behavior": slot.behavior,
-                    f"button_{slot.slot_id}_led_mode": slot.led_mode,
+                    f"button_{slot.slot_id}_led_mode": firmware_led_mode,
                 },
             )
 
@@ -642,7 +646,7 @@ class Control4Manager:
                 name=f"Button {i}",
                 led_mode="follow_load"
                 if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
-                else "programmed",
+                else "fixed",
                 tap_action={
                     "action": "light.toggle",
                     "target": {"entity_id": "__self_load__"},

@@ -68,41 +68,50 @@ class Control4Store:
 
 def _migrate_slot(slot: SlotConfig) -> bool:
     """Migrate a slot to HA-native action format. Returns True if migrated."""
+    a = _migrate_behavior(slot)
+    b = _migrate_actions(slot)
+    c = _migrate_led_mode(slot)
+    return a or b or c
+
+
+def _migrate_behavior(slot: SlotConfig) -> bool:
+    """Convert legacy behavior field → HA-native action dicts."""
+    if slot.tap_action is not None or not slot.behavior or slot.behavior == "keypad":
+        return False
+
+    behavior = slot.behavior
+    target = slot.target_entity_id
+
+    if behavior == "control_light" and target:
+        slot.tap_action = {
+            "action": "light.toggle",
+            "target": {"entity_id": target},
+        }
+        slot.led_track_entity_id = target
+    elif behavior == "toggle_load":
+        slot.tap_action = {
+            "action": "light.toggle",
+            "target": {"entity_id": "__self_load__"},
+        }
+    elif behavior == "load_on":
+        slot.tap_action = {
+            "action": "light.turn_on",
+            "target": {"entity_id": "__self_load__"},
+        }
+    elif behavior == "load_off":
+        slot.tap_action = {
+            "action": "light.turn_off",
+            "target": {"entity_id": "__self_load__"},
+        }
+
+    slot.behavior = "keypad"
+    slot.target_entity_id = None
+    return True
+
+
+def _migrate_actions(slot: SlotConfig) -> bool:
+    """Convert intermediate action format to HA-native."""
     migrated = False
-
-    # Phase 1: convert legacy behavior field → action dicts
-    if slot.tap_action is None and slot.behavior:
-        behavior = slot.behavior
-        target = slot.target_entity_id
-
-        if behavior == "control_light" and target:
-            slot.tap_action = {
-                "action": "light.toggle",
-                "target": {"entity_id": target},
-            }
-            slot.led_track_entity_id = target
-        elif behavior == "toggle_load":
-            slot.tap_action = {
-                "action": "light.toggle",
-                "target": {"entity_id": "__self_load__"},
-            }
-        elif behavior == "load_on":
-            slot.tap_action = {
-                "action": "light.turn_on",
-                "target": {"entity_id": "__self_load__"},
-            }
-        elif behavior == "load_off":
-            slot.tap_action = {
-                "action": "light.turn_off",
-                "target": {"entity_id": "__self_load__"},
-            }
-        # "keypad" and unknown → no action (None)
-
-        slot.behavior = "keypad"
-        slot.target_entity_id = None
-        migrated = True
-
-    # Phase 2: convert intermediate action format → HA-native
     for field in ("tap_action", "double_tap_action", "hold_action"):
         action = getattr(slot, field)
         if not action:
@@ -129,5 +138,12 @@ def _migrate_slot(slot: SlotConfig) -> bool:
                 new_action["data"] = action["data"]
             setattr(slot, field, new_action)
             migrated = True
-
     return migrated
+
+
+def _migrate_led_mode(slot: SlotConfig) -> bool:
+    """Migrate 'programmed' without tracking entity to 'fixed'."""
+    if slot.led_mode == "programmed" and not slot.led_track_entity_id:
+        slot.led_mode = "fixed"
+        return True
+    return False

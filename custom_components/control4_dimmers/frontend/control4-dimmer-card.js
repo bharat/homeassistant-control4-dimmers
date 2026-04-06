@@ -97,10 +97,8 @@ const LED_MODES = [
   { value: "follow_connection", label: "Follow Connection", loadOnly: true },
   { value: "push_release",      label: "Push/Release" },
   { value: "programmed",        label: "Programmed" },
+  { value: "fixed",             label: "Fixed" },
 ];
-// "Programmed" mode optionally tracks an entity's on/off state.
-// If led_track_entity_id is set, the LED color follows that entity.
-// If not, the LED stays at the configured off-color.
 
 const DEFAULT_COLORS = { on: "0000ff", off: "000000" };
 
@@ -546,6 +544,15 @@ const EDITOR_STYLES = `
 
   /* ── Save / Reset bar (inside device config box) ── */
 
+  .save-error {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--error-color, #db4437);
+    color: #fff;
+    font-size: 13px;
+  }
+
   .save-bar {
     margin-top: 14px;
     display: flex;
@@ -628,7 +635,7 @@ function computeLayout(slotConfigs, deviceType) {
     if (!used.has(id)) {
       buttons.push({
         startSlot: id, size: 1,
-        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, led_mode: "programmed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
+        slots: [{ slot_id: id, size: 1, name: `Button ${id}`, led_mode: "fixed", led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off }],
       });
     }
   }
@@ -652,7 +659,7 @@ function defaultSlotsForType(deviceType) {
     const isTopLoad = deviceType === "keypaddim" && id === 1;
     return {
       slot_id: id, size: 1, name: `Button ${id}`,
-      led_mode: isTopLoad ? "follow_load" : "programmed",
+      led_mode: isTopLoad ? "follow_load" : "fixed",
       led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
       tap_action: isTopLoad
         ? { action: "light.toggle", target: { entity_id: "__self_load__" } }
@@ -1133,7 +1140,7 @@ class Control4CardEditor extends HTMLElement {
     if (!mainSlot) {
       mainSlot = {
         slot_id: startSlot, size: newSize, name: `Button ${startSlot}`,
-        led_mode: "programmed",
+        led_mode: "fixed",
         led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
         tap_action: null,
       };
@@ -1145,7 +1152,7 @@ class Control4CardEditor extends HTMLElement {
       if (!this._localSlots.find((s) => s.slot_id === id) && (id < startSlot || id >= startSlot + newSize)) {
         this._localSlots.push({
           slot_id: id, size: 1, name: `Button ${id}`,
-          led_mode: "programmed",
+          led_mode: "fixed",
           led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
           tap_action: null,
         });
@@ -1160,6 +1167,19 @@ class Control4CardEditor extends HTMLElement {
 
   async _handleSave() {
     if (!this._deviceInfo || !this._hass || this._saving) return;
+
+    // Validate: Programmed mode requires a tracking entity
+    const invalid = this._localSlots.find(
+      (s) => s.led_mode === "programmed" && !s.led_track_entity_id
+    );
+    if (invalid) {
+      this._selectedSlotId = invalid.slot_id;
+      this._saveError = `Button ${invalid.name || invalid.slot_id}: Programmed mode requires a tracking entity`;
+      this._render();
+      return;
+    }
+    this._saveError = null;
+
     this._saving = true;
     this._render();
     try {
@@ -1266,6 +1286,7 @@ class Control4CardEditor extends HTMLElement {
           </div>
 
           <!-- Save / Reset -->
+          ${this._saveError ? `<div class="save-error">${this._saveError}</div>` : ""}
           <div class="save-bar">
             <button class="btn-reset" id="reset-btn" ${!this._dirty ? "disabled" : ""}>Reset</button>
             <button class="btn-save" id="save-btn" ${!this._dirty || this._saving ? "disabled" : ""}>
@@ -1350,8 +1371,6 @@ class Control4CardEditor extends HTMLElement {
             <label>Track</label>
             <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
           </div>
-        ` : ""}
-        ${slot.led_mode === "programmed" && slot.led_track_entity_id ? `
           <div class="config-row">
             <label>Colors</label>
             <div class="color-pair">
@@ -1361,10 +1380,30 @@ class Control4CardEditor extends HTMLElement {
               <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
             </div>
           </div>
-        ` : `
+        ` : slot.led_mode === "push_release" ? `
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">Pushed:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Released:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
+          </div>
+        ` : slot.led_mode === "fixed" ? `
           <div class="config-row">
             <label>Color</label>
             <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+          </div>
+        ` : `
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">On:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Off:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
           </div>
         `}
       </div>
@@ -1465,7 +1504,6 @@ class Control4CardEditor extends HTMLElement {
     const ledModeSel = root.getElementById("slot-led-mode");
     if (ledModeSel) ledModeSel.addEventListener("change", (e) => {
       this._updateSlot(this._selectedSlotId, "led_mode", e.target.value);
-      // Clear tracking entity when switching away from Programmed
       if (e.target.value !== "programmed") {
         this._updateSlot(this._selectedSlotId, "led_track_entity_id", null);
       }

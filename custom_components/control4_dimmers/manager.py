@@ -412,6 +412,7 @@ class Control4Manager:
             entity_id = event.data.get("entity_id")
             if entity_id not in tracking:
                 return
+            LOGGER.warning("LED tracking: state change detected for %s", entity_id)
             new_state = event.data.get("new_state")
             if new_state is None:
                 return

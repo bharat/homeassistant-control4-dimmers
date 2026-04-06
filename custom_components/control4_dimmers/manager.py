@@ -393,11 +393,27 @@ class Control4Manager:
                 and slot.behavior == "control_light"
                 and slot.target_entity_id
             ):
+                # Toggle the target light
                 self._hass.async_create_task(
                     self._hass.services.async_call(
                         "light", "toggle", {"entity_id": slot.target_entity_id}
                     ),
                     f"c4_toggle_{ieee}_{slot_id}",
+                )
+                # Optimistic LED update — set the LED immediately based on
+                # the OPPOSITE of the current state, don't wait for the
+                # state change round trip.
+                target_state = self._hass.states.get(slot.target_entity_id)
+                is_on = target_state and target_state.state == "on"
+                # After toggle, it'll be the opposite
+                color = slot.led_off_color if is_on else slot.led_on_color
+                wire_id = slot_id - 1
+                self._hass.async_create_task(
+                    self.async_send_mqtt(
+                        ieee,
+                        {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
+                    ),
+                    f"c4_led_{ieee}_{slot_id}",
                 )
                 return
 

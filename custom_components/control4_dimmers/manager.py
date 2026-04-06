@@ -405,7 +405,7 @@ class Control4Manager:
                     )
 
         if not tracking:
-            LOGGER.info("Light tracking: no control_light buttons found")
+            LOGGER.warning("Light tracking: no control_light buttons found")
             return
 
         async def _on_state_changed(event: Any) -> None:
@@ -426,7 +426,7 @@ class Control4Manager:
                         ieee,
                         {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode} {color}"},
                     )
-                LOGGER.info(
+                LOGGER.warning(
                     "LED tracking: %s slot %d -> #%s (%s)",
                     ieee,
                     slot_id,
@@ -436,7 +436,7 @@ class Control4Manager:
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)
-        LOGGER.info(
+        LOGGER.warning(
             "Light tracking: set up for %d target entities: %s",
             len(tracking),
             list(tracking.keys()),

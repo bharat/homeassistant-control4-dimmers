@@ -180,19 +180,11 @@ class Control4Manager:
         if not isinstance(payload, list):
             return
 
-        LOGGER.info(
-            "bridge/devices: received %d total devices",
-            len(payload),
-        )
-
         seen = set()
         for device_info in payload:
             if not isinstance(device_info, dict):
                 continue
-            is_c4 = _is_control4_device(device_info)
-            fn = device_info.get("friendly_name", "?")
-            LOGGER.info("bridge/devices: %s → C4=%s", fn, is_c4)
-            if not is_c4:
+            if not _is_control4_device(device_info):
                 continue
 
             ieee = device_info.get("ieee_address", "")

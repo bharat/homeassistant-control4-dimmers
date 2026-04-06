@@ -346,26 +346,27 @@ class Control4Manager:
         self.notify_listeners()
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
-        """Push slot LED colors to the device via MQTT."""
-        topic = f"{self.mqtt_topic}/{state.friendly_name}/set"
+        """Push slot LED colors and button config to the device via MQTT."""
         for slot in config.slots:
-            on_payload = {
-                f"color_button_{slot.slot_id}_on": {
-                    "hex": f"#{slot.led_on_color}",
+            wire_id = slot.slot_id - 1
+            # Set LED on-color (mode 03)
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
+            )
+            # Set LED off-color (mode 04)
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
+            )
+            # Store button behavior and LED mode in Z2M state
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {
+                    f"button_{slot.slot_id}_behavior": slot.behavior,
+                    f"button_{slot.slot_id}_led_mode": slot.led_mode,
                 },
-            }
-            off_payload = {
-                f"color_button_{slot.slot_id}_off": {
-                    "hex": f"#{slot.led_off_color}",
-                },
-            }
-            behavior_payload = {
-                f"button_{slot.slot_id}_behavior": slot.behavior,
-                f"button_{slot.slot_id}_led_mode": slot.led_mode,
-            }
-
-            for payload in [on_payload, off_payload, behavior_payload]:
-                await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
+            )
 
     def _maybe_auto_detect(self, device: DeviceState) -> None:
         """Send c4_detect if this device hasn't been detected yet."""

@@ -167,6 +167,7 @@ const CARD_STYLES = `
     padding: 4px;
     height: 176px;
     box-sizing: border-box;
+    margin: 0 10px 10px;
   }
   .chassis-btn {
     flex: 1;

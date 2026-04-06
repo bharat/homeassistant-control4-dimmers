@@ -187,7 +187,7 @@ const CARD_STYLES = `
     flex-direction: column;
     border-radius: 10px;
     background: var(--secondary-background-color);
-    padding: 6px;
+    padding: 4px;
     height: 210px;
     box-sizing: border-box;
     margin: 0 10px 10px;

@@ -147,16 +147,9 @@ const CARD_STYLES = `
     font-size: 0.9rem;
   }
 
-  /* ── Chassis: 1:2 aspect ratio (outlet slot proportions) ── */
+  /* ── Chassis (faceplate) ── */
 
   .chassis {
-    position: relative;
-    width: 100%;
-    padding-bottom: min(200%, 400px); /* 1:2 aspect ratio, capped */
-  }
-  .chassis-inner {
-    position: absolute;
-    inset: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -165,8 +158,7 @@ const CARD_STYLES = `
     padding: 6px;
   }
   .chassis-btn {
-    flex: 1;
-    min-height: 0;
+    height: 44px;
     border-radius: 10px;
     display: flex;
     align-items: center;
@@ -189,8 +181,8 @@ const CARD_STYLES = `
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
   }
-  .chassis-btn.size-2 { flex: 2; }
-  .chassis-btn.size-3 { flex: 3; }
+  .chassis-btn.size-2 { height: 92px; }
+  .chassis-btn.size-3 { height: 140px; }
 
   .chassis-btn .btn-label {
     white-space: nowrap;
@@ -910,18 +902,16 @@ class Control4Card extends HTMLElement {
           </h1>
 
           <div class="chassis">
-            <div class="chassis-inner">
-              ${layout.map((btn) => {
-                const cfg = btn.slots[0];
-                const color = ledColor(cfg, devState);
-                return `
-                  <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
-                  </div>
-                `;
-              }).join("")}
-            </div>
+            ${layout.map((btn) => {
+              const cfg = btn.slots[0];
+              const color = ledColor(cfg, devState);
+              return `
+                <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
+                  <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                  <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                </div>
+              `;
+            }).join("")}
           </div>
         `}
       </ha-card>

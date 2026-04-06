@@ -627,8 +627,9 @@ function ledRingStyle(hex) {
   const g = parseInt(h.substring(2, 4), 16) || 0;
   const b = parseInt(h.substring(4, 6), 16) || 0;
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  const ring = lum > 0.45 ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.5)";
-  return `box-shadow: 0 0 0 2px ${ring};`;
+  if (lum > 0.7) return "box-shadow: 0 0 0 2px rgba(0,0,0,0.4); border-color: rgba(0,0,0,0.3);";
+  if (lum > 0.45) return "box-shadow: 0 0 0 1px rgba(0,0,0,0.25);";
+  return "box-shadow: 0 0 4px 1px currentColor; border-color: transparent;";
 }
 
 function computeLayout(slotConfigs, deviceType) {
@@ -750,12 +751,14 @@ class Control4Card extends HTMLElement {
   _updateControlLightLeds(hass) {
     if (!this._slots || !this.shadowRoot) return;
 
-    // Update follow_load LEDs by checking the device's own light state
+    // Update follow_load LEDs and header icon by checking the Z2M light state
     if (this._deviceInfo) {
       const lightId = this._findLightEntityId();
       if (lightId) {
         const lightState = hass.states[lightId];
         const isOn = lightState?.state === "on";
+
+        // Update follow_load LEDs
         for (const slot of this._slots) {
           if (slot.led_mode !== "follow_load") continue;
           const color = isOn
@@ -770,6 +773,17 @@ class Control4Card extends HTMLElement {
               led.style.background = `#${color}`;
               led.style.visibility = color === "000000" ? "hidden" : "";
             }
+          }
+        }
+
+        // Update header icon to reflect light state
+        const icon = this.shadowRoot.querySelector(".entity-icon");
+        if (icon) {
+          if (isOn) {
+            const b = lightState.attributes?.brightness ?? 254;
+            icon.style = `color: var(--state-light-on-color, #f9d27e); filter: brightness(${Math.round((b + 245) / 5)}%)`;
+          } else {
+            icon.style = "color: var(--state-icon-color, #44739e)";
           }
         }
       }

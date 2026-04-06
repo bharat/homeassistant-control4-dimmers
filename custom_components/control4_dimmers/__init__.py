@@ -274,7 +274,15 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         LOGGER.error("press_button: runtime not loaded")
         return
 
-    if behavior in ("load_on", "load_off", "toggle_load"):
+    if behavior == "control_light":
+        target = _find_target_entity(hass, ieee, slot_id)
+        if not target:
+            LOGGER.error(
+                "press_button: no target_entity_id for %s slot %s", ieee, slot_id
+            )
+            return
+        await hass.services.async_call("light", "toggle", {"entity_id": target})
+    elif behavior in ("load_on", "load_off", "toggle_load"):
         light_entity_id = _find_light_entity(hass, ieee)
         if not light_entity_id:
             LOGGER.error("press_button: no light entity for %s", ieee)
@@ -303,6 +311,21 @@ def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:
     for state in hass.states.async_all("light"):
         if state.attributes.get("ieee_address") == ieee:
             return state.entity_id
+    return None
+
+
+def _find_target_entity(hass: HomeAssistant, ieee: str, slot_id: int) -> str | None:
+    """Find the target_entity_id for a control_light slot."""
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return None
+    manager: Control4Manager = runtime["manager"]
+    config = manager.store.get_device(ieee)
+    if not config:
+        return None
+    for s in config.slots:
+        if s.slot_id == slot_id:
+            return s.target_entity_id
     return None
 
 

@@ -56,8 +56,35 @@ class TestSlotConfig:
         assert slot.name == "Master"
         assert slot.behavior == "toggle"
 
+    def test_target_entity_id_default_none(self) -> None:
+        slot = SlotConfig(slot_id=1)
+        assert slot.target_entity_id is None
+
+    def test_target_entity_id_in_to_dict(self) -> None:
+        slot = SlotConfig(
+            slot_id=1, behavior="control_light", target_entity_id="light.kitchen"
+        )
+        d = slot.to_dict()
+        assert d["target_entity_id"] == "light.kitchen"
+
+    def test_target_entity_id_omitted_when_none(self) -> None:
+        slot = SlotConfig(slot_id=1)
+        d = slot.to_dict()
+        assert "target_entity_id" not in d
+
+    def test_target_entity_id_from_dict(self) -> None:
+        slot = SlotConfig.from_dict({"slot_id": 1, "target_entity_id": "light.bedroom"})
+        assert slot.target_entity_id == "light.bedroom"
+
     def test_roundtrip(self) -> None:
         original = SlotConfig(slot_id=1, name="Top", led_on_color="ffffff")
+        rebuilt = SlotConfig.from_dict(original.to_dict())
+        assert rebuilt == original
+
+    def test_roundtrip_with_target(self) -> None:
+        original = SlotConfig(
+            slot_id=1, behavior="control_light", target_entity_id="light.kitchen"
+        )
         rebuilt = SlotConfig.from_dict(original.to_dict())
         assert rebuilt == original
 

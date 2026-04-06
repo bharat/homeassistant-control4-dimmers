@@ -17,10 +17,11 @@ class SlotConfig:
     led_mode: str = "programmed"
     led_on_color: str = "0000ff"
     led_off_color: str = "000000"
+    target_entity_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
-        return {
+        d = {
             "slot_id": self.slot_id,
             "size": self.size,
             "name": self.name,
@@ -29,6 +30,9 @@ class SlotConfig:
             "led_on_color": self.led_on_color,
             "led_off_color": self.led_off_color,
         }
+        if self.target_entity_id:
+            d["target_entity_id"] = self.target_entity_id
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SlotConfig:
@@ -41,6 +45,7 @@ class SlotConfig:
             led_mode=data.get("led_mode", "programmed"),
             led_on_color=data.get("led_on_color", "0000ff"),
             led_off_color=data.get("led_off_color", "000000"),
+            target_entity_id=data.get("target_entity_id"),
         )
 
 

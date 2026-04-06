@@ -44,10 +44,11 @@ const DEVICE_TYPES = {
 };
 
 const BEHAVIORS = [
-  { value: "keypad",      label: "Keypad" },
-  { value: "toggle_load", label: "Toggle Load" },
-  { value: "load_on",     label: "Load On" },
-  { value: "load_off",    label: "Load Off" },
+  { value: "keypad",        label: "Keypad",        needsLoad: false },
+  { value: "control_light", label: "Control Light",  needsLoad: false },
+  { value: "toggle_load",   label: "Toggle Load",    needsLoad: true },
+  { value: "load_on",       label: "Load On",        needsLoad: true },
+  { value: "load_off",      label: "Load Off",       needsLoad: true },
 ];
 
 const LED_MODES = [
@@ -879,6 +880,17 @@ class Control4CardEditor extends HTMLElement {
       });
   }
 
+  _getLightEntities() {
+    if (!this._hass) return [];
+    return Object.keys(this._hass.states)
+      .filter((eid) => eid.startsWith("light."))
+      .map((eid) => ({
+        entity_id: eid,
+        name: this._hass.states[eid]?.attributes?.friendly_name || eid,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async _fetchDevice() {
     if (!this._hass || !this._config.entity) return;
     try {
@@ -1221,12 +1233,21 @@ class Control4CardEditor extends HTMLElement {
           <label>Name</label>
           <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slot.slot_id}">
         </div>
-        ${showLoadOptions ? `
+        <div class="config-row">
+          <label>Behavior</label>
+          <select id="slot-behavior">
+            ${BEHAVIORS.filter((b) => showLoadOptions || !b.needsLoad).map((b) => `
+              <option value="${b.value}" ${slot.behavior === b.value ? "selected" : ""}>${b.label}</option>
+            `).join("")}
+          </select>
+        </div>
+        ${slot.behavior === "control_light" ? `
           <div class="config-row">
-            <label>Behavior</label>
-            <select id="slot-behavior">
-              ${BEHAVIORS.map((b) => `
-                <option value="${b.value}" ${slot.behavior === b.value ? "selected" : ""}>${b.label}</option>
+            <label>Target Light</label>
+            <select id="slot-target-entity">
+              <option value="">Select a light...</option>
+              ${this._getLightEntities().map((e) => `
+                <option value="${e.entity_id}" ${slot.target_entity_id === e.entity_id ? "selected" : ""}>${e.name}</option>
               `).join("")}
             </select>
           </div>
@@ -1302,7 +1323,13 @@ class Control4CardEditor extends HTMLElement {
     if (nameInput) nameInput.addEventListener("input", (e) => this._updateSlot(this._selectedSlotId, "name", e.target.value));
 
     const behaviorSel = root.getElementById("slot-behavior");
-    if (behaviorSel) behaviorSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "behavior", e.target.value));
+    if (behaviorSel) behaviorSel.addEventListener("change", (e) => {
+      this._updateSlot(this._selectedSlotId, "behavior", e.target.value);
+      this._render(); // re-render to show/hide entity picker
+    });
+
+    const targetSel = root.getElementById("slot-target-entity");
+    if (targetSel) targetSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "target_entity_id", e.target.value));
 
     const ledModeSel = root.getElementById("slot-led-mode");
     if (ledModeSel) ledModeSel.addEventListener("change", (e) => this._updateSlot(this._selectedSlotId, "led_mode", e.target.value));

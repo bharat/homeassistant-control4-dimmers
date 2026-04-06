@@ -8,6 +8,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import mqtt
+from homeassistant.const import EVENT_STATE_CHANGED
 
 from .const import (
     C4_MANUFACTURER_NAME,
@@ -60,6 +61,7 @@ class Control4Manager:
         self._event_callbacks: dict[
             tuple[str, int], Callable[[str], None]
         ] = {}  # (ieee, slot_id) -> callback(event_type)
+        self._light_track_unsubs: list[Callable[[], None]] = []  # state listeners
 
     @property
     def mqtt_topic(self) -> str:
@@ -156,13 +158,17 @@ class Control4Manager:
         )
         self._subscriptions.append(unsub_state)
 
+        self.setup_light_tracking()
         LOGGER.debug("Control4 manager started, subscribed to %s", topic)
 
     async def async_stop(self) -> None:
-        """Unsubscribe from MQTT."""
+        """Unsubscribe from MQTT and state listeners."""
         for unsub in self._subscriptions:
             unsub()
         self._subscriptions.clear()
+        for unsub in self._light_track_unsubs:
+            unsub()
+        self._light_track_unsubs.clear()
 
     async def _handle_bridge_devices(  # noqa: PLR0912
         self, msg: mqtt.ReceiveMessage
@@ -343,6 +349,7 @@ class Control4Manager:
         if slots is not None:
             await self._push_slot_config(state, config)
 
+        self.setup_light_tracking()
         self.notify_listeners()
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
@@ -372,6 +379,60 @@ class Control4Manager:
                     f"button_{slot.slot_id}_led_mode": slot.led_mode,
                 },
             )
+
+    def setup_light_tracking(self) -> None:
+        """
+        Set up state listeners for all control_light buttons.
+
+        Call after config changes or on startup. Tears down existing
+        listeners and rebuilds from current stored config.
+        """
+        # Tear down existing listeners
+        for unsub in self._light_track_unsubs:
+            unsub()
+        self._light_track_unsubs.clear()
+
+        # Build a map: target_entity_id -> [(ieee, slot_id, on_color, off_color)]
+        tracking: dict[str, list[tuple[str, int, str, str]]] = {}
+        for ieee in self._devices:
+            config = self._store.get_device(ieee)
+            if not config:
+                continue
+            for slot in config.slots:
+                if slot.behavior == "control_light" and slot.target_entity_id:
+                    tracking.setdefault(slot.target_entity_id, []).append(
+                        (ieee, slot.slot_id, slot.led_on_color, slot.led_off_color)
+                    )
+
+        if not tracking:
+            return
+
+        async def _on_state_changed(event: Any) -> None:
+            entity_id = event.data.get("entity_id")
+            if entity_id not in tracking:
+                return
+            new_state = event.data.get("new_state")
+            if new_state is None:
+                return
+            is_on = new_state.state == "on"
+            for ieee, slot_id, on_color, off_color in tracking[entity_id]:
+                wire_id = slot_id - 1
+                color = on_color if is_on else off_color
+                await self.async_send_mqtt(
+                    ieee,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {color}"},
+                )
+                LOGGER.debug(
+                    "LED tracking: %s slot %d -> %s (%s)",
+                    ieee,
+                    slot_id,
+                    color,
+                    "on" if is_on else "off",
+                )
+
+        unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
+        self._light_track_unsubs.append(unsub)
+        LOGGER.debug("Light tracking set up for %d target entities", len(tracking))
 
     def _maybe_auto_detect(self, device: DeviceState) -> None:
         """Send c4_detect if this device hasn't been detected yet."""

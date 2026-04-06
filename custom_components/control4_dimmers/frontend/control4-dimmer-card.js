@@ -109,16 +109,19 @@ const CARD_STYLES = `
     display: block;
   }
 
-  ha-card { padding: 16px; }
+  ha-card {
+    padding: 12px;
+    max-width: 16em;
+  }
 
-  /* ── Header (entities-card style) ── */
+  /* ── Header ── */
 
   .card-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin: -16px -16px 0;
-    padding: 12px 16px 16px;
+    gap: 8px;
+    margin: -12px -12px 0;
+    padding: 8px 12px 10px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -126,25 +129,28 @@ const CARD_STYLES = `
     opacity: 0.7;
   }
   .entity-icon {
-    --mdc-icon-size: 24px;
+    --mdc-icon-size: 20px;
     flex-shrink: 0;
   }
   .card-header .name {
     margin: 0;
-    font-size: 24px;
-    font-weight: 400;
+    font-size: 14px;
+    font-weight: 500;
     color: var(--primary-text-color);
     line-height: 1.2;
     flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ── No entity / loading ── */
 
   .no-entity {
     text-align: center;
-    padding: 24px 16px;
+    padding: 16px 12px;
     color: var(--secondary-text-color);
-    font-size: 0.9rem;
+    font-size: 0.8rem;
   }
 
   /* ── Chassis (faceplate) ── */
@@ -152,24 +158,22 @@ const CARD_STYLES = `
   .chassis {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    border-radius: 12px;
+    gap: 3px;
+    border-radius: 10px;
     background: var(--secondary-background-color);
-    padding: 6px;
+    padding: 4px;
   }
   .chassis-btn {
-    height: 44px;
-    border-radius: 10px;
+    height: 28px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
+    justify-content: center;
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 400;
-    color: var(--primary-text-color);
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding: 0 14px;
+    padding: 0 8px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
   }
@@ -181,21 +185,30 @@ const CARD_STYLES = `
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
   }
-  .chassis-btn.size-2 { height: 92px; }
-  .chassis-btn.size-3 { height: 140px; }
+  .chassis-btn.size-2 { height: 59px; }
+  .chassis-btn.size-3 { height: 90px; }
 
-  .chassis-btn .btn-label {
+  .btn-inner {
+    display: flex;
+    align-items: center;
+    width: 13em;
+    max-width: 100%;
+  }
+  .btn-label {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--primary-text-color);
   }
-  .chassis-btn .led {
-    width: 14px;
-    height: 14px;
+  .led {
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
-    margin-left: 10px;
+    margin-left: 6px;
   }
 
 `;
@@ -907,8 +920,10 @@ class Control4Card extends HTMLElement {
               const color = ledColor(cfg, devState);
               return `
                 <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                  <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                  <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                  <div class="btn-inner">
+                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                  </div>
                 </div>
               `;
             }).join("")}

@@ -676,21 +676,19 @@ function defaultSlotsForType(deviceType) {
   if (!meta) return [];
   if (deviceType === "dimmer") {
     return [
-      { slot_id: 2, size: 1, name: "Top", led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000",
-        tap_action: { action: "light.turn_on", target: { entity_id: "__self_load__" } } },
-      { slot_id: 5, size: 1, name: "Bottom", led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff",
-        tap_action: { action: "light.turn_off", target: { entity_id: "__self_load__" } } },
+      { slot_id: 2, size: 1, name: "Top", behavior: "load_on",
+        led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
+      { slot_id: 5, size: 1, name: "Bottom", behavior: "load_off",
+        led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
     ];
   }
   return meta.slots.map((id) => {
     const isTopLoad = deviceType === "keypaddim" && id === 1;
     return {
       slot_id: id, size: 1, name: `Button ${id}`,
+      behavior: isTopLoad ? "toggle_load" : "keypad",
       led_mode: isTopLoad ? "follow_load" : "fixed",
       led_on_color: DEFAULT_COLORS.on, led_off_color: DEFAULT_COLORS.off,
-      tap_action: isTopLoad
-        ? { action: "light.toggle", target: { entity_id: "__self_load__" } }
-        : null,
     };
   });
 }
@@ -1344,6 +1342,7 @@ class Control4CardEditor extends HTMLElement {
   _renderSlotConfig(slot, effectiveType, typeMeta) {
     const showLoadOptions = effectiveType !== "keypad";
     const showSize = typeMeta && !typeMeta.fixedLayout;
+    const isLoadControl = ["load_on", "load_off", "toggle_load"].includes(slot.behavior);
 
     const actionConfigs = [
       { field: "tap_action", label: "Tap" },
@@ -1369,6 +1368,36 @@ class Control4CardEditor extends HTMLElement {
           <label>Name</label>
           <input type="text" id="slot-name" value="${slot.name || ""}" placeholder="Button ${slot.slot_id}">
         </div>
+
+        ${showLoadOptions ? `
+          <div class="config-row">
+            <label>Mode</label>
+            <select id="slot-mode">
+              <option value="load_control" ${isLoadControl ? "selected" : ""}>Load Control</option>
+              <option value="programmable" ${!isLoadControl ? "selected" : ""}>Programmable</option>
+            </select>
+          </div>
+        ` : ""}
+
+        ${isLoadControl ? `
+          <div class="config-row">
+            <label>Action</label>
+            <select id="load-behavior">
+              <option value="toggle_load" ${slot.behavior === "toggle_load" ? "selected" : ""}>Toggle</option>
+              <option value="load_on" ${slot.behavior === "load_on" ? "selected" : ""}>Turn On</option>
+              <option value="load_off" ${slot.behavior === "load_off" ? "selected" : ""}>Turn Off</option>
+            </select>
+          </div>
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">On:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Off:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
+          </div>
+        ` : `
 
         ${actionConfigs.map(({ field, label }) => {
           const action = slot[field] || null;
@@ -1447,6 +1476,8 @@ class Control4CardEditor extends HTMLElement {
             </div>
           </div>
         `}
+
+        `}
       </div>
     `;
   }
@@ -1477,6 +1508,30 @@ class Control4CardEditor extends HTMLElement {
 
     const nameInput = root.getElementById("slot-name");
     if (nameInput) nameInput.addEventListener("input", (e) => this._updateSlot(this._selectedSlotId, "name", e.target.value));
+
+    // Mode selector (Load Control / Programmable)
+    const modeSel = root.getElementById("slot-mode");
+    if (modeSel) modeSel.addEventListener("change", (e) => {
+      if (e.target.value === "load_control") {
+        this._updateSlot(this._selectedSlotId, "behavior", "toggle_load");
+        this._updateSlot(this._selectedSlotId, "led_mode", "follow_load");
+        this._updateSlot(this._selectedSlotId, "tap_action", null);
+        this._updateSlot(this._selectedSlotId, "double_tap_action", null);
+        this._updateSlot(this._selectedSlotId, "hold_action", null);
+        this._updateSlot(this._selectedSlotId, "led_track_entity_id", null);
+      } else {
+        this._updateSlot(this._selectedSlotId, "behavior", "keypad");
+        this._updateSlot(this._selectedSlotId, "led_mode", "fixed");
+      }
+      this._render();
+    });
+
+    // Load behavior selector (Turn On / Turn Off / Toggle)
+    const loadBehavior = root.getElementById("load-behavior");
+    if (loadBehavior) loadBehavior.addEventListener("change", (e) => {
+      this._updateSlot(this._selectedSlotId, "behavior", e.target.value);
+      this._render();
+    });
 
     // "+ Perform action" buttons
     for (const btn of root.querySelectorAll(".btn-add-action")) {

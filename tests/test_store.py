@@ -92,7 +92,7 @@ class TestControl4Store:
 
     @pytest.mark.asyncio
     async def test_migration_from_behavior(self, store: Control4Store) -> None:
-        """Loading old behavior-format configs should migrate to HA-native."""
+        """Load behaviors should be preserved as firmware behaviors."""
         store._store.async_load.return_value = {
             "devices": {
                 IEEE_DIMMER: {
@@ -109,23 +109,20 @@ class TestControl4Store:
         await store.async_load()
         config = store.get_device(IEEE_DIMMER)
         assert config is not None
+        # Load behaviors stay as firmware behaviors, no tap_action
         top = config.slots[0]
-        assert top.tap_action == {
-            "action": "light.turn_on",
-            "target": {"entity_id": "__self_load__"},
-        }
+        assert top.behavior == "load_on"
+        assert top.tap_action is None
+        assert top.led_mode == "follow_load"
         bottom = config.slots[1]
-        assert bottom.tap_action == {
-            "action": "light.turn_off",
-            "target": {"entity_id": "__self_load__"},
-        }
-        store._store.async_save.assert_awaited()
+        assert bottom.behavior == "load_off"
+        assert bottom.tap_action is None
 
     @pytest.mark.asyncio
     async def test_migration_from_intermediate_format(
         self, store: Control4Store
     ) -> None:
-        """Migrate intermediate fire-event/toggle/call-service to HA-native."""
+        """Migrate intermediate formats; __self_load__ becomes firmware behavior."""
         store._store.async_load.return_value = {
             "devices": {
                 IEEE_DIMMER: {
@@ -159,14 +156,12 @@ class TestControl4Store:
         await store.async_load()
         config = store.get_device(IEEE_DIMMER)
         assert config is not None
-        # fire-event → None
+        # fire-event → None (programmable, no action)
         assert config.slots[0].tap_action is None
-        # call-service → flattened
-        assert config.slots[1].tap_action == {
-            "action": "light.turn_on",
-            "target": {"entity_id": "__self_load__"},
-        }
-        # toggle → domain.toggle
+        # __self_load__ call-service → firmware behavior
+        assert config.slots[1].behavior == "load_on"
+        assert config.slots[1].tap_action is None
+        # non-self toggle → kept as HA action
         assert config.slots[2].tap_action == {
             "action": "light.toggle",
             "target": {"entity_id": "light.kitchen"},
@@ -228,29 +223,13 @@ class TestMigrateSlot:
         assert slot.led_track_entity_id == "light.kitchen"
         assert slot.target_entity_id is None
 
-    def test_migrate_toggle_load_behavior(self) -> None:
-        slot = SlotConfig(slot_id=1, behavior="toggle_load")
-        assert _migrate_slot(slot) is True
-        assert slot.tap_action == {
-            "action": "light.toggle",
-            "target": {"entity_id": "__self_load__"},
-        }
-
-    def test_migrate_load_on_behavior(self) -> None:
-        slot = SlotConfig(slot_id=2, behavior="load_on")
-        assert _migrate_slot(slot) is True
-        assert slot.tap_action == {
-            "action": "light.turn_on",
-            "target": {"entity_id": "__self_load__"},
-        }
-
-    def test_migrate_load_off_behavior(self) -> None:
-        slot = SlotConfig(slot_id=5, behavior="load_off")
-        assert _migrate_slot(slot) is True
-        assert slot.tap_action == {
-            "action": "light.turn_off",
-            "target": {"entity_id": "__self_load__"},
-        }
+    def test_load_behaviors_stay_as_firmware(self) -> None:
+        """Load behaviors are NOT converted to tap_actions."""
+        for behavior in ("toggle_load", "load_on", "load_off"):
+            slot = SlotConfig(slot_id=1, behavior=behavior)
+            _migrate_slot(slot)
+            assert slot.behavior == behavior
+            assert slot.tap_action is None
 
     def test_migrate_fire_event_to_null(self) -> None:
         slot = SlotConfig(slot_id=1, tap_action={"action": "fire-event"})
@@ -273,7 +252,8 @@ class TestMigrateSlot:
             "target": {"entity_id": "light.x"},
         }
 
-    def test_migrate_intermediate_call_service(self) -> None:
+    def test_migrate_intermediate_call_service_self_load(self) -> None:
+        """__self_load__ intermediate actions become firmware behaviors."""
         slot = SlotConfig(
             slot_id=1,
             tap_action={
@@ -283,9 +263,24 @@ class TestMigrateSlot:
             },
         )
         assert _migrate_slot(slot) is True
+        assert slot.behavior == "load_on"
+        assert slot.tap_action is None
+
+    def test_migrate_intermediate_call_service_non_self(self) -> None:
+        """Non-self call-service actions stay as HA-native tap_actions."""
+        slot = SlotConfig(
+            slot_id=1,
+            led_mode="fixed",
+            tap_action={
+                "action": "call-service",
+                "service": "light.turn_on",
+                "target": {"entity_id": "light.kitchen"},
+            },
+        )
+        assert _migrate_slot(slot) is True
         assert slot.tap_action == {
             "action": "light.turn_on",
-            "target": {"entity_id": "__self_load__"},
+            "target": {"entity_id": "light.kitchen"},
         }
 
     def test_skip_already_native(self) -> None:
@@ -304,6 +299,21 @@ class TestMigrateSlot:
         slot = SlotConfig(slot_id=1, led_mode="programmed")
         assert _migrate_slot(slot) is True
         assert slot.led_mode == "fixed"
+
+    def test_migrate_ha_native_self_load_to_behavior(self) -> None:
+        """HA-native __self_load__ tap_actions get converted to behavior."""
+        slot = SlotConfig(
+            slot_id=1,
+            led_mode="fixed",
+            tap_action={
+                "action": "light.toggle",
+                "target": {"entity_id": "__self_load__"},
+            },
+        )
+        assert _migrate_slot(slot) is True
+        assert slot.behavior == "toggle_load"
+        assert slot.tap_action is None
+        assert slot.led_mode == "follow_load"
 
     def test_keep_programmed_with_tracking(self) -> None:
         slot = SlotConfig(

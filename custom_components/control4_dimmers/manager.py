@@ -448,6 +448,28 @@ class Control4Manager:
             return self._find_light_entity(ieee)
         return entity_id
 
+    async def press_button(self, ieee: str, slot_id: int) -> None:
+        """Handle a button press — firmware load control or software action."""
+        config = self._store.get_device(ieee)
+        slot = self._find_slot(config, slot_id) if config else None
+        behavior = slot.behavior if slot else "keypad"
+
+        if behavior in ("load_on", "load_off", "toggle_load"):
+            light_entity = self._find_light_entity(ieee)
+            if not light_entity:
+                LOGGER.error("press_button: no light entity for %s", ieee)
+                return
+            svc = {
+                "load_on": "turn_on",
+                "load_off": "turn_off",
+                "toggle_load": "toggle",
+            }[behavior]
+            await self._hass.services.async_call(
+                "light", svc, {"entity_id": light_entity}
+            )
+        else:
+            await self.execute_slot_action(ieee, slot_id, "tap")
+
     async def execute_slot_action(
         self, ieee: str, slot_id: int, trigger: str = "tap"
     ) -> None:
@@ -618,25 +640,19 @@ class Control4Manager:
                     slot_id=2,
                     size=1,
                     name="Top",
+                    behavior="load_on",
                     led_mode="follow_load",
                     led_on_color="ffffff",
                     led_off_color="000000",
-                    tap_action={
-                        "action": "light.turn_on",
-                        "target": {"entity_id": "__self_load__"},
-                    },
                 ),
                 SlotConfig(
                     slot_id=5,
                     size=1,
                     name="Bottom",
+                    behavior="load_off",
                     led_mode="follow_load",
                     led_on_color="000000",
                     led_off_color="0000ff",
-                    tap_action={
-                        "action": "light.turn_off",
-                        "target": {"entity_id": "__self_load__"},
-                    },
                 ),
             ]
         return [
@@ -644,15 +660,12 @@ class Control4Manager:
                 slot_id=i,
                 size=1,
                 name=f"Button {i}",
+                behavior="toggle_load"
+                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
+                else "keypad",
                 led_mode="follow_load"
                 if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
                 else "fixed",
-                tap_action={
-                    "action": "light.toggle",
-                    "target": {"entity_id": "__self_load__"},
-                }
-                if device_type == DEVICE_TYPE_KEYPADDIM and i == 1
-                else None,
             )
             for i in range(1, SLOT_COUNT + 1)
         ]

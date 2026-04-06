@@ -244,8 +244,9 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     """
     Handle control4_dimmers.press_button service call.
 
-    Executes the tap_action for the slot using HA-native action format
-    (e.g. { action: "light.toggle", target: { entity_id: "..." } }).
+    For load-control buttons (load_on, load_off, toggle_load), controls
+    the dimmer load via the Z2M light entity.  For programmable buttons,
+    executes the tap_action.
     """
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)
@@ -271,7 +272,7 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
 
     manager: Control4Manager = runtime["manager"]
     manager.fire_button_event(ieee, slot_id, "pressed")
-    await manager.execute_slot_action(ieee, slot_id, "tap")
+    await manager.press_button(ieee, slot_id)
 
 
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:

@@ -70,13 +70,20 @@ def _migrate_slot(slot: SlotConfig) -> bool:
     """Migrate a slot to HA-native action format. Returns True if migrated."""
     a = _migrate_behavior(slot)
     b = _migrate_actions(slot)
-    c = _migrate_led_mode(slot)
-    return a or b or c
+    c = _migrate_load_actions_to_behavior(slot)
+    d = _migrate_led_mode(slot)
+    return a or b or c or d
+
+
+_LOAD_BEHAVIORS = {"load_on", "load_off", "toggle_load"}
 
 
 def _migrate_behavior(slot: SlotConfig) -> bool:
     """Convert legacy behavior field → HA-native action dicts."""
     if slot.tap_action is not None or not slot.behavior or slot.behavior == "keypad":
+        return False
+    # Load behaviors are firmware-native — don't convert to software actions
+    if slot.behavior in _LOAD_BEHAVIORS:
         return False
 
     behavior = slot.behavior
@@ -141,8 +148,43 @@ def _migrate_actions(slot: SlotConfig) -> bool:
     return migrated
 
 
+def _migrate_load_actions_to_behavior(slot: SlotConfig) -> bool:
+    """
+    Convert __self_load__ tap_actions back to firmware behaviors.
+
+    Load control should be handled by firmware (fast, reliable) not
+    software actions (slow round-trip). Restores the proper behavior
+    field and clears the tap_action.
+    """
+    if not slot.tap_action:
+        return False
+    target = (slot.tap_action.get("target") or {}).get("entity_id", "")
+    if target != "__self_load__":
+        return False
+
+    service = slot.tap_action.get("action", "")
+    behavior_map = {
+        "light.turn_on": "load_on",
+        "light.turn_off": "load_off",
+        "light.toggle": "toggle_load",
+    }
+    behavior = behavior_map.get(service)
+    if not behavior:
+        return False
+
+    slot.behavior = behavior
+    slot.tap_action = None
+    slot.led_mode = "follow_load"
+    return True
+
+
 def _migrate_led_mode(slot: SlotConfig) -> bool:
-    """Migrate 'programmed' without tracking entity to 'fixed'."""
+    """Ensure LED mode is correct for the slot's behavior."""
+    # Load-control buttons should always follow the load
+    if slot.behavior in _LOAD_BEHAVIORS and slot.led_mode != "follow_load":
+        slot.led_mode = "follow_load"
+        return True
+    # Programmed without tracking → fixed
     if slot.led_mode == "programmed" and not slot.led_track_entity_id:
         slot.led_mode = "fixed"
         return True

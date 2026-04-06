@@ -401,30 +401,26 @@ class TestManagerDefaultSlots:
     def test_dimmer_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("dimmer")
         assert len(slots) == 2
-        ids = [s.slot_id for s in slots]
-        assert 2 in ids
-        assert 5 in ids
-        # Verify HA-native action format
         top = next(s for s in slots if s.slot_id == 2)
-        assert top.tap_action["action"] == "light.turn_on"
-        assert "service" not in top.tap_action
+        assert top.behavior == "load_on"
+        assert top.led_mode == "follow_load"
+        assert top.tap_action is None
+        bottom = next(s for s in slots if s.slot_id == 5)
+        assert bottom.behavior == "load_off"
 
     def test_keypad_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypad")
         assert len(slots) == 6
-        assert slots[0].slot_id == 1
-        assert slots[5].slot_id == 6
-        # All keypad buttons have no action
-        assert slots[0].tap_action is None
+        assert all(s.behavior == "keypad" for s in slots)
+        assert all(s.tap_action is None for s in slots)
 
     def test_keypaddim_defaults(self, manager: Control4Manager) -> None:
         slots = manager.get_default_slots("keypaddim")
         assert len(slots) == 6
-        # First slot should toggle load
-        assert slots[0].tap_action["action"] == "light.toggle"
-        assert slots[0].tap_action["target"]["entity_id"] == "__self_load__"
-        # Other slots have no action
-        assert slots[1].tap_action is None
+        assert slots[0].behavior == "toggle_load"
+        assert slots[0].led_mode == "follow_load"
+        assert slots[0].tap_action is None
+        assert slots[1].behavior == "keypad"
 
 
 # ── Manager: configure_device ────────────────────────────────────────

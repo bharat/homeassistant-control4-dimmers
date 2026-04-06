@@ -2012,13 +2012,13 @@ class Control4DimmerGridEditor extends HTMLElement {
     const root = this.shadowRoot;
 
     const titleInput = root.getElementById("grid-title");
-    if (titleInput) titleInput.addEventListener("input", (e) => {
+    if (titleInput) titleInput.addEventListener("change", (e) => {
       this._config = { ...this._config, title: e.target.value };
       this._fireConfigChanged();
     });
 
     const colInput = root.getElementById("grid-columns");
-    if (colInput) colInput.addEventListener("input", (e) => {
+    if (colInput) colInput.addEventListener("change", (e) => {
       this._config = { ...this._config, columns: parseInt(e.target.value, 10) || 4 };
       this._fireConfigChanged();
     });

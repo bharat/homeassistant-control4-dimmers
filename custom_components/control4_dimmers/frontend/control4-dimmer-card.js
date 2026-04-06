@@ -624,6 +624,25 @@ class Control4Card extends HTMLElement {
       }
     }
     if (first) this._render();
+
+    // Update LED dots for control_light buttons when tracked light state changes
+    this._updateControlLightLeds(hass);
+  }
+
+  _updateControlLightLeds(hass) {
+    if (!this._slots || !this.shadowRoot) return;
+    for (const slot of this._slots) {
+      if (slot.behavior !== "control_light" || !slot.target_entity_id) continue;
+      const targetState = hass.states[slot.target_entity_id];
+      if (!targetState) continue;
+      const isOn = targetState.state === "on";
+      const color = isOn ? (slot.led_on_color || "ffffff") : (slot.led_off_color || "000000");
+      const btn = this.shadowRoot.querySelector(`.chassis-btn[data-slot="${slot.slot_id}"]`);
+      if (btn) {
+        const led = btn.querySelector(".led");
+        if (led) led.style.background = `#${color}`;
+      }
+    }
   }
 
   setConfig(config) {
@@ -1055,6 +1074,24 @@ class Control4CardEditor extends HTMLElement {
       const autoTitle = root?.querySelector(".automations-section .section-title");
       if (autoTitle) autoTitle.textContent = `${displayName} Automations`;
       // Enable save/reset buttons if they were disabled.
+      const saveBtn = root?.getElementById("save-btn");
+      if (saveBtn) saveBtn.disabled = false;
+      const resetBtn = root?.getElementById("reset-btn");
+      if (resetBtn) resetBtn.disabled = false;
+      return;
+    }
+    // For color fields, update the LED dot surgically to avoid
+    // killing the native color picker dialog with a full re-render.
+    if (field === "led_on_color" || field === "led_off_color") {
+      const root = this.shadowRoot;
+      const slotEl = root?.querySelector(`.chassis-slot[data-slot="${slotId}"]`);
+      if (slotEl) {
+        const dot = slotEl.querySelector(".led-dot");
+        if (dot) {
+          const onColor = slot.led_on_color || "0000ff";
+          dot.style.background = `#${onColor}`;
+        }
+      }
       const saveBtn = root?.getElementById("save-btn");
       if (saveBtn) saveBtn.disabled = false;
       const resetBtn = root?.getElementById("reset-btn");

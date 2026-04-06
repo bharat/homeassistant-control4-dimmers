@@ -48,6 +48,18 @@ const CARD_VERSION = (() => {
 
 /* ────────────────────── constants ────────────────────── */
 
+const FACEPLATE_COLORS = [
+  { value: "adb2bd", label: "Aluminum" },
+  { value: "efe8e0", label: "Biscuit" },
+  { value: "000000", label: "Black" },
+  { value: "4c3d2c", label: "Brown" },
+  { value: "d9caa6", label: "Ivory" },
+  { value: "eee7de", label: "Light Almond" },
+  { value: "333335", label: "Midnight Black" },
+  { value: "ffffff", label: "Snow White" },
+  { value: "ffffff", label: "White" },
+];
+
 const DEVICE_TYPES = {
   dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [2, 5],        fixedLayout: true },
   keypaddim: { label: "Keypad Dimmer", model: "C4-KD120",    slots: [1,2,3,4,5,6], fixedLayout: false },
@@ -199,6 +211,14 @@ const CARD_STYLES = `
   .chassis-btn.size-5 { flex: 5; }
   .chassis-btn.size-6 { flex: 6; }
 
+  .dark-faceplate .chassis-btn {
+    background: rgba(255,255,255,0.1);
+    border-color: rgba(255,255,255,0.2);
+  }
+  .dark-faceplate .btn-label {
+    color: rgba(255,255,255,0.9);
+  }
+
   .btn-inner {
     display: flex;
     align-items: center;
@@ -306,6 +326,28 @@ const EDITOR_STYLES = `
     outline: none;
   }
   .full-width-select:focus { border-color: var(--primary-color); }
+
+  /* ── Faceplate color swatches ── */
+
+  .faceplate-swatches {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid var(--divider-color);
+    cursor: pointer;
+    padding: 0;
+    transition: border-color 0.15s ease, transform 0.1s ease;
+  }
+  .swatch:hover { transform: scale(1.15); }
+  .swatch.active {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-color);
+  }
 
   /* ── Chassis + config layout ── */
 
@@ -971,7 +1013,7 @@ class Control4Card extends HTMLElement {
             <div class="name">${dev.friendly_name}</div>
           </div>
 
-          <div class="chassis">
+          <div class="chassis${(() => { const c = this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${this._config.faceplate_color ? `background:#${this._config.faceplate_color}` : ""}">
             ${(() => {
               // Dimmer (2 buttons) should visually match 6-slot keypad height
               const totalSlots = layout.reduce((sum, btn) => sum + btn.size, 0);
@@ -1336,6 +1378,15 @@ class Control4CardEditor extends HTMLElement {
             }).join("")}
           </select>
         </div>
+        <div class="editor-section">
+          <span class="section-label">Faceplate</span>
+          <div class="faceplate-swatches">
+            ${FACEPLATE_COLORS.map((c) => `
+              <button class="swatch ${this._config.faceplate_color === c.value ? "active" : ""}"
+                style="background:#${c.value}" data-color="${c.value}" title="${c.label}"></button>
+            `).join("")}
+          </div>
+        </div>
       ` : ""}
       </div>
 
@@ -1535,6 +1586,15 @@ class Control4CardEditor extends HTMLElement {
 
     const typeSel = root.getElementById("type-select");
     if (typeSel) typeSel.addEventListener("change", (e) => this._handleTypeChange(e.target.value));
+
+    // Faceplate color swatches
+    for (const swatch of root.querySelectorAll(".swatch")) {
+      swatch.addEventListener("click", () => {
+        this._config = { ...this._config, faceplate_color: swatch.dataset.color };
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config } }));
+        this._render();
+      });
+    }
 
     const slots = root.querySelectorAll(".chassis-slot");
     for (const slot of slots) {

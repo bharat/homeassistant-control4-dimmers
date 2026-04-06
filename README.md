@@ -104,9 +104,12 @@ full reset.) The LEDs will flash to confirm.
 
 1. Open the Z2M web UI and enable **Permit Join** (Settings → Permit Join).
 2. The device should appear within 30 seconds.
-3. **The interview will fail** — this is normal. C4 devices don't support
-   standard Zigbee genBasic reads, so Z2M can't read model/manufacturer
-   via the usual interview. The converter handles this.
+3. **The interview will fail** — this is normal and expected. C4 devices
+   don't support standard Zigbee genBasic reads, so Z2M can't read
+   model/manufacturer via the usual interview. The device will show
+   **Interview state: failed** with a warning icon — this does not
+   affect functionality. The converter handles everything the interview
+   can't.
 4. Despite the failed interview, Z2M will show the device as
    **Supported: external** with model **C4-Zigbee**.
 
@@ -131,11 +134,16 @@ mosquitto_pub -t 'zigbee2mqtt/DEVICE_NAME/set' -m '{"c4_detect": true}'
 Detection also reads all stored LED colors from the device firmware and
 publishes them as `c4_led_N_on` / `c4_led_N_off` attributes.
 
-### Step 4: Rename in Z2M
+### Step 4: Rename in Z2M (do this BEFORE reloading HA)
 
 Give the device a friendly name in Z2M (About tab → click the edit
-icon next to the IEEE address). For example: "Kitchen Dimmer", "Kitchen
-Keypad". This name is used throughout HA.
+icon next to the IEEE address). For example: "Kitchen", "Kitchen
+Keypad". **Do this before reloading the HA integration** — HA entity
+IDs are based on the name at creation time, so naming first avoids
+entities with hex addresses.
+
+The integration uses Z2M's light entity (MQTT+ approach), so the
+device's Z2M name becomes the light entity name (e.g., `light.kitchen`).
 
 ### Step 5: Reload the HA integration
 
@@ -144,15 +152,23 @@ This ensures the integration picks up the new device with its friendly
 name. The device should now appear in the Control4 Dimmers card editor
 dropdown.
 
+> **Note:** Pairing the first device may trigger discovery, but
+> subsequent devices may require an explicit reload. When in doubt,
+> reload after renaming each new device.
+
 ### Step 6: Configure in the card editor
 
 1. Add a **Control4 Dimmers** card to your dashboard.
 2. In the card editor, select the device from the dropdown.
 3. For each button:
    - **Name**: label for the button (e.g., "Top", "Scene 1").
-   - **Behavior**: `load_on`, `load_off`, `toggle_load`, or `keypad`.
-     Load behaviors control the physical dimmer load via standard Zigbee.
-     `keypad` fires HA events for automations.
+   - **Behavior**:
+     - `load_on` / `load_off` / `toggle_load` — control the device's
+       own physical dimmer load via standard Zigbee.
+     - `control_light` — control a *different* HA light entity. An
+       entity picker appears to select the target. The button toggles
+       the target light on press, and the LED tracks its on/off state.
+     - `keypad` — fires HA events for automations (no load control).
    - **LED Mode**: `follow_load`, `follow_connection`, `push_release`,
      or `programmed`.
    - **Colors**: on-color (shown when load is ON) and off-color (shown

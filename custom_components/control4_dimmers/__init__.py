@@ -274,39 +274,37 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         return
 
     if behavior == "control_light":
-        target = _find_target_entity(hass, ieee, slot_id)
-        if not target:
-            LOGGER.error(
-                "press_button: no target_entity_id for %s slot %s", ieee, slot_id
-            )
-            return
-        await hass.services.async_call("light", "toggle", {"entity_id": target})
+        await _press_control_light(hass, ieee, slot_id)
+    elif behavior in ("load_on", "load_off", "toggle_load"):
+        await _press_load_button(hass, ieee, behavior)
+    else:
         runtime = _get_runtime(hass)
         if runtime:
-            manager: Control4Manager = runtime["manager"]
-            await manager.async_optimistic_led(ieee, slot_id)
-    elif behavior in ("load_on", "load_off", "toggle_load"):
-        light_entity_id = _find_light_entity(hass, ieee)
-        if not light_entity_id:
-            LOGGER.error("press_button: no light entity for %s", ieee)
-            return
+            runtime["manager"].fire_button_event(ieee, slot_id, "pressed")
 
-        service_data = {"entity_id": light_entity_id}
-        if behavior == "load_on":
-            await hass.services.async_call("light", "turn_on", service_data)
-        elif behavior == "load_off":
-            await hass.services.async_call("light", "turn_off", service_data)
-        elif behavior == "toggle_load":
-            await hass.services.async_call("light", "toggle", service_data)
-    else:
-        # Keypad button — fire the event entity
-        bus_data = {
-            "entity_id": entity_id,
-            "ieee_address": ieee,
-            "slot_id": slot_id,
-        }
-        hass.bus.async_fire(f"{DOMAIN}_button_press", bus_data)
-        LOGGER.debug("Fired keypad button event for %s slot %s", ieee, slot_id)
+
+async def _press_control_light(hass: HomeAssistant, ieee: str, slot_id: int) -> None:
+    """Toggle a remote light and send optimistic LED update."""
+    target = _find_target_entity(hass, ieee, slot_id)
+    if not target:
+        LOGGER.error("press_button: no target_entity_id for %s slot %s", ieee, slot_id)
+        return
+    await hass.services.async_call("light", "toggle", {"entity_id": target})
+    runtime = _get_runtime(hass)
+    if runtime:
+        await runtime["manager"].async_optimistic_led(ieee, slot_id)
+
+
+async def _press_load_button(hass: HomeAssistant, ieee: str, behavior: str) -> None:
+    """Control the device's own dimmer load."""
+    light_entity_id = _find_light_entity(hass, ieee)
+    if not light_entity_id:
+        LOGGER.error("press_button: no light entity for %s", ieee)
+        return
+    svc = {"load_on": "turn_on", "load_off": "turn_off", "toggle_load": "toggle"}[
+        behavior
+    ]
+    await hass.services.async_call("light", svc, {"entity_id": light_entity_id})
 
 
 def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:

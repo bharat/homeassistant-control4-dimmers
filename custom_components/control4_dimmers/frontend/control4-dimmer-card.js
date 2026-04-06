@@ -1008,7 +1008,19 @@ class Control4CardEditor extends HTMLElement {
         entity_id: this._config.entity,
         device_type: newType,
       });
-      this._localSlots = defaultSlotsForType(newType);
+      // Preserve colors/config from existing slots that carry over
+      const oldSlots = Object.fromEntries(this._localSlots.map((s) => [s.slot_id, s]));
+      const newSlots = defaultSlotsForType(newType);
+      for (const slot of newSlots) {
+        const old = oldSlots[slot.slot_id];
+        if (old) {
+          slot.led_on_color = old.led_on_color;
+          slot.led_off_color = old.led_off_color;
+          slot.name = old.name;
+          if (old.target_entity_id) slot.target_entity_id = old.target_entity_id;
+        }
+      }
+      this._localSlots = newSlots;
       this._dirty = true;
       this._selectedSlotId = null;
       setTimeout(() => this._fetchDevice(), 500);
@@ -1384,12 +1396,33 @@ class Control4CardEditor extends HTMLElement {
       });
     }
 
-    // Create automation link: navigate to automation creation page.
+    // Create automation link: prefill trigger with this button's event entity.
     const createLink = root.querySelector(".create-auto-link");
     if (createLink) {
       createLink.addEventListener("click", (e) => {
         e.preventDefault();
-        window.open("/config/automation/edit/new", "_blank");
+        const slot = this._localSlots.find((s) => s.slot_id === this._selectedSlotId);
+        const eventEntityId = this._eventEntities?.[`slot_${this._selectedSlotId}`];
+        const name = slot?.name || `Button ${this._selectedSlotId}`;
+        if (eventEntityId) {
+          // Create a draft automation via HA API with trigger prefilled
+          this._hass.callApi("POST", "config/automation/config", {
+            alias: `${name} automation`,
+            triggers: [{
+              trigger: "state",
+              entity_id: [eventEntityId],
+              attribute: "event_type",
+              to: "single_tap",
+            }],
+            conditions: [],
+            actions: [],
+          }).then((resp) => {
+            const id = resp?.result;
+            window.open(id ? `/config/automation/edit/${id}` : "/config/automation/edit/new", "_blank");
+          }).catch(() => window.open("/config/automation/edit/new", "_blank"));
+        } else {
+          window.open("/config/automation/edit/new", "_blank");
+        }
       });
     }
   }

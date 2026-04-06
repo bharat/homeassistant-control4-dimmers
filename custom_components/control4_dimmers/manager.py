@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import mqtt
 from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     C4_MANUFACTURER_NAME,
@@ -17,6 +18,7 @@ from .const import (
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
+    DOMAIN,
     LOGGER,
     SLOT_COUNT,
 )
@@ -118,7 +120,7 @@ class Control4Manager:
         press_match = re.match(r"button_(\d+)_press", action_str)
         if press_match:
             slot_id = int(press_match.group(1))
-            self._fire_event_callback(device.ieee_address, slot_id, "pressed")
+            self.fire_button_event(device.ieee_address, slot_id, "pressed")
             # Auto-toggle for control_light buttons on physical press
             self._maybe_toggle_control_light(device.ieee_address, slot_id)
             return
@@ -127,7 +129,7 @@ class Control4Manager:
         release_match = re.match(r"button_(\d+)_release", action_str)
         if release_match:
             slot_id = int(release_match.group(1))
-            self._fire_event_callback(device.ieee_address, slot_id, "released")
+            self.fire_button_event(device.ieee_address, slot_id, "released")
             return
 
         # button_N_click_C  (from c4.dmx.cc)
@@ -136,11 +138,11 @@ class Control4Manager:
             slot_id = int(click_match.group(1))
             count = int(click_match.group(2))
             event_type = _click_count_to_event_type(count)
-            self._fire_event_callback(device.ieee_address, slot_id, event_type)
+            self.fire_button_event(device.ieee_address, slot_id, event_type)
             return
 
-    def _fire_event_callback(self, ieee: str, slot_id: int, event_type: str) -> None:
-        """Invoke the registered event callback for a slot, if any."""
+    def fire_button_event(self, ieee: str, slot_id: int, event_type: str) -> None:
+        """Fire a button event on the event entity for a slot."""
         cb = self._event_callbacks.get((ieee, slot_id))
         if cb is not None:
             cb(event_type)
@@ -219,7 +221,15 @@ class Control4Manager:
                 )
             else:
                 dev = self._devices[ieee]
-                dev.friendly_name = friendly_name
+                if dev.friendly_name != friendly_name:
+                    LOGGER.info(
+                        "Device renamed: %s -> %s (%s)",
+                        dev.friendly_name,
+                        friendly_name,
+                        ieee,
+                    )
+                    dev.friendly_name = friendly_name
+                    self._update_device_registry_name(ieee, friendly_name)
                 dev.model_id = model_id
 
         removed = set(self._devices.keys()) - seen
@@ -457,14 +467,14 @@ class Control4Manager:
                     )
 
         if not tracking:
-            LOGGER.warning("Light tracking: no control_light buttons found")
+            LOGGER.debug("Light tracking: no control_light buttons found")
             return
 
         async def _on_state_changed(event: Any) -> None:
             entity_id = event.data.get("entity_id")
             if entity_id not in tracking:
                 return
-            LOGGER.warning("LED tracking: state change detected for %s", entity_id)
+            LOGGER.debug("LED tracking: state change detected for %s", entity_id)
             new_state = event.data.get("new_state")
             if new_state is None:
                 return
@@ -486,11 +496,18 @@ class Control4Manager:
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)
-        LOGGER.warning(
+        LOGGER.debug(
             "Light tracking: set up for %d target entities: %s",
             len(tracking),
             list(tracking.keys()),
         )
+
+    def _update_device_registry_name(self, ieee: str, new_name: str) -> None:
+        """Update the HA device registry when a device is renamed in Z2M."""
+        registry = dr.async_get(self._hass)
+        device_entry = registry.async_get_device(identifiers={(DOMAIN, ieee)})
+        if device_entry and device_entry.name != new_name:
+            registry.async_update_device(device_entry.id, name=new_name)
 
     def _maybe_auto_detect(self, device: DeviceState) -> None:
         """Send c4_detect if this device hasn't been detected yet."""

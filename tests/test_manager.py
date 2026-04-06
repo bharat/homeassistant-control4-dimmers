@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -260,7 +260,13 @@ class TestManagerBridgeDevices:
             "zigbee2mqtt/bridge/devices",
             [make_bridge_device(friendly_name="Kitchen Updated")],
         )
-        await manager._handle_bridge_devices(msg2)
+        with patch(
+            "custom_components.control4_dimmers.manager.dr.async_get"
+        ) as mock_dr:
+            mock_registry = MagicMock()
+            mock_registry.async_get_device.return_value = None
+            mock_dr.return_value = mock_registry
+            await manager._handle_bridge_devices(msg2)
         assert manager.devices[IEEE_DIMMER].friendly_name == "Kitchen Updated"
 
     @pytest.mark.asyncio

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from custom_components.control4_dimmers.const import (
     BUTTON_EVENT_TYPES,
 )
 from custom_components.control4_dimmers.event import Control4ButtonEvent
-from custom_components.control4_dimmers.light import Control4DimmerLight
 from custom_components.control4_dimmers.manager import Control4Manager
 from custom_components.control4_dimmers.models import (
     DeviceConfig,
@@ -159,117 +156,6 @@ class TestControl4ButtonEvent:
         assert attrs["off_color"] == "#000000"
         assert attrs["behavior"] == "keypad"
         assert attrs["led_mode"] == "programmed"
-
-
-# ── Dimmer Light entity ──────────────────────────────────────────────
-
-
-class TestControl4DimmerLight:
-    """Tests for the dimmer load light entity."""
-
-    def _make_entity(
-        self,
-        manager: Control4Manager,
-        dimmer_state: DeviceState,
-    ) -> Control4DimmerLight:
-        manager._devices[IEEE_DIMMER] = dimmer_state
-        return Control4DimmerLight(
-            manager=manager,
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            model_id="C4-APD120",
-        )
-
-    def test_unique_id(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        assert entity.unique_id == f"{IEEE_DIMMER}_dimmer"
-
-    def test_name(self, manager: Control4Manager, dimmer_state: DeviceState) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        assert entity.name == "Load"
-
-    def test_initial_state_from_device(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        assert entity.is_on is True
-        assert entity.brightness == 200
-
-    def test_initial_state_off(
-        self,
-        manager: Control4Manager,
-    ) -> None:
-        off_state = DeviceState(
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            model_id="C4-APD120",
-            device_type="dimmer",
-            brightness=0,
-            state="OFF",
-        )
-        entity = self._make_entity(manager, off_state)
-        assert entity.is_on is False
-        assert entity.brightness == 0
-
-    def test_extra_state_attributes(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        assert entity.extra_state_attributes == {"ieee_address": IEEE_DIMMER}
-
-    @pytest.mark.asyncio
-    async def test_turn_on_sends_mqtt(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        entity.async_write_ha_state = MagicMock()
-        manager.async_send_mqtt = AsyncMock()
-        await entity.async_turn_on(brightness=180)
-        manager.async_send_mqtt.assert_awaited_once_with(
-            IEEE_DIMMER, {"state": "ON", "brightness": 180}
-        )
-        assert entity.is_on is True
-        assert entity.brightness == 180
-
-    @pytest.mark.asyncio
-    async def test_turn_on_default_brightness(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        entity.async_write_ha_state = MagicMock()
-        manager.async_send_mqtt = AsyncMock()
-        await entity.async_turn_on()
-        call_payload = manager.async_send_mqtt.call_args[0][1]
-        assert call_payload["brightness"] == 200
-
-    @pytest.mark.asyncio
-    async def test_turn_off_sends_mqtt(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        entity.async_write_ha_state = MagicMock()
-        manager.async_send_mqtt = AsyncMock()
-        await entity.async_turn_off()
-        manager.async_send_mqtt.assert_awaited_once_with(
-            IEEE_DIMMER, {"state": "OFF", "brightness": 0}
-        )
-        assert entity.is_on is False
-        assert entity.brightness == 0
-
-    def test_listener_updates_state(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        entity = self._make_entity(manager, dimmer_state)
-        entity.async_write_ha_state = MagicMock()
-        assert entity.is_on is True
-        dimmer_state.state = "OFF"
-        dimmer_state.brightness = 0
-        entity._on_manager_update()
-        assert entity.is_on is False
-        assert entity.brightness == 0
-        entity.async_write_ha_state.assert_called_once()
 
 
 # ── Sensor anchor entity ─────────────────────────────────────────────

@@ -35,7 +35,7 @@
  */
 
 import {light} from 'zigbee-herdsman-converters/lib/modernExtend';
-import {Light, Enum, access} from 'zigbee-herdsman-converters/lib/exposes';
+import {Enum, access} from 'zigbee-herdsman-converters/lib/exposes';
 
 // ═══════════════════════════════════════════════════════════════════════
 // C4 Text Protocol — Pure Logic (no Z2M dependencies)
@@ -464,19 +464,12 @@ async function readStoredColors(device, deviceType) {
     return state;
 }
 
-// ─── ModernExtend: C4 LED Light Entity ──────────────────────────────
-//
-// Creates a Home Assistant light entity with color picker for one LED
-// state (e.g. "button 1 LED when load is ON"). Each instance returns a
-// ModernExtend-compatible object with its own expose and toZigbee
-// converter, scoped to a specific endpoint name.
-//
-// The converter ordering matters: these must come BEFORE light() in the
-// extend array so the endpoint-restricted converters are checked first.
-// Commands to the default endpoint skip these (wrong endpoint) and fall
-// through to the unrestricted light() converter for the main dimmer.
+// LED colors and button config are managed entirely by the HA custom
+// component via c4_cmd / c4.dmx.led commands. The converter only needs
+// tzControl4Led/tzControl4Cmd in toZigbee for raw MQTT control.
 
-function c4LedLight({endpointName, ledId, modeCode, description}) {
+// @deprecated — removed from extend, kept for reference.
+function _unused_c4LedLight({endpointName, ledId, modeCode, description}) {
     const expose = new Light()
         .withBrightness()
         .withColor(['hs'])
@@ -587,7 +580,8 @@ function c4LedLight({endpointName, ledId, modeCode, description}) {
 // Used for button behavior (keypad/toggle/on/off) and LED mode
 // (follow_load/follow_connection/push_release/programmed).
 
-function c4ButtonConfig({endpointName, key, description, options}) {
+// @deprecated — removed from extend, kept for reference.
+function _unused_c4ButtonConfig({endpointName, key, description, options}) {
     const expose = new Enum(key, access.STATE_SET, options)
         .withEndpoint(endpointName)
         .withDescription(description);
@@ -1006,33 +1000,6 @@ const definition = {
     icon: 'https://i.postimg.cc/hPrYf7JD/dimmer.png',
     extend: [
         light({configureReporting: false}),
-        // Per-button LED color controls and config selects for all 6 slots
-        ...BUTTONS.flatMap(btn => [
-            c4LedLight({
-                endpointName: `button_${btn.idx}_on`,
-                ledId: btn.id,
-                modeCode: '03',
-                description: `Button ${btn.idx} LED color when load is ON`,
-            }),
-            c4LedLight({
-                endpointName: `button_${btn.idx}_off`,
-                ledId: btn.id,
-                modeCode: '04',
-                description: `Button ${btn.idx} LED color when load is OFF`,
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_behavior`,
-                description: `Button ${btn.idx} behavior`,
-                options: ['keypad', 'toggle_load', 'load_on', 'load_off'],
-            }),
-            c4ButtonConfig({
-                endpointName: `button_${btn.idx}`,
-                key: `button_${btn.idx}_led_mode`,
-                description: `Button ${btn.idx} LED mode`,
-                options: ['follow_load', 'follow_connection', 'push_release', 'programmed'],
-            }),
-        ]),
     ],
     exposes: [
         new Enum('action', access.STATE, ACTION_VALUES)

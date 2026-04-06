@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 PLATFORMS: list[Platform] = [
     Platform.EVENT,
-    Platform.LIGHT,
     Platform.SENSOR,
 ]
 
@@ -307,9 +306,25 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 def _find_light_entity(hass: HomeAssistant, ieee: str) -> str | None:
-    """Find the dimmer light entity for a device by IEEE address."""
+    """
+    Find the Z2M light entity for a C4 device.
+
+    MQTT+ approach: we don't create our own light entity. Z2M creates
+    one via auto-discovery (e.g. light.kitchen for a device named
+    "Kitchen"). We find it by matching the friendly_name attribute.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return None
+    manager: Control4Manager = runtime["manager"]
+    device = manager.devices.get(ieee)
+    if device is None:
+        return None
+
+    # Z2M light entities have friendly_name matching the device name
     for state in hass.states.async_all("light"):
-        if state.attributes.get("ieee_address") == ieee:
+        friendly = state.attributes.get("friendly_name", "")
+        if friendly == device.friendly_name:
             return state.entity_id
     return None
 

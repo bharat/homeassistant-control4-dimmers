@@ -420,13 +420,12 @@ class Control4Manager:
             for ieee, slot_id, on_color, off_color in tracking[entity_id]:
                 wire_id = slot_id - 1
                 color = on_color if is_on else off_color
-                # Send both on (03) and off (04) modes so the LED shows the
-                # correct color regardless of the device's LED mode setting.
-                for mode in ("03", "04"):
-                    await self.async_send_mqtt(
-                        ieee,
-                        {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode} {color}"},
-                    )
+                # Mode 05 = immediate override — forces the LED to display
+                # this color now, bypassing the on/off state logic.
+                await self.async_send_mqtt(
+                    ieee,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
+                )
                 LOGGER.warning(
                     "LED tracking: %s slot %d -> #%s (%s)",
                     ieee,

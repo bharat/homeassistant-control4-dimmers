@@ -335,10 +335,20 @@ async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _register_services(hass: HomeAssistant) -> None:
     """Register custom service calls."""
+
+    async def _wrap_set_led(call: ServiceCall) -> None:
+        await _svc_set_led(hass, call)
+
+    async def _wrap_press_button(call: ServiceCall) -> None:
+        await _svc_press_button(hass, call)
+
+    async def _wrap_set_device_type(call: ServiceCall) -> None:
+        await _svc_set_device_type(hass, call)
+
     hass.services.async_register(
         DOMAIN,
         "set_led",
-        lambda call: _svc_set_led(hass, call),
+        _wrap_set_led,
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,
@@ -351,7 +361,7 @@ async def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "press_button",
-        lambda call: _svc_press_button(hass, call),
+        _wrap_press_button,
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,
@@ -362,7 +372,7 @@ async def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "set_device_type",
-        lambda call: _svc_set_device_type(hass, call),
+        _wrap_set_device_type,
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,

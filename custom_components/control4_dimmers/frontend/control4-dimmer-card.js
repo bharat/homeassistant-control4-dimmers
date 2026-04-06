@@ -1830,7 +1830,8 @@ class Control4DimmerGrid extends HTMLElement {
     const title = this._config.title || "";
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; }
+        :host { display: block; overflow: hidden; }
+        ha-card { padding: 0; overflow: hidden; }
         .grid-title {
           font-size: 24px; font-weight: 400;
           color: var(--primary-text-color);
@@ -1843,8 +1844,10 @@ class Control4DimmerGrid extends HTMLElement {
           padding: 0 8px 8px;
         }
       </style>
-      ${title ? `<div class="grid-title">${title}</div>` : ""}
-      <div class="grid-container" id="grid"></div>
+      <ha-card>
+        ${title ? `<div class="grid-title">${title}</div>` : ""}
+        <div class="grid-container" id="grid"></div>
+      </ha-card>
     `;
 
     const container = this.shadowRoot.getElementById("grid");

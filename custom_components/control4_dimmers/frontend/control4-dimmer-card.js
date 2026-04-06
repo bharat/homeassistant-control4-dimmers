@@ -152,7 +152,7 @@ const CARD_STYLES = `
   .chassis {
     position: relative;
     width: 100%;
-    padding-bottom: 200%; /* 1:2 aspect ratio */
+    padding-bottom: min(200%, 400px); /* 1:2 aspect ratio, capped */
   }
   .chassis-inner {
     position: absolute;

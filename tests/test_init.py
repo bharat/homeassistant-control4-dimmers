@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.control4_dimmers import (
+    _find_light_entity,
     _get_runtime,
     async_setup,
     async_setup_entry,
@@ -114,3 +115,30 @@ class TestUnloadEntry:
 
         result = await async_unload_entry(mock_hass, mock_entry)
         assert result is False
+
+
+class TestFindLightEntity:
+    """Tests for the _find_light_entity helper."""
+
+    def test_finds_light_by_ieee(self, mock_hass: MagicMock) -> None:
+        light_state = MagicMock()
+        light_state.entity_id = "light.kitchen_load"
+        light_state.attributes = {"ieee_address": "0xAABB"}
+        mock_hass.states.async_all.return_value = [light_state]
+
+        result = _find_light_entity(mock_hass, "0xAABB")
+        assert result == "light.kitchen_load"
+
+    def test_returns_none_when_no_match(self, mock_hass: MagicMock) -> None:
+        light_state = MagicMock()
+        light_state.entity_id = "light.other"
+        light_state.attributes = {"ieee_address": "0xOTHER"}
+        mock_hass.states.async_all.return_value = [light_state]
+
+        result = _find_light_entity(mock_hass, "0xAABB")
+        assert result is None
+
+    def test_returns_none_when_no_lights(self, mock_hass: MagicMock) -> None:
+        mock_hass.states.async_all.return_value = []
+        result = _find_light_entity(mock_hass, "0xAABB")
+        assert result is None

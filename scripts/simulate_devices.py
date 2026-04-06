@@ -317,22 +317,44 @@ class C4Simulator:
 
         # Handle C4 commands: echo action events mimicking real hardware.
         c4_cmd = payload.get("c4_cmd", "")
-        if c4_cmd:
-            actions, btn_id = self._parse_c4_cmd(c4_cmd)
-            if actions:
-                self._apply_load_control(state, btn_id)
-                for action in actions:
-                    log.info("ACTION %s: %s", device_name, action)
-                    state["action"] = action
-                    self.publish_state(device_name)
-                state["action"] = ""
-                self.publish_state(device_name)
-                return
+        if c4_cmd and self._handle_c4_cmd(device_name, state, c4_cmd):
+            return
 
         for key, value in payload.items():
             state[key] = value
 
         self.publish_state(device_name)
+
+    def _handle_c4_cmd(self, device_name: str, state: dict, cmd: str) -> bool:
+        """Handle a c4_cmd and return True if consumed."""
+        # LED color command: c4.dmx.led <wire_id> <mode> <color>
+        led_match = re.match(
+            r"c4\.dmx\.led\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]{6})",
+            cmd,
+        )
+        if led_match:
+            wire_id = int(led_match.group(1), 16)
+            mode = led_match.group(2)
+            color = led_match.group(3).lower()
+            btn = wire_id + 1
+            suffix = "on" if mode == "03" else "off"
+            state[f"c4_led_{btn}_{suffix}"] = color
+            log.info("LED %s: button_%d_%s = #%s", device_name, btn, suffix, color)
+            self.publish_state(device_name)
+            return True
+
+        actions, btn_id = self._parse_c4_cmd(cmd)
+        if actions:
+            self._apply_load_control(state, btn_id)
+            for action in actions:
+                log.info("ACTION %s: %s", device_name, action)
+                state["action"] = action
+                self.publish_state(device_name)
+            state["action"] = ""
+            self.publish_state(device_name)
+            return True
+
+        return False
 
     @staticmethod
     def _parse_c4_cmd(cmd: str) -> tuple[list[str] | None, int | None]:

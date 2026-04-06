@@ -347,6 +347,11 @@ class Control4Manager:
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
         """Push slot LED colors and button config to the device via MQTT."""
+        LOGGER.debug(
+            "Pushing config for %d slots to %s",
+            len(config.slots),
+            state.friendly_name,
+        )
         for slot in config.slots:
             wire_id = slot.slot_id - 1
             # Set LED on-color (mode 03)

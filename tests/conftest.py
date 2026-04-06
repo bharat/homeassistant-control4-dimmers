@@ -121,18 +121,19 @@ def make_bridge_device(
     *,
     ieee: str = IEEE_DIMMER,
     friendly_name: str = "Kitchen",
-    model_id: str = "C4-APD120",
+    vendor: str = "Control4",
     manufacturer: str = "Control4",
-    model: str = "C4-APD120",
+    model: str = "C4-Zigbee",
 ) -> dict[str, Any]:
-    """Build a single Z2M bridge/devices entry."""
+    """Build a single Z2M bridge/devices entry matching real Z2M output."""
     return {
         "ieee_address": ieee,
         "friendly_name": friendly_name,
-        "model_id": model_id,
-        "type": "EndDevice",
+        "manufacturer": manufacturer,
+        "type": "Router",
+        "supported": True,
         "definition": {
             "model": model,
-            "manufacturer": manufacturer,
+            "vendor": vendor,
         },
     }

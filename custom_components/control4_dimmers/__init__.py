@@ -259,7 +259,7 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     ieee = state.attributes.get("ieee_address")
     slot_id = state.attributes.get("slot_id")
     behavior = state.attributes.get("behavior", "keypad")
-    LOGGER.info(
+    LOGGER.debug(
         "press_button: entity=%s ieee=%s slot=%s behavior=%s",
         entity_id,
         ieee,
@@ -276,20 +276,16 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
 
     if behavior in ("load_on", "load_off", "toggle_load"):
         light_entity_id = _find_light_entity(hass, ieee)
-        LOGGER.info("press_button: light_entity=%s", light_entity_id)
         if not light_entity_id:
             LOGGER.error("press_button: no light entity for %s", ieee)
             return
 
         service_data = {"entity_id": light_entity_id}
         if behavior == "load_on":
-            LOGGER.info("press_button: calling light.turn_on on %s", light_entity_id)
             await hass.services.async_call("light", "turn_on", service_data)
         elif behavior == "load_off":
-            LOGGER.info("press_button: calling light.turn_off on %s", light_entity_id)
             await hass.services.async_call("light", "turn_off", service_data)
         elif behavior == "toggle_load":
-            LOGGER.info("press_button: calling light.toggle on %s", light_entity_id)
             await hass.services.async_call("light", "toggle", service_data)
     else:
         # Keypad button — fire the event entity

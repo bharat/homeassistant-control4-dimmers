@@ -39,13 +39,24 @@ def _make_mqtt_msg(topic: str, payload: Any) -> MagicMock:
 class TestIsControl4Device:
     """Tests for the _is_control4_device helper."""
 
-    def test_recognises_by_manufacturer(self) -> None:
+    def test_recognises_by_definition_vendor(self) -> None:
+        """Real Z2M uses definition.vendor, not definition.manufacturer."""
+        info = {"definition": {"vendor": "Control4", "model": "C4-Zigbee"}}
+        assert _is_control4_device(info) is True
+
+    def test_recognises_by_definition_manufacturer(self) -> None:
+        """Legacy/fallback: check definition.manufacturer too."""
         info = {"definition": {"manufacturer": "Control4", "model": "CustomModel"}}
         assert _is_control4_device(info) is True
 
-    def test_recognises_by_model(self) -> None:
+    def test_recognises_by_top_level_manufacturer(self) -> None:
+        """Real Z2M puts manufacturer at the top level."""
+        info = {"manufacturer": "Control4", "definition": {}}
+        assert _is_control4_device(info) is True
+
+    def test_recognises_by_definition_model(self) -> None:
         for model in C4_MODEL_IDS:
-            info = {"definition": {"manufacturer": "", "model": model}}
+            info = {"definition": {"vendor": "", "model": model}}
             assert _is_control4_device(info)
 
     def test_recognises_by_model_id(self) -> None:
@@ -56,7 +67,8 @@ class TestIsControl4Device:
     def test_rejects_non_c4(self) -> None:
         info = {
             "model_id": "TRADFRI",
-            "definition": {"manufacturer": "IKEA", "model": "E1766"},
+            "manufacturer": "IKEA",
+            "definition": {"vendor": "IKEA", "model": "E1766"},
         }
         assert _is_control4_device(info) is False
 

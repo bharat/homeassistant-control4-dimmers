@@ -13,7 +13,7 @@ DEVICE="${1:-}"
 Z2M_COMPOSE="/data/misc/menalto-services"
 HA_COMPOSE="/data/misc/homeassistant"
 
-FILTER_Z2M='\[C4 |interview|permit_join|c552b0|Control4|c4_detect|c4_identify|43981'
+FILTER_Z2M='\[C4 |interview|permit_join|Control4|c4_detect|c4_identify'
 FILTER_HA='control4_dimmers|c4_detect'
 
 if [ -n "$DEVICE" ]; then

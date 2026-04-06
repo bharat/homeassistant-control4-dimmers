@@ -20,5 +20,9 @@ config/*
 # Claude Code
 .claude/
 
+# macOS / temp
+.DS_Store
+tmp/
+
 # Cursor
 .cursor/rules/No-*.mdc

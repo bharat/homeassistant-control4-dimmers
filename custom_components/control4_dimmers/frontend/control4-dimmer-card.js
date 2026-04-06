@@ -1741,10 +1741,111 @@ class Control4CardEditor extends HTMLElement {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+ *  GRID CARD — All dimmers in one card
+ * ══════════════════════════════════════════════════════════════════════ */
+
+const GRID_TAG = "control4-dimmer-grid";
+
+class Control4DimmerGrid extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null;
+    this._config = {};
+    this._cards = new Map(); // entity_id -> card element
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._updateCards();
+  }
+
+  setConfig(config) {
+    this._config = config || {};
+  }
+
+  getCardSize() { return 6; }
+  static getStubConfig() { return {}; }
+
+  _getC4Entities() {
+    if (!this._hass) return [];
+    return Object.keys(this._hass.states)
+      .filter((eid) => {
+        if (!eid.startsWith("sensor.")) return false;
+        const attrs = this._hass.states[eid]?.attributes;
+        return attrs?.ieee_address != null && (attrs?.device_type != null || attrs?.detected_type != null);
+      })
+      .sort();
+  }
+
+  _updateCards() {
+    if (!this._hass || !this.shadowRoot) return;
+
+    const entities = this._getC4Entities();
+    const currentIds = new Set(this._cards.keys());
+    const newIds = new Set(entities);
+
+    // Add new cards
+    for (const eid of entities) {
+      if (!this._cards.has(eid)) {
+        const card = document.createElement(CARD_TAG);
+        card.setConfig({ entity: eid, faceplate_color: this._config.faceplate_color });
+        this._cards.set(eid, card);
+      }
+    }
+
+    // Remove stale cards
+    for (const eid of currentIds) {
+      if (!newIds.has(eid)) {
+        this._cards.delete(eid);
+      }
+    }
+
+    // Update hass on all cards
+    for (const card of this._cards.values()) {
+      card.hass = this._hass;
+    }
+
+    this._render();
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+
+    const maxCols = this._config.columns || 4;
+
+    // Only rebuild DOM if card count changed
+    const grid = this.shadowRoot.getElementById("grid");
+    if (grid && grid.childElementCount === this._cards.size) {
+      return; // Cards already in DOM, hass updates flow via set hass
+    }
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        .grid-container {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+          max-width: ${maxCols * 200}px;
+          gap: 8px;
+        }
+      </style>
+      <div class="grid-container" id="grid"></div>
+    `;
+
+    const container = this.shadowRoot.getElementById("grid");
+    for (const card of this._cards.values()) {
+      container.appendChild(card);
+    }
+  }
+}
+
 /* ────────────────────── registration ────────────────────── */
 
 customElements.define(CARD_TAG, Control4Card);
 customElements.define(EDITOR_TAG, Control4CardEditor);
+customElements.define(GRID_TAG, Control4DimmerGrid);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
@@ -1752,6 +1853,12 @@ window.customCards.push({
   name: "Control4 Dimmers",
   description: "Interactive control and configuration for Control4 dimmers and keypads.",
   preview: true,
+});
+window.customCards.push({
+  type: GRID_TAG,
+  name: "Control4 Dimmer Grid",
+  description: "All Control4 dimmers and keypads in a single grid.",
+  preview: false,
 });
 
 console.info(

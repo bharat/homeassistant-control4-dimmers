@@ -342,6 +342,7 @@ const EDITOR_STYLES = `
   }
   .config-row input[type="text"]:focus,
   .config-row select:focus { border-color: var(--primary-color); }
+  .config-row ha-entity-picker { flex: 1; min-width: 0; }
   .config-row input[type="color"] {
     width: 32px;
     height: 26px;
@@ -1289,7 +1290,7 @@ class Control4CardEditor extends HTMLElement {
           </div>
         `}
 
-        ${eventEntityId ? `
+        ${eventEntityId && slot.behavior !== "control_light" ? `
           <div class="automations-section">
             <div class="section-title">${slot.name || `Button ${slot.slot_id}`} Automations</div>
             <div class="event-entity-id">${eventEntityId}</div>

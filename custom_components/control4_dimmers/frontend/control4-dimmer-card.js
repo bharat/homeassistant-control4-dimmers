@@ -1746,6 +1746,7 @@ class Control4CardEditor extends HTMLElement {
  * ══════════════════════════════════════════════════════════════════════ */
 
 const GRID_TAG = "control4-dimmer-grid";
+const GRID_EDITOR_TAG = "control4-dimmer-grid-editor";
 
 class Control4DimmerGrid extends HTMLElement {
   constructor() {
@@ -1763,9 +1764,14 @@ class Control4DimmerGrid extends HTMLElement {
 
   setConfig(config) {
     this._config = config || {};
+    // Re-apply faceplate color to existing cards
+    for (const [eid, card] of this._cards) {
+      card.setConfig({ entity: eid, faceplate_color: this._config.faceplate_color });
+    }
   }
 
   getCardSize() { return 6; }
+  static getConfigElement() { return document.createElement(GRID_EDITOR_TAG); }
   static getStubConfig() { return {}; }
 
   _getC4Entities() {
@@ -1786,7 +1792,6 @@ class Control4DimmerGrid extends HTMLElement {
     const currentIds = new Set(this._cards.keys());
     const newIds = new Set(entities);
 
-    // Add new cards
     for (const eid of entities) {
       if (!this._cards.has(eid)) {
         const card = document.createElement(CARD_TAG);
@@ -1795,14 +1800,10 @@ class Control4DimmerGrid extends HTMLElement {
       }
     }
 
-    // Remove stale cards
     for (const eid of currentIds) {
-      if (!newIds.has(eid)) {
-        this._cards.delete(eid);
-      }
+      if (!newIds.has(eid)) this._cards.delete(eid);
     }
 
-    // Update hass on all cards
     for (const card of this._cards.values()) {
       card.hass = this._hass;
     }
@@ -1814,12 +1815,8 @@ class Control4DimmerGrid extends HTMLElement {
     if (!this.shadowRoot) return;
 
     const maxCols = this._config.columns || 4;
-
-    // Only rebuild DOM if card count changed
     const grid = this.shadowRoot.getElementById("grid");
-    if (grid && grid.childElementCount === this._cards.size) {
-      return; // Cards already in DOM, hass updates flow via set hass
-    }
+    if (grid && grid.childElementCount === this._cards.size) return;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -1841,11 +1838,166 @@ class Control4DimmerGrid extends HTMLElement {
   }
 }
 
+/* ── Grid Editor ── */
+
+class Control4DimmerGridEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._selectedTab = 0;
+    this._subEditor = null; // reuse the dimmer card editor
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._subEditor) this._subEditor.hass = hass;
+    if (!this.shadowRoot.getElementById("tabs")) this._render();
+  }
+
+  setConfig(config) {
+    this._config = config || {};
+    this._render();
+  }
+
+  _getC4Entities() {
+    if (!this._hass) return [];
+    return Object.keys(this._hass.states)
+      .filter((eid) => {
+        if (!eid.startsWith("sensor.")) return false;
+        const attrs = this._hass.states[eid]?.attributes;
+        return attrs?.ieee_address != null && (attrs?.device_type != null || attrs?.detected_type != null);
+      })
+      .sort()
+      .map((eid) => ({
+        entity_id: eid,
+        name: this._hass.states[eid]?.attributes?.friendly_name || eid,
+      }));
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._hass) return;
+    const entities = this._getC4Entities();
+    if (this._selectedTab >= entities.length) this._selectedTab = 0;
+    const selected = entities[this._selectedTab];
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; }
+        .grid-config { margin-bottom: 16px; }
+        .grid-config label {
+          font-size: 13px; font-weight: 500;
+          color: var(--secondary-text-color);
+          margin-right: 8px;
+        }
+        .faceplate-swatches {
+          display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0;
+        }
+        .swatch {
+          width: 24px; height: 24px; border-radius: 50%;
+          border: 2px solid var(--divider-color);
+          cursor: pointer; padding: 0;
+          transition: border-color 0.15s ease, transform 0.1s ease;
+        }
+        .swatch:hover { transform: scale(1.15); }
+        .swatch.active {
+          border-color: var(--primary-color);
+          box-shadow: 0 0 0 2px var(--primary-color);
+        }
+        .tabs {
+          display: flex; gap: 0; border-bottom: 2px solid var(--divider-color);
+          margin-bottom: 12px; overflow-x: auto;
+        }
+        .tab {
+          padding: 8px 14px; cursor: pointer;
+          font-size: 13px; font-weight: 500;
+          color: var(--secondary-text-color);
+          border-bottom: 2px solid transparent;
+          margin-bottom: -2px; white-space: nowrap;
+          background: none; border-top: none; border-left: none; border-right: none;
+          font-family: inherit;
+        }
+        .tab:hover { color: var(--primary-text-color); }
+        .tab.active {
+          color: var(--primary-color);
+          border-bottom-color: var(--primary-color);
+        }
+        .sub-editor-container { min-height: 200px; }
+        .no-devices {
+          color: var(--secondary-text-color);
+          font-size: 14px; padding: 16px; text-align: center;
+        }
+      </style>
+
+      <div class="grid-config">
+        <label>Color</label>
+        <div class="faceplate-swatches">
+          ${FACEPLATE_COLORS.map((c) => `
+            <button class="swatch ${this._config.faceplate_color === c.value ? "active" : ""}"
+              style="background:#${c.value}" data-color="${c.value}" title="${c.label}"></button>
+          `).join("")}
+        </div>
+      </div>
+
+      ${entities.length === 0 ? `
+        <div class="no-devices">No Control4 devices found.</div>
+      ` : `
+        <div class="tabs" id="tabs">
+          ${entities.map((e, i) => `
+            <button class="tab ${i === this._selectedTab ? "active" : ""}" data-idx="${i}">
+              ${e.name}
+            </button>
+          `).join("")}
+        </div>
+        <div class="sub-editor-container" id="sub-editor"></div>
+      `}
+    `;
+
+    this._attachListeners(entities);
+
+    // Mount the sub-editor for the selected device
+    if (selected) {
+      const container = this.shadowRoot.getElementById("sub-editor");
+      if (container) {
+        this._subEditor = document.createElement(EDITOR_TAG);
+        this._subEditor.hass = this._hass;
+        this._subEditor.setConfig({ entity: selected.entity_id });
+        // Suppress config-changed from sub-editor (grid manages entities)
+        this._subEditor.addEventListener("config-changed", (e) => e.stopPropagation());
+        container.appendChild(this._subEditor);
+      }
+    }
+  }
+
+  _attachListeners(entities) {
+    const root = this.shadowRoot;
+
+    // Faceplate swatches
+    for (const swatch of root.querySelectorAll(".swatch")) {
+      swatch.addEventListener("click", () => {
+        this._config = { ...this._config, faceplate_color: swatch.dataset.color };
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config } }));
+        this._render();
+      });
+    }
+
+    // Tabs
+    for (const tab of root.querySelectorAll(".tab")) {
+      tab.addEventListener("click", () => {
+        this._selectedTab = parseInt(tab.dataset.idx, 10);
+        this._render();
+      });
+    }
+  }
+}
+
 /* ────────────────────── registration ────────────────────── */
 
 customElements.define(CARD_TAG, Control4Card);
 customElements.define(EDITOR_TAG, Control4CardEditor);
 customElements.define(GRID_TAG, Control4DimmerGrid);
+customElements.define(GRID_EDITOR_TAG, Control4DimmerGridEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({

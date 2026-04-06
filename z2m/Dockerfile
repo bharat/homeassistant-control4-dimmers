@@ -14,7 +14,6 @@ FROM koenkk/zigbee2mqtt:latest
 
 # ── Copy the Control4 converter ──────────────────────────────────────
 COPY converters/control4.mjs /app/data/external_converters/control4.mjs
-COPY converters/c4-protocol.mjs /app/data/external_converters/c4-protocol.mjs
 
 # ── Patch zigbee-herdsman to accept C4 profile (0xC25C) ─────────────
 # The EZSP adapter silently drops messages on non-standard Zigbee profiles.

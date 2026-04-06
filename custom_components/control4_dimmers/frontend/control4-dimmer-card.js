@@ -56,9 +56,21 @@ const FACEPLATE_COLORS = [
   { value: "d9caa6", label: "Ivory" },
   { value: "eee7de", label: "Light Almond" },
   { value: "333335", label: "Midnight Black" },
-  { value: "ffffff", label: "Snow White" },
   { value: "ffffff", label: "White" },
 ];
+
+/** Compute a button highlight color that's slightly lighter/brighter than the faceplate. */
+function faceplateButtonColor(hex) {
+  if (!hex) return null;
+  const r = parseInt(hex.substring(0, 2), 16) || 0;
+  const g = parseInt(hex.substring(2, 4), 16) || 0;
+  const b = parseInt(hex.substring(4, 6), 16) || 0;
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  // Dark faceplates: lighten. Light faceplates: darken slightly.
+  const factor = lum < 0.5 ? 0.15 : -0.06;
+  const clamp = (v) => Math.min(255, Math.max(0, Math.round(v + factor * 255)));
+  return `${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
+}
 
 const DEVICE_TYPES = {
   dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [2, 5],        fixedLayout: true },
@@ -190,8 +202,8 @@ const CARD_STYLES = `
     justify-content: center;
     cursor: pointer;
     user-select: none;
-    background: var(--card-background-color, #fff);
-    border: 1px solid var(--divider-color);
+    background: var(--c4-btn-bg, var(--card-background-color, #fff));
+    border: 1px solid var(--c4-btn-border, var(--divider-color));
     margin-top: 2px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
@@ -211,10 +223,6 @@ const CARD_STYLES = `
   .chassis-btn.size-5 { flex: 5; }
   .chassis-btn.size-6 { flex: 6; }
 
-  .dark-faceplate .chassis-btn {
-    background: rgba(255,255,255,0.1);
-    border-color: rgba(255,255,255,0.2);
-  }
   .dark-faceplate .btn-label {
     color: rgba(255,255,255,0.9);
   }
@@ -331,8 +339,9 @@ const EDITOR_STYLES = `
 
   .faceplate-swatches {
     display: flex;
-    gap: 4px;
+    gap: 6px;
     flex-wrap: wrap;
+    padding: 4px 0;
   }
   .swatch {
     width: 24px;
@@ -1013,7 +1022,7 @@ class Control4Card extends HTMLElement {
             <div class="name">${dev.friendly_name}</div>
           </div>
 
-          <div class="chassis${(() => { const c = this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${this._config.faceplate_color ? `background:#${this._config.faceplate_color}` : ""}">
+          <div class="chassis${(() => { const c = this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${(() => { const c = this._config.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); return `background:#${c}; --c4-btn-bg:#${bc}; --c4-btn-border:rgba(${parseInt(c,16) < 0x808080 ? "255,255,255,0.15" : "0,0,0,0.1"})`; })()}">
             ${(() => {
               // Dimmer (2 buttons) should visually match 6-slot keypad height
               const totalSlots = layout.reduce((sum, btn) => sum + btn.size, 0);
@@ -1379,7 +1388,7 @@ class Control4CardEditor extends HTMLElement {
           </select>
         </div>
         <div class="editor-section">
-          <span class="section-label">Faceplate</span>
+          <span class="section-label">Color</span>
           <div class="faceplate-swatches">
             ${FACEPLATE_COLORS.map((c) => `
               <button class="swatch ${this._config.faceplate_color === c.value ? "active" : ""}"

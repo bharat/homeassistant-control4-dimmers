@@ -1089,6 +1089,7 @@ class Control4CardEditor extends HTMLElement {
     this._saving = false;
     this._lastDetectedType = null;
     this._editingAction = null; // which action field is being edited
+    this._embedded = false; // true when used inside grid editor
   }
 
   set hass(hass) {
@@ -1361,6 +1362,7 @@ class Control4CardEditor extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${EDITOR_STYLES}</style>
 
+      ${!this._embedded ? `
       <div class="picker-row">
         <div class="editor-section entity-picker">
           <span class="section-label">Device</span>
@@ -1374,8 +1376,10 @@ class Control4CardEditor extends HTMLElement {
           </select>
           ${entities.length === 0 ? `<p class="hint">No Control4 devices found. Ensure the integration is set up and Z2M is running.</p>` : ""}
         </div>
+      ` : ""}
 
       ${dev ? `
+        ${!this._embedded ? `
         <div class="editor-section">
           <span class="section-label">Type</span>
           <select class="full-width-select" id="type-select">
@@ -1395,8 +1399,9 @@ class Control4CardEditor extends HTMLElement {
             `).join("")}
           </div>
         </div>
+        ` : ""}
       ` : ""}
-      </div>
+      ${!this._embedded ? `</div>` : ""}
 
       ${dev ? `
 
@@ -1818,16 +1823,23 @@ class Control4DimmerGrid extends HTMLElement {
     const grid = this.shadowRoot.getElementById("grid");
     if (grid && grid.childElementCount === this._cards.size) return;
 
+    const title = this._config.title || "";
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
+        .grid-title {
+          font-size: 24px; font-weight: 400;
+          color: var(--primary-text-color);
+          padding: 16px 16px 8px;
+        }
         .grid-container {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-          max-width: ${maxCols * 200}px;
+          grid-template-columns: repeat(${maxCols}, 1fr);
           gap: 8px;
+          padding: 0 8px 8px;
         }
       </style>
+      ${title ? `<div class="grid-title">${title}</div>` : ""}
       <div class="grid-container" id="grid"></div>
     `;
 
@@ -1885,12 +1897,21 @@ class Control4DimmerGridEditor extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
-        .grid-config { margin-bottom: 16px; }
-        .grid-config label {
-          font-size: 13px; font-weight: 500;
-          color: var(--secondary-text-color);
-          margin-right: 8px;
+        .config-row {
+          display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
         }
+        .config-row label {
+          font-size: 13px; font-weight: 500;
+          color: var(--secondary-text-color); width: 68px; flex-shrink: 0;
+        }
+        .config-row input[type="text"], .config-row input[type="number"] {
+          flex: 1; padding: 6px 8px; border-radius: 6px;
+          border: 1px solid var(--divider-color);
+          background: var(--input-fill-color, var(--card-background-color, #fff));
+          color: var(--primary-text-color); font-size: 14px; font-family: inherit;
+          outline: none; min-width: 0;
+        }
+        .config-row input:focus { border-color: var(--primary-color); }
         .faceplate-swatches {
           display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0;
         }
@@ -1910,8 +1931,8 @@ class Control4DimmerGridEditor extends HTMLElement {
           margin-bottom: 12px; overflow-x: auto;
         }
         .tab {
-          padding: 8px 14px; cursor: pointer;
-          font-size: 13px; font-weight: 500;
+          padding: 8px 12px; cursor: pointer;
+          font-size: 13px; font-weight: 500; min-width: 32px; text-align: center;
           color: var(--secondary-text-color);
           border-bottom: 2px solid transparent;
           margin-bottom: -2px; white-space: nowrap;
@@ -1923,6 +1944,10 @@ class Control4DimmerGridEditor extends HTMLElement {
           color: var(--primary-color);
           border-bottom-color: var(--primary-color);
         }
+        .device-name {
+          font-size: 14px; font-weight: 500; color: var(--primary-text-color);
+          margin-bottom: 8px;
+        }
         .sub-editor-container { min-height: 200px; }
         .no-devices {
           color: var(--secondary-text-color);
@@ -1930,7 +1955,15 @@ class Control4DimmerGridEditor extends HTMLElement {
         }
       </style>
 
-      <div class="grid-config">
+      <div class="config-row">
+        <label>Title</label>
+        <input type="text" id="grid-title" value="${this._config.title || ""}" placeholder="Control4 Dimmers">
+      </div>
+      <div class="config-row">
+        <label>Columns</label>
+        <input type="number" id="grid-columns" value="${this._config.columns || 4}" min="1" max="6" style="width:60px;flex:none">
+      </div>
+      <div class="config-row">
         <label>Color</label>
         <div class="faceplate-swatches">
           ${FACEPLATE_COLORS.map((c) => `
@@ -1945,44 +1978,59 @@ class Control4DimmerGridEditor extends HTMLElement {
       ` : `
         <div class="tabs" id="tabs">
           ${entities.map((e, i) => `
-            <button class="tab ${i === this._selectedTab ? "active" : ""}" data-idx="${i}">
-              ${e.name}
+            <button class="tab ${i === this._selectedTab ? "active" : ""}" data-idx="${i}" title="${e.name}">
+              ${i + 1}
             </button>
           `).join("")}
         </div>
+        <div class="device-name">${selected?.name || ""}</div>
         <div class="sub-editor-container" id="sub-editor"></div>
       `}
     `;
 
-    this._attachListeners(entities);
+    this._attachListeners();
 
     // Mount the sub-editor for the selected device
     if (selected) {
       const container = this.shadowRoot.getElementById("sub-editor");
       if (container) {
         this._subEditor = document.createElement(EDITOR_TAG);
+        this._subEditor._embedded = true;
         this._subEditor.hass = this._hass;
         this._subEditor.setConfig({ entity: selected.entity_id });
-        // Suppress config-changed from sub-editor (grid manages entities)
         this._subEditor.addEventListener("config-changed", (e) => e.stopPropagation());
         container.appendChild(this._subEditor);
       }
     }
   }
 
-  _attachListeners(entities) {
+  _fireConfigChanged() {
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config } }));
+  }
+
+  _attachListeners() {
     const root = this.shadowRoot;
 
-    // Faceplate swatches
+    const titleInput = root.getElementById("grid-title");
+    if (titleInput) titleInput.addEventListener("input", (e) => {
+      this._config = { ...this._config, title: e.target.value };
+      this._fireConfigChanged();
+    });
+
+    const colInput = root.getElementById("grid-columns");
+    if (colInput) colInput.addEventListener("input", (e) => {
+      this._config = { ...this._config, columns: parseInt(e.target.value, 10) || 4 };
+      this._fireConfigChanged();
+    });
+
     for (const swatch of root.querySelectorAll(".swatch")) {
       swatch.addEventListener("click", () => {
         this._config = { ...this._config, faceplate_color: swatch.dataset.color };
-        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config } }));
+        this._fireConfigChanged();
         this._render();
       });
     }
 
-    // Tabs
     for (const tab of root.querySelectorAll(".tab")) {
       tab.addEventListener("click", () => {
         this._selectedTab = parseInt(tab.dataset.idx, 10);

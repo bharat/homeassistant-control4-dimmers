@@ -7,6 +7,17 @@
  * Config: { type: "custom:control4-dimmer-card", entity: "sensor.xxx" }
  */
 
+// Ensure HA's entity picker component is loaded (it's lazily loaded)
+(async () => {
+  if (customElements.get("ha-entity-picker")) return;
+  const helpers = await (window.loadCardHelpers?.() ?? Promise.resolve());
+  if (helpers?.createCardElement) {
+    // Creating a temporary entities card triggers HA to load its dependencies
+    const el = helpers.createCardElement({type: "entities", entities: []});
+    if (el?.constructor?.getConfigElement) await el.constructor.getConfigElement();
+  }
+})();
+
 const DOMAIN = "control4_dimmers";
 const CARD_TAG = "control4-dimmer-card";
 const EDITOR_TAG = "control4-dimmer-card-editor";

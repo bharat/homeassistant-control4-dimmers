@@ -290,10 +290,12 @@ async def _press_control_light(hass: HomeAssistant, ieee: str, slot_id: int) -> 
     if not target:
         LOGGER.error("press_button: no target_entity_id for %s slot %s", ieee, slot_id)
         return
-    await hass.services.async_call("light", "toggle", {"entity_id": target})
+    # Send optimistic LED FIRST (instant), then toggle (slow Zigbee round trip).
+    # This matches the physical button path which fires both in parallel.
     runtime = _get_runtime(hass)
     if runtime:
         await runtime["manager"].async_optimistic_led(ieee, slot_id)
+    await hass.services.async_call("light", "toggle", {"entity_id": target})
 
 
 async def _press_load_button(hass: HomeAssistant, ieee: str, behavior: str) -> None:

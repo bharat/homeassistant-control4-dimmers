@@ -696,12 +696,13 @@ class Control4Card extends HTMLElement {
         type: `${DOMAIN}/device_by_entity`,
         entity_id: this._config.entity,
       });
+      const oldType = this._getEffectiveType();
       this._deviceInfo = info;
-      const effectiveType = this._getEffectiveType();
+      const newType = this._getEffectiveType();
       if (info.config?.slots?.length > 0) {
         this._slots = JSON.parse(JSON.stringify(info.config.slots));
       } else {
-        this._slots = defaultSlotsForType(effectiveType);
+        this._slots = defaultSlotsForType(newType);
       }
       if (info.ieee_address) {
         try {
@@ -712,7 +713,10 @@ class Control4Card extends HTMLElement {
           this._eventEntities = evts || {};
         } catch { /* non-critical */ }
       }
-      this._render();
+      // Only full re-render if device type changed or first load
+      if (oldType !== newType || !this.shadowRoot?.querySelector(".chassis-btn")) {
+        this._render();
+      }
     } catch (err) {
       console.error("Control4 Card: failed to fetch device", err);
     }

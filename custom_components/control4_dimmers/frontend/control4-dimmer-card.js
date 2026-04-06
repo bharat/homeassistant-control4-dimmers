@@ -107,7 +107,6 @@ const DEFAULT_COLORS = { on: "0000ff", off: "000000" };
 const CARD_STYLES = `
   :host {
     display: block;
-    --c4-slot-height: 44px;
   }
 
   ha-card { padding: 16px; }
@@ -148,15 +147,26 @@ const CARD_STYLES = `
     font-size: 0.9rem;
   }
 
-  /* ── Chassis (full-width keypad) ── */
+  /* ── Chassis: 1:2 aspect ratio (outlet slot proportions) ── */
 
   .chassis {
+    position: relative;
+    width: 100%;
+    padding-bottom: 200%; /* 1:2 aspect ratio */
+  }
+  .chassis-inner {
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    border-radius: 12px;
+    background: var(--secondary-background-color);
+    padding: 6px;
   }
   .chassis-btn {
-    height: var(--c4-slot-height);
+    flex: 1;
+    min-height: 0;
     border-radius: 10px;
     display: flex;
     align-items: center;
@@ -165,8 +175,8 @@ const CARD_STYLES = `
     font-weight: 400;
     color: var(--primary-text-color);
     user-select: none;
-    background: var(--secondary-background-color);
-    border: none;
+    background: var(--card-background-color, #fff);
+    border: 1px solid var(--divider-color);
     padding: 0 14px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
@@ -179,8 +189,8 @@ const CARD_STYLES = `
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
   }
-  .chassis-btn.size-2 { height: calc(var(--c4-slot-height) * 2 + 4px); }
-  .chassis-btn.size-3 { height: calc(var(--c4-slot-height) * 3 + 8px); }
+  .chassis-btn.size-2 { flex: 2; }
+  .chassis-btn.size-3 { flex: 3; }
 
   .chassis-btn .btn-label {
     white-space: nowrap;
@@ -900,16 +910,18 @@ class Control4Card extends HTMLElement {
           </h1>
 
           <div class="chassis">
-            ${layout.map((btn) => {
-              const cfg = btn.slots[0];
-              const color = ledColor(cfg, devState);
-              return `
-                <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
-                  <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                  <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
-                </div>
-              `;
-            }).join("")}
+            <div class="chassis-inner">
+              ${layout.map((btn) => {
+                const cfg = btn.slots[0];
+                const color = ledColor(cfg, devState);
+                return `
+                  <div class="chassis-btn size-${btn.size}" data-slot="${btn.startSlot}">
+                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
           </div>
         `}
       </ha-card>

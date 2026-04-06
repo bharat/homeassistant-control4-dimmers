@@ -1351,15 +1351,22 @@ class Control4CardEditor extends HTMLElement {
             <ha-entity-picker id="led-track-entity" allow-custom-entity></ha-entity-picker>
           </div>
         ` : ""}
-        <div class="config-row">
-          <label>Colors</label>
-          <div class="color-pair">
-            <span class="color-label">On:</span>
-            <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
-            <span class="color-label">Off:</span>
+        ${slot.led_mode === "programmed" && slot.led_track_entity_id ? `
+          <div class="config-row">
+            <label>Colors</label>
+            <div class="color-pair">
+              <span class="color-label">On:</span>
+              <input type="color" id="slot-on-color" value="${hexToInputColor(slot.led_on_color)}">
+              <span class="color-label">Off:</span>
+              <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
+            </div>
+          </div>
+        ` : `
+          <div class="config-row">
+            <label>Color</label>
             <input type="color" id="slot-off-color" value="${hexToInputColor(slot.led_off_color)}">
           </div>
-        </div>
+        `}
       </div>
     `;
   }

@@ -749,6 +749,30 @@ class Control4Card extends HTMLElement {
 
   _updateControlLightLeds(hass) {
     if (!this._slots || !this.shadowRoot) return;
+
+    // Update follow_load LEDs by checking the device's own light state
+    if (this._deviceInfo) {
+      const lightId = this._findLightEntityId();
+      if (lightId) {
+        const lightState = hass.states[lightId];
+        const isOn = lightState?.state === "on";
+        for (const slot of this._slots) {
+          if (slot.led_mode !== "follow_load") continue;
+          const color = isOn
+            ? (slot.led_on_color || "ffffff")
+            : (slot.led_off_color || "000000");
+          const btn = this.shadowRoot.querySelector(
+            `.chassis-btn[data-slot="${slot.slot_id}"]`
+          );
+          if (btn) {
+            const led = btn.querySelector(".led");
+            if (led) led.style.background = `#${color}`;
+          }
+        }
+      }
+    }
+
+    // Update programmed/tracked LEDs
     for (const slot of this._slots) {
       if (!slot.led_track_entity_id) continue;
       const targetState = hass.states[slot.led_track_entity_id];
@@ -875,9 +899,9 @@ class Control4Card extends HTMLElement {
 
   _findLightEntityId() {
     if (!this._hass || !this._deviceInfo) return null;
-    const ieee = this._deviceInfo.ieee_address;
+    const friendlyName = this._deviceInfo.friendly_name;
     for (const [eid, state] of Object.entries(this._hass.states)) {
-      if (eid.startsWith("light.") && state.attributes?.ieee_address === ieee) {
+      if (eid.startsWith("light.") && state.attributes?.friendly_name === friendlyName) {
         return eid;
       }
     }

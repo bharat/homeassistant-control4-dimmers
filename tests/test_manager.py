@@ -707,8 +707,225 @@ class TestSetupLightTrackingActions:
             ieee_address=IEEE_DIMMER,
             friendly_name="Kitchen",
             device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, tap_action=None)],
+            slots=[SlotConfig(slot_id=2, tap_action=None, led_mode="fixed")],
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager.setup_light_tracking()
         manager._hass.bus.async_listen.assert_not_called()
+
+
+# ── Comprehensive LED + button behavior ──────────────────────────────
+
+
+class TestLoadControlBehavior:
+    """Load-control buttons use firmware behavior, not software actions."""
+
+    def test_dimmer_defaults_are_load_control(self, manager: Control4Manager) -> None:
+        """Dimmer Top=load_on, Bottom=load_off, both follow_load."""
+        slots = manager.get_default_slots("dimmer")
+        top = next(s for s in slots if s.slot_id == 2)
+        bottom = next(s for s in slots if s.slot_id == 5)
+        assert top.behavior == "load_on"
+        assert top.led_mode == "follow_load"
+        assert top.tap_action is None
+        assert bottom.behavior == "load_off"
+        assert bottom.led_mode == "follow_load"
+        assert bottom.tap_action is None
+
+    def test_keypaddim_button1_is_load_control(self, manager: Control4Manager) -> None:
+        """Keypad-dimmer button 1 = toggle_load, rest = keypad."""
+        slots = manager.get_default_slots("keypaddim")
+        assert slots[0].behavior == "toggle_load"
+        assert slots[0].led_mode == "follow_load"
+        assert slots[0].tap_action is None
+        assert slots[1].behavior == "keypad"
+
+    def test_keypad_all_programmable(self, manager: Control4Manager) -> None:
+        """Pure keypad has no load-control buttons."""
+        slots = manager.get_default_slots("keypad")
+        assert all(s.behavior == "keypad" for s in slots)
+
+    @pytest.mark.asyncio
+    async def test_press_load_on_calls_light_turn_on(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """press_button with load_on behavior calls light.turn_on."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        # Mock the light entity lookup
+        light_state = MagicMock()
+        light_state.entity_id = "light.kitchen"
+        light_state.attributes = {"friendly_name": "Kitchen"}
+        manager._hass.states.async_all.return_value = [light_state]
+        manager._hass.services.async_call = AsyncMock()
+        await manager.press_button(IEEE_DIMMER, 2)
+        manager._hass.services.async_call.assert_awaited_once_with(
+            "light", "turn_on", {"entity_id": "light.kitchen"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_press_toggle_load_calls_light_toggle(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """press_button with toggle_load calls light.toggle."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="toggle_load", led_mode="follow_load")
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        light_state = MagicMock()
+        light_state.entity_id = "light.kitchen"
+        light_state.attributes = {"friendly_name": "Kitchen"}
+        manager._hass.states.async_all.return_value = [light_state]
+        manager._hass.services.async_call = AsyncMock()
+        await manager.press_button(IEEE_DIMMER, 2)
+        manager._hass.services.async_call.assert_awaited_once_with(
+            "light", "toggle", {"entity_id": "light.kitchen"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_press_programmable_calls_execute_slot_action(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """press_button with keypad behavior executes tap_action."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="keypad",
+                    led_mode="fixed",
+                    tap_action={
+                        "action": "light.toggle",
+                        "target": {"entity_id": "light.bedroom"},
+                    },
+                )
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._hass.services.async_call = AsyncMock()
+        await manager.press_button(IEEE_DIMMER, 2)
+        manager._hass.services.async_call.assert_awaited_once_with(
+            "light", "toggle", {"entity_id": "light.bedroom"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_press_programmable_no_action_does_nothing(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """press_button with keypad behavior and no tap_action is a no-op."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="keypad", led_mode="fixed")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._hass.services.async_call = AsyncMock()
+        await manager.press_button(IEEE_DIMMER, 2)
+        manager._hass.services.async_call.assert_not_called()
+
+
+class TestPushSlotConfig:
+    """Verify _push_slot_config sends correct firmware values."""
+
+    @pytest.mark.asyncio
+    async def test_load_control_sends_behavior_and_follow_load(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Load-control slot sends behavior=load_on, led_mode=follow_load."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="load_on",
+                    led_mode="follow_load",
+                    led_on_color="ffffff",
+                    led_off_color="000000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        # Find the call that sends behavior/led_mode
+        behavior_calls = [
+            c for c in mock_mqtt.call_args_list if "button_2_behavior" in str(c)
+        ]
+        assert len(behavior_calls) == 1
+        payload = behavior_calls[0][0][1]
+        assert payload["button_2_behavior"] == "load_on"
+        assert payload["button_2_led_mode"] == "follow_load"
+
+    @pytest.mark.asyncio
+    async def test_fixed_mode_sends_programmed_to_firmware(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Fixed LED mode maps to firmware 'programmed'."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="keypad",
+                    led_mode="fixed",
+                    led_on_color="0000ff",
+                    led_off_color="000000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        behavior_calls = [
+            c for c in mock_mqtt.call_args_list if "button_2_led_mode" in str(c)
+        ]
+        assert len(behavior_calls) == 1
+        payload = behavior_calls[0][0][1]
+        assert payload["button_2_led_mode"] == "programmed"
+
+
+class TestGetDeviceInfo:
+    """Verify get_device_info returns correct data for the card."""
+
+    def test_includes_device_state_and_config(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        info = manager.get_device_info(IEEE_DIMMER)
+        assert info is not None
+        assert info["state"] == "ON"
+        assert info["device_type"] == "dimmer"
+        assert info["config"]["slots"][0]["behavior"] == "load_on"
+        assert info["config"]["slots"][0]["led_mode"] == "follow_load"

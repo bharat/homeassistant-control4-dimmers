@@ -158,7 +158,6 @@ class Control4Manager:
         )
         self._subscriptions.append(unsub_state)
 
-        self.setup_light_tracking()
         LOGGER.debug("Control4 manager started, subscribed to %s", topic)
 
     async def async_stop(self) -> None:
@@ -239,6 +238,7 @@ class Control4Manager:
                     len(applied),
                 )
 
+        self.setup_light_tracking()
         self.notify_listeners()
 
     async def _handle_device_state(self, msg: mqtt.ReceiveMessage) -> None:

@@ -155,7 +155,7 @@ class TestControl4ButtonEvent:
         assert attrs["on_color"] == "#0000ff"
         assert attrs["off_color"] == "#000000"
         assert attrs["behavior"] == "keypad"
-        assert attrs["led_mode"] == "programmed"
+        assert attrs["led_mode"] == "fixed"
 
 
 # ── Sensor anchor entity ─────────────────────────────────────────────

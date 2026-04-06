@@ -158,30 +158,51 @@ dropdown.
 
 ### Step 6: Configure in the card editor
 
-1. Add a **Control4 Dimmers** card to your dashboard.
-2. In the card editor, select the device from the dropdown.
-3. For each button:
-   - **Name**: label for the button (e.g., "Top", "Scene 1").
-   - **Behavior**:
-     - `load_on` / `load_off` / `toggle_load` — control the device's
-       own physical dimmer load via standard Zigbee.
-     - `control_light` — control a *different* HA light entity. An
-       entity picker appears to select the target. The button toggles
-       the target light on press, and the LED tracks its on/off state.
-     - `keypad` — fires HA events for automations (no load control).
-   - **LED Mode**: `follow_load`, `follow_connection`, `push_release`,
-     or `programmed`.
-   - **Colors**: on-color (shown when load is ON) and off-color (shown
-     when load is OFF). Click the color swatches to pick.
-4. Click **Save** to push colors and config to the device.
+There are two card types:
+
+**Control4 Dimmers** — a single-device card for individual control.
+Add it to your dashboard, select the device from the dropdown, and
+configure each button.
+
+**Control4 Dimmer Grid** — an all-in-one card that auto-discovers
+every C4 device and shows them in a grid. Add the card with
+`type: custom:control4-dimmer-grid`. The editor has numbered tabs
+to flip through each device. Configure grid-level title, column
+count, and faceplate color, or override colors per device.
+
+#### Button configuration
+
+Each button has a **Mode** (for dimmers/keypad-dimmers):
+
+- **Load Control** — firmware handles the physical button press
+  directly (fast, no software round-trip). Choose Turn On, Turn Off,
+  or Toggle. LED automatically follows the load state.
+- **Programmable** — button fires an HA event entity. You can
+  configure actions for Tap, Double Tap, and Hold using HA's
+  `ha-service-picker` (any HA service + target entity).
+
+#### LED modes (for Programmable buttons)
+
+- **Fixed** — static LED color (single color picker).
+- **Programmed** — LED tracks an entity's on/off state. Requires
+  a tracking entity. Shows On and Off color pickers.
+- **Push/Release** — LED lights while button is pressed. Shows
+  Pushed and Released color pickers.
+
+#### Faceplate color
+
+Choose from official Control4 faceplate colors (Aluminum, Biscuit,
+Black, Brown, Ivory, Light Almond, Midnight Black, White). The card
+renders the chassis and buttons in the selected color with
+appropriate contrast.
 
 ### What to expect per device type
 
-| Type | Buttons | Load | Light entity | Notes |
-|------|---------|------|:---:|-------|
-| **Dimmer** (C4-APD120) | 2 (top/bottom rocker) | Yes | Yes | Top = on, Bottom = off |
-| **Keypad Dimmer** (C4-KD120) | 6 (rocker + 4 keypad) | Yes | Yes | Button 1 = toggle load, 2-6 = keypad |
-| **Keypad** (C4-KC120277) | 6 (all configurable) | No | No | All buttons are keypad events |
+| Type | Buttons | Load | Default config |
+|------|---------|------|-------|
+| **Dimmer** (C4-APD120) | 2 (rocker) | Yes | Top = Load On, Bottom = Load Off |
+| **Keypad Dimmer** (C4-KD120) | 6 (rocker + 4 keypad) | Yes | Button 1 = Toggle Load, 2-6 = Programmable |
+| **Keypad** (C4-KC120277) | 6 (configurable) | No | All Programmable |
 
 ### Troubleshooting
 
@@ -201,9 +222,9 @@ dropdown.
   editor. Colors are pushed to the device firmware via `c4.dmx.led`
   commands on save — they persist across power cycles.
 
-- **Buttons don't control the light**: Verify the button's behavior is
-  set to `load_on`/`load_off`/`toggle_load` (not `keypad`). The card
-  uses the HA light entity for load control, not the C4 text protocol.
+- **Buttons don't control the light**: Verify the button's mode is
+  set to **Load Control** (not Programmable). The integration uses
+  the Z2M light entity for load control.
 
 ## How it works
 

@@ -158,7 +158,7 @@ class Control4ButtonEvent(EventEntity):
 
         on_color = led_colors.get("on", "0000ff")
         off_color = led_colors.get("off", "000000")
-        led_mode = "programmed"
+        led_mode = "fixed"
 
         if slot_cfg:
             on_color = slot_cfg.led_on_color or on_color

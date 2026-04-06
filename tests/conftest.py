@@ -95,26 +95,45 @@ def keypad_state() -> DeviceState:
 
 @pytest.fixture
 def dimmer_config() -> DeviceConfig:
-    """Return a typical dimmer DeviceConfig."""
+    """Return a typical dimmer DeviceConfig with load-control buttons."""
     return DeviceConfig(
         ieee_address=IEEE_DIMMER,
         friendly_name="Kitchen",
         device_type="dimmer",
         slots=[
-            SlotConfig(slot_id=2, name="Top"),
-            SlotConfig(slot_id=5, name="Bottom"),
+            SlotConfig(
+                slot_id=2,
+                name="Top",
+                behavior="load_on",
+                led_mode="follow_load",
+                led_on_color="ffffff",
+                led_off_color="000000",
+            ),
+            SlotConfig(
+                slot_id=5,
+                name="Bottom",
+                behavior="load_off",
+                led_mode="follow_load",
+                led_on_color="000000",
+                led_off_color="0000ff",
+            ),
         ],
     )
 
 
 @pytest.fixture
 def keypad_config() -> DeviceConfig:
-    """Return a typical keypad DeviceConfig with 6 slots."""
+    """Return a typical keypad DeviceConfig with 6 programmable slots."""
     return DeviceConfig(
         ieee_address=IEEE_KEYPAD,
         friendly_name="Theater",
         device_type="keypad",
-        slots=[SlotConfig(slot_id=i, name=f"Button {i}") for i in range(1, 7)],
+        slots=[
+            SlotConfig(
+                slot_id=i, name=f"Button {i}", behavior="keypad", led_mode="fixed"
+            )
+            for i in range(1, 7)
+        ],
     )
 
 

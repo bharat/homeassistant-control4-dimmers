@@ -156,29 +156,34 @@ const CARD_STYLES = `
   }
 
   /* ── Chassis (faceplate) ── */
+  /* Fixed height so dimmer (2 btn) and keypad (6 btn) match exactly. */
+  /* 6 × 28px slots + 8px padding = 176px.  Buttons flex-fill. */
 
   .chassis {
     display: flex;
     flex-direction: column;
-    gap: 3px;
     border-radius: 10px;
     background: var(--secondary-background-color);
     padding: 4px;
+    height: 176px;
+    box-sizing: border-box;
   }
   .chassis-btn {
-    height: 28px;
+    flex: 1;
+    min-height: 0;
     border-radius: 6px;
-    position: relative;
     display: flex;
     align-items: center;
+    justify-content: center;
     cursor: pointer;
     user-select: none;
     background: var(--card-background-color, #fff);
     border: 1px solid var(--divider-color);
-    padding: 0 24px;
+    margin-top: 2px;
     transition: transform 0.1s ease, background 0.15s ease;
     -webkit-tap-highlight-color: transparent;
   }
+  .chassis-btn:first-child { margin-top: 0; }
   .chassis-btn:hover {
     filter: brightness(0.96);
   }
@@ -187,16 +192,22 @@ const CARD_STYLES = `
     background: var(--primary-color);
     color: var(--text-primary-color, #fff);
   }
-  .chassis-btn.size-2 { height: 59px; }
-  .chassis-btn.size-3 { height: 90px; }
-  .chassis-btn.size-4 { height: 121px; }
-  .chassis-btn.size-5 { height: 152px; }
-  .chassis-btn.size-6 { height: 183px; }
+  .chassis-btn.size-2 { flex: 2; }
+  .chassis-btn.size-3 { flex: 3; }
+  .chassis-btn.size-4 { flex: 4; }
+  .chassis-btn.size-5 { flex: 5; }
+  .chassis-btn.size-6 { flex: 6; }
 
+  .btn-inner {
+    display: flex;
+    align-items: center;
+    width: 70%;
+  }
   .btn-label {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
     font-size: 12px;
     font-weight: 400;
     color: var(--primary-text-color);
@@ -205,10 +216,8 @@ const CARD_STYLES = `
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
+    flex-shrink: 0;
+    margin-left: 6px;
     border: 1.5px solid var(--divider-color);
   }
 
@@ -926,8 +935,10 @@ class Control4Card extends HTMLElement {
                 const visualSize = btn.size * sizeMultiplier;
                 return `
                   <div class="chassis-btn size-${visualSize}" data-slot="${btn.startSlot}">
-                    <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                    <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                    <div class="btn-inner">
+                      <span class="btn-label">${cfg.name || `Button ${btn.startSlot}`}</span>
+                      <div class="led" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                    </div>
                   </div>
                 `;
               }).join("");

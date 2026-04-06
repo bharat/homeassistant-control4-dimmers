@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import mqtt
@@ -62,6 +63,9 @@ class Control4Manager:
             tuple[str, int], Callable[[str], None]
         ] = {}  # (ieee, slot_id) -> callback(event_type)
         self._light_track_unsubs: list[Callable[[], None]] = []  # state listeners
+        self._led_cooldowns: dict[
+            tuple[str, int], float
+        ] = {}  # (ieee, slot) -> timestamp
 
     @property
     def mqtt_topic(self) -> str:
@@ -393,28 +397,39 @@ class Control4Manager:
                 and slot.behavior == "control_light"
                 and slot.target_entity_id
             ):
-                # Toggle the target light
                 self._hass.async_create_task(
                     self._hass.services.async_call(
                         "light", "toggle", {"entity_id": slot.target_entity_id}
                     ),
                     f"c4_toggle_{ieee}_{slot_id}",
                 )
-                # Optimistic LED update — set the LED immediately based on
-                # the OPPOSITE of the current state, don't wait for the
-                # state change round trip.
-                target_state = self._hass.states.get(slot.target_entity_id)
-                is_on = target_state and target_state.state == "on"
-                # After toggle, it'll be the opposite
-                color = slot.led_off_color if is_on else slot.led_on_color
-                wire_id = slot_id - 1
                 self._hass.async_create_task(
-                    self.async_send_mqtt(
-                        ieee,
-                        {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
-                    ),
+                    self.async_optimistic_led(ieee, slot_id),
                     f"c4_led_{ieee}_{slot_id}",
                 )
+                return
+
+    async def async_optimistic_led(self, ieee: str, slot_id: int) -> None:
+        """
+        Send an immediate LED color based on the opposite of the target light state.
+
+        Also sets a cooldown so the tracking callback doesn't send a
+        redundant LED command while the toggle is in flight.
+        """
+        config = self._store.get_device(ieee)
+        if not config:
+            return
+        for slot in config.slots:
+            if slot.slot_id == slot_id and slot.target_entity_id:
+                target_state = self._hass.states.get(slot.target_entity_id)
+                is_on = target_state and target_state.state == "on"
+                color = slot.led_off_color if is_on else slot.led_on_color
+                wire_id = slot_id - 1
+                await self.async_send_mqtt(
+                    ieee,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
+                )
+                self._led_cooldowns[(ieee, slot_id)] = time.monotonic() + 2.0
                 return
 
     def setup_light_tracking(self) -> None:
@@ -454,7 +469,12 @@ class Control4Manager:
             if new_state is None:
                 return
             is_on = new_state.state == "on"
+            now = time.monotonic()
             for ieee, slot_id, on_color, off_color in tracking[entity_id]:
+                # Skip if an optimistic LED update was sent recently
+                cooldown = self._led_cooldowns.get((ieee, slot_id), 0)
+                if now < cooldown:
+                    continue
                 wire_id = slot_id - 1
                 color = on_color if is_on else off_color
                 # Mode 05 = immediate override — forces the LED to display
@@ -462,13 +482,6 @@ class Control4Manager:
                 await self.async_send_mqtt(
                     ieee,
                     {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
-                )
-                LOGGER.warning(
-                    "LED tracking: %s slot %d -> #%s (%s)",
-                    ieee,
-                    slot_id,
-                    color,
-                    "on" if is_on else "off",
                 )
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)

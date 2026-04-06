@@ -281,6 +281,10 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
             )
             return
         await hass.services.async_call("light", "toggle", {"entity_id": target})
+        runtime = _get_runtime(hass)
+        if runtime:
+            manager: Control4Manager = runtime["manager"]
+            await manager.async_optimistic_led(ieee, slot_id)
     elif behavior in ("load_on", "load_off", "toggle_load"):
         light_entity_id = _find_light_entity(hass, ieee)
         if not light_entity_id:

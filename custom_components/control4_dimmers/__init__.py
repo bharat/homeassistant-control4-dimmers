@@ -270,9 +270,10 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
         LOGGER.error("press_button: runtime not loaded")
         return
 
+    event_type = call.data.get("event_type", "pressed")
     manager: Control4Manager = runtime["manager"]
-    manager.fire_button_event(ieee, slot_id, "pressed")
-    await manager.press_button(ieee, slot_id)
+    manager.fire_button_event(ieee, slot_id, event_type)
+    await manager.press_button(ieee, slot_id, event_type)
 
 
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -330,6 +331,9 @@ async def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,
+                vol.Optional("event_type", default="pressed"): vol.In(
+                    ["pressed", "single_tap", "double_tap", "triple_tap", "hold"]
+                ),
             }
         ),
     )

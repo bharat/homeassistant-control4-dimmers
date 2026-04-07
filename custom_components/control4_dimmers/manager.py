@@ -448,7 +448,9 @@ class Control4Manager:
             return self._find_light_entity(ieee)
         return entity_id
 
-    async def press_button(self, ieee: str, slot_id: int) -> None:
+    async def press_button(
+        self, ieee: str, slot_id: int, event_type: str = "pressed"
+    ) -> None:
         """Handle a button press — firmware load control or software action."""
         config = self._store.get_device(ieee)
         slot = self._find_slot(config, slot_id) if config else None
@@ -468,7 +470,14 @@ class Control4Manager:
                 "light", svc, {"entity_id": light_entity}
             )
         else:
-            await self.execute_slot_action(ieee, slot_id, "tap")
+            trigger = {
+                "pressed": "tap",
+                "single_tap": "tap",
+                "double_tap": "double_tap",
+                "triple_tap": "triple_tap",
+                "hold": "hold",
+            }.get(event_type, "tap")
+            await self.execute_slot_action(ieee, slot_id, trigger)
 
     async def execute_slot_action(
         self, ieee: str, slot_id: int, trigger: str = "tap"

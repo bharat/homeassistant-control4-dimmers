@@ -1,0 +1,22 @@
+[
+  {"label": "Btn 2 - try c4.kp.lv (momentary/pushed color) to green",
+   "payload": {"c4_cmd": "c4.kp.lv 01 00ff00"}},
+
+  {"label": "Btn 2 - try c4.kp.lf (off/released color) to black",
+   "payload": {"c4_cmd": "c4.kp.lf 01 000000"}},
+
+  {"label": "Btn 2 - try c4.kp.lo (on color) to red",
+   "payload": {"c4_cmd": "c4.kp.lo 01 ff0000"}},
+
+  {"label": "Btn 3 - try c4.kp.lv (momentary) to yellow",
+   "payload": {"c4_cmd": "c4.kp.lv 02 ffff00"}},
+
+  {"label": "--- Pause 3s: press buttons 2 and 3 to check ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "delay": 5},
+
+  {"label": "Btn 2 - reset: c4.kp.lv to black (disable push color)",
+   "payload": {"c4_cmd": "c4.kp.lv 01 000000"}},
+
+  {"label": "Btn 2 - set mode 04 off-color to red (test if normal mode works now)",
+   "payload": {"c4_cmd": "c4.dmx.led 01 04 ff0000"}, "delay": 3}
+]

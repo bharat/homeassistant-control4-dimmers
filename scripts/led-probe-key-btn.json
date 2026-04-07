@@ -1,0 +1,84 @@
+[
+  {"label": "=== PROBE: c4.dmx.key argument patterns ==="},
+  {"label": "The 2013 debug log had 'c4.dmx.key' - likely button/key config"},
+
+  {"label": "c4.dmx.key 01 00 (btn, value?)",
+   "payload": {"c4_cmd": "c4.dmx.key 01 00"}},
+
+  {"label": "c4.dmx.key 01 01",
+   "payload": {"c4_cmd": "c4.dmx.key 01 01"}},
+
+  {"label": "c4.dmx.key 01 02",
+   "payload": {"c4_cmd": "c4.dmx.key 01 02"}},
+
+  {"label": "c4.dmx.key 01 03",
+   "payload": {"c4_cmd": "c4.dmx.key 01 03"}},
+
+  {"label": "c4.dmx.key 01 04",
+   "payload": {"c4_cmd": "c4.dmx.key 01 04"}},
+
+  {"label": "c4.dmx.key 00 00",
+   "payload": {"c4_cmd": "c4.dmx.key 00 00"}},
+
+  {"label": "c4.dmx.key 00 01",
+   "payload": {"c4_cmd": "c4.dmx.key 00 01"}},
+
+  {"label": "c4.dmx.key 00 02",
+   "payload": {"c4_cmd": "c4.dmx.key 00 02"}},
+
+  {"label": "c4.dmx.key 00 03",
+   "payload": {"c4_cmd": "c4.dmx.key 00 03"}},
+
+  {"label": "c4.dmx.key 00 04",
+   "payload": {"c4_cmd": "c4.dmx.key 00 04"}},
+
+  {"label": "c4.dmx.key with 3-byte value (like led format)",
+   "payload": {"c4_cmd": "c4.dmx.key 01 00 000000"}},
+
+  {"label": "c4.dmx.key 01 01 000000",
+   "payload": {"c4_cmd": "c4.dmx.key 01 01 000000"}},
+
+  {"label": "c4.dmx.key with single value (decimal?)",
+   "payload": {"c4_cmd": "c4.dmx.key 1"}},
+
+  {"label": "c4.dmx.key with hex string",
+   "payload": {"c4_cmd": "c4.dmx.key 0100"}},
+
+  {"label": "=== PROBE: c4.dmx.btn argument patterns ==="},
+
+  {"label": "c4.dmx.btn 00",
+   "payload": {"c4_cmd": "c4.dmx.btn 00"}},
+
+  {"label": "c4.dmx.btn 01 00",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 00"}},
+
+  {"label": "c4.dmx.btn 01 01",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 01"}},
+
+  {"label": "c4.dmx.btn 01 02",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 02"}},
+
+  {"label": "c4.dmx.btn 01 03",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 03"}},
+
+  {"label": "c4.dmx.btn 00 00",
+   "payload": {"c4_cmd": "c4.dmx.btn 00 00"}},
+
+  {"label": "c4.dmx.btn 00 01",
+   "payload": {"c4_cmd": "c4.dmx.btn 00 01"}},
+
+  {"label": "c4.dmx.btn 00 02",
+   "payload": {"c4_cmd": "c4.dmx.btn 00 02"}},
+
+  {"label": "c4.dmx.btn 00 03",
+   "payload": {"c4_cmd": "c4.dmx.btn 00 03"}},
+
+  {"label": "c4.dmx.btn 00 04",
+   "payload": {"c4_cmd": "c4.dmx.btn 00 04"}},
+
+  {"label": "c4.dmx.btn with 3 args",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 00 00"}},
+
+  {"label": "c4.dmx.btn 01 01 01",
+   "payload": {"c4_cmd": "c4.dmx.btn 01 01 01"}}
+]

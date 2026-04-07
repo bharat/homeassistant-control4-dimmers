@@ -17,20 +17,20 @@
   {"label": "=== Now cycle through param 01 values. OBSERVE button 5 at each step ==="},
 
   {"label": "--- VALUE 00: btn 04 01 00 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}, "delay": 6},
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}, "delay": 10},
 
   {"label": "--- VALUE 01: btn 04 01 01 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 01"}, "delay": 6},
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 01"}, "delay": 10},
 
   {"label": "--- VALUE 02: btn 04 01 02 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 02"}, "delay": 6},
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 02"}, "delay": 10},
 
   {"label": "--- VALUE 03: btn 04 01 03 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}, "delay": 6},
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}, "delay": 10},
 
   {"label": "--- VALUE 04: btn 04 01 04 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 04"}, "delay": 6},
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 04"}, "delay": 10},
 
   {"label": "--- VALUE 05: btn 04 01 05 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 05"}, "delay": 6}
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 05"}, "delay": 10}
 ]

@@ -690,6 +690,24 @@ class TestDispatchWithActions:
         # Should NOT create a task — firmware handles load control
         manager._hass.async_create_task.assert_not_called()
 
+    def test_scene_event_triggers_load_control(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Scene event (c4.dmx.sc) on load-control button triggers load."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=1, behavior="toggle_load", led_mode="follow_load")
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._dispatch_button_action(dimmer_state, "button_1_scene")
+        # Scene events on load-control buttons SHOULD create a task
+        manager._hass.async_create_task.assert_called()
+
     def test_press_defers_when_double_tap_configured(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:

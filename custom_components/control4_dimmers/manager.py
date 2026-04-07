@@ -116,19 +116,25 @@ class Control4Manager:
         if not action_str:
             return
 
-        # button_N_press  (from c4.dmx.bp)
-        press_match = re.match(r"button_(\d+)_press", action_str)
+        # Press or scene: button_N_press (c4.dmx.bp), button_N_scene (c4.dmx.sc)
+        press_match = re.match(r"button_(\d+)_(press|scene)", action_str)
         if press_match:
             slot_id = int(press_match.group(1))
+            is_scene = press_match.group(2) == "scene"
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
-            # Load-control buttons: firmware handles the load directly,
-            # so we only fire the event entity (no software toggle).
-            # Programmable buttons: execute tap_action via software.
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
-            if slot and slot.behavior in ("load_on", "load_off", "toggle_load"):
-                return
-            if not slot or not slot.double_tap_action:
+            is_load = slot and slot.behavior in (
+                "load_on",
+                "load_off",
+                "toggle_load",
+            )
+            should_act = (is_scene and is_load) or (
+                not is_scene
+                and not is_load
+                and (not slot or not slot.double_tap_action)
+            )
+            if should_act:
                 self._hass.async_create_task(
                     self.press_button(device.ieee_address, slot_id, "pressed"),
                     f"c4_action_{device.ieee_address}_{slot_id}",

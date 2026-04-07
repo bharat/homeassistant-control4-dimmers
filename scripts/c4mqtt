@@ -162,6 +162,9 @@ def run_commands(password, commands):
             if cmd_relevant == 0:
                 print(f"    (no relevant output — {cmd_raw} raw lines seen)")
 
+            if cmd.get("wait"):
+                input("    >>> Press ENTER to continue... ")
+
     finally:
         log_proc.terminate()
         log_proc.wait()

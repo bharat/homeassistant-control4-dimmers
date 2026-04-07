@@ -14,23 +14,23 @@
   {"label": "Btn 5 - set release-color (mode 02) to blue",
    "payload": {"c4_cmd": "c4.dmx.led 04 02 0000ff"}},
 
-  {"label": "=== Now cycle through param 01 values. OBSERVE button 5 at each step ==="},
+  {"label": "Colors set: on=green, off=red, push=yellow, release=blue"},
 
-  {"label": "--- VALUE 00: btn 04 01 00 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}, "delay": 10},
+  {"label": "--- VALUE 00: btn 04 01 00 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}, "wait": true},
 
-  {"label": "--- VALUE 01: btn 04 01 01 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 01"}, "delay": 10},
+  {"label": "--- VALUE 01: btn 04 01 01 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 01"}, "wait": true},
 
-  {"label": "--- VALUE 02: btn 04 01 02 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 02"}, "delay": 10},
+  {"label": "--- VALUE 02: btn 04 01 02 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 02"}, "wait": true},
 
-  {"label": "--- VALUE 03: btn 04 01 03 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}, "delay": 10},
+  {"label": "--- VALUE 03: btn 04 01 03 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}, "wait": true},
 
-  {"label": "--- VALUE 04: btn 04 01 04 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 04"}, "delay": 10},
+  {"label": "--- VALUE 04: btn 04 01 04 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 04"}, "wait": true},
 
-  {"label": "--- VALUE 05: btn 04 01 05 --- PRESS BTN 5, note color + press behavior ---",
-   "payload": {"c4_cmd": "c4.dmx.btn 04 01 05"}, "delay": 10}
+  {"label": "--- VALUE 05: btn 04 01 05 --- Note resting color, then PRESS BTN 5 ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 05"}, "wait": true}
 ]

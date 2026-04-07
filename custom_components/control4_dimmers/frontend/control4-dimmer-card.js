@@ -135,7 +135,7 @@ const CARD_STYLES = `
 
   ha-card {
     padding: 0;
-    max-width: 16em;
+    max-width: var(--c4-card-max-width, 16em);
     overflow: hidden;
   }
 
@@ -1778,6 +1778,7 @@ class Control4DimmerGrid extends HTMLElement {
   }
 
   getCardSize() { return 6; }
+  getLayoutOptions() { return { grid_columns: "full", grid_rows: "auto" }; }
   static getConfigElement() { return document.createElement(GRID_EDITOR_TAG); }
   static getStubConfig() { return {}; }
 
@@ -1832,6 +1833,7 @@ class Control4DimmerGrid extends HTMLElement {
       <style>
         :host { display: block; overflow: hidden; }
         ha-card { padding: 0; overflow: hidden; }
+        .grid-container > * { --c4-card-max-width: none; }
         .grid-title {
           font-size: 24px; font-weight: 400;
           color: var(--primary-text-color);

@@ -667,10 +667,15 @@ class TestDispatchWithActions:
         # Should have created a task for press_button
         manager._hass.async_create_task.assert_called()
 
-    def test_press_load_control_creates_task(
+    def test_press_load_control_skips_software_toggle(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Physical press on load-control button dispatches to press_button."""
+        """
+        Physical press on load-control button does NOT software-toggle.
+
+        The C4 firmware handles load control directly at the hardware
+        level. Our software only fires the event entity.
+        """
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -682,8 +687,8 @@ class TestDispatchWithActions:
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager._dispatch_button_action(dimmer_state, "button_2_press")
-        # Should have created a task (press_button handles load control)
-        manager._hass.async_create_task.assert_called()
+        # Should NOT create a task — firmware handles load control
+        manager._hass.async_create_task.assert_not_called()
 
     def test_press_defers_when_double_tap_configured(
         self, manager: Control4Manager, dimmer_state: DeviceState

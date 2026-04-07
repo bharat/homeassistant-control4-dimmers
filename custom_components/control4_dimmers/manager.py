@@ -121,9 +121,13 @@ class Control4Manager:
         if press_match:
             slot_id = int(press_match.group(1))
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
-            # If no double_tap_action configured, execute tap immediately
+            # Load-control buttons: firmware handles the load directly,
+            # so we only fire the event entity (no software toggle).
+            # Programmable buttons: execute tap_action via software.
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
+            if slot and slot.behavior in ("load_on", "load_off", "toggle_load"):
+                return
             if not slot or not slot.double_tap_action:
                 self._hass.async_create_task(
                     self.press_button(device.ieee_address, slot_id, "pressed"),
@@ -145,11 +149,14 @@ class Control4Manager:
             count = int(click_match.group(2))
             event_type = _click_count_to_event_type(count)
             self.fire_button_event(device.ieee_address, slot_id, event_type)
-            # Execute action based on click count
+            # Load-control buttons: firmware handles load, skip software actions
+            config = self._store.get_device(device.ieee_address)
+            slot = self._find_slot(config, slot_id) if config else None
+            if slot and slot.behavior in ("load_on", "load_off", "toggle_load"):
+                return
+            # Programmable buttons: execute action based on click count
             if count == 1:
                 # Only fires when double_tap is configured (debounced)
-                config = self._store.get_device(device.ieee_address)
-                slot = self._find_slot(config, slot_id) if config else None
                 if slot and slot.double_tap_action:
                     self._hass.async_create_task(
                         self.press_button(device.ieee_address, slot_id, "single_tap"),

@@ -213,8 +213,10 @@ const CARD_STYLES = `
   }
   .chassis-btn:active, .chassis-btn.pressing {
     transform: scale(0.97);
-    background: var(--primary-color);
-    color: var(--text-primary-color, #fff);
+    filter: brightness(0.85);
+  }
+  .chassis-btn.pressing .led {
+    visibility: visible !important;
   }
   .chassis-btn.size-2 { flex: 2; }
   .chassis-btn.size-3 { flex: 3; }
@@ -1064,7 +1066,15 @@ class Control4Card extends HTMLElement {
     for (const el of btns) {
       el.addEventListener("click", () => {
         const slotId = parseInt(el.dataset.slot, 10);
+        const slot = this._slots?.find((s) => s.slot_id === slotId);
+        const led = el.querySelector(".led");
         el.classList.add("pressing");
+        // Flash LED to on-color during press
+        if (led && slot) {
+          const onColor = slot.led_on_color || "ffffff";
+          led.style.background = `#${onColor}`;
+          led.style.visibility = "";
+        }
         setTimeout(() => el.classList.remove("pressing"), 180);
         this._pressButton(slotId);
       });

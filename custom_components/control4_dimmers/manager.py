@@ -126,7 +126,7 @@ class Control4Manager:
             slot = self._find_slot(config, slot_id) if config else None
             if not slot or not slot.double_tap_action:
                 self._hass.async_create_task(
-                    self.execute_slot_action(device.ieee_address, slot_id, "tap"),
+                    self.press_button(device.ieee_address, slot_id, "pressed"),
                     f"c4_action_{device.ieee_address}_{slot_id}",
                 )
             return
@@ -152,14 +152,12 @@ class Control4Manager:
                 slot = self._find_slot(config, slot_id) if config else None
                 if slot and slot.double_tap_action:
                     self._hass.async_create_task(
-                        self.execute_slot_action(device.ieee_address, slot_id, "tap"),
+                        self.press_button(device.ieee_address, slot_id, "single_tap"),
                         f"c4_action_{device.ieee_address}_{slot_id}",
                     )
             elif count == 2:  # noqa: PLR2004
                 self._hass.async_create_task(
-                    self.execute_slot_action(
-                        device.ieee_address, slot_id, "double_tap"
-                    ),
+                    self.press_button(device.ieee_address, slot_id, "double_tap"),
                     f"c4_action_{device.ieee_address}_{slot_id}",
                 )
             return

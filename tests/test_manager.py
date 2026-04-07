@@ -639,7 +639,7 @@ class TestExecuteSlotAction:
 
 
 class TestDispatchWithActions:
-    """Tests for _dispatch_button_action with the new action system."""
+    """Tests for _dispatch_button_action dispatching to press_button."""
 
     def test_press_executes_tap_immediately_when_no_double_tap(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -653,6 +653,8 @@ class TestDispatchWithActions:
             slots=[
                 SlotConfig(
                     slot_id=2,
+                    behavior="keypad",
+                    led_mode="fixed",
                     tap_action={
                         "action": "light.toggle",
                         "target": {"entity_id": "light.kitchen"},
@@ -662,7 +664,25 @@ class TestDispatchWithActions:
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager._dispatch_button_action(dimmer_state, "button_2_press")
-        # Should have created a task for the action
+        # Should have created a task for press_button
+        manager._hass.async_create_task.assert_called()
+
+    def test_press_load_control_creates_task(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Physical press on load-control button dispatches to press_button."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="toggle_load", led_mode="follow_load")
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
+        # Should have created a task (press_button handles load control)
         manager._hass.async_create_task.assert_called()
 
     def test_press_defers_when_double_tap_configured(

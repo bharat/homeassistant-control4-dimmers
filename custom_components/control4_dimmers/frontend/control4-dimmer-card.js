@@ -384,10 +384,10 @@ const EDITOR_STYLES = `
     transition: box-shadow 0.15s ease;
     font-size: 12px;
     font-weight: 400;
-    color: var(--primary-text-color);
+    color: var(--c4-editor-text, var(--primary-text-color));
     user-select: none;
-    background: var(--card-background-color, #fff);
-    border: 1px solid var(--divider-color);
+    background: var(--c4-editor-btn-bg, var(--card-background-color, #fff));
+    border: 1px solid var(--c4-editor-btn-border, var(--divider-color));
     padding: 0 10px;
   }
   .chassis-slot:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
@@ -1415,7 +1415,7 @@ class Control4CardEditor extends HTMLElement {
         <div class="device-config-box">
           <div class="box-header">Configuration</div>
           <div class="config-layout">
-            <div class="chassis">
+            <div class="chassis" style="${(() => { const c = this._localFaceplateColor || dev?.config?.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; const dark = (0.299*r+0.587*g+0.114*b) < 128; return `background:#${c}; --c4-editor-btn-bg:#${bc}; --c4-editor-btn-border:rgba(${dark ? "255,255,255,0.15" : "0,0,0,0.1"}); --c4-editor-text:${dark ? "rgba(255,255,255,0.9)" : "var(--primary-text-color)"}`; })()}">
               ${layout.map((btn) => {
                 const cfg = btn.slots[0];
                 const isSelected = this._selectedSlotId === btn.startSlot;

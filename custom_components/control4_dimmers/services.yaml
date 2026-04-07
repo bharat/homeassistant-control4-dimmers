@@ -36,6 +36,19 @@ press_button:
       selector:
         entity:
           domain: event
+    event_type:
+      name: Event Type
+      description: The type of button event to simulate.
+      required: false
+      default: "pressed"
+      selector:
+        select:
+          options:
+            - "pressed"
+            - "single_tap"
+            - "double_tap"
+            - "triple_tap"
+            - "hold"
 
 set_device_type:
   name: Set Device Type

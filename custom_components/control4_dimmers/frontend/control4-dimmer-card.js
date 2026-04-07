@@ -767,7 +767,7 @@ class Control4Card extends HTMLElement {
     this._eventEntities = {};
     this._versionChecked = false;
     this._lastEntityState = null;
-    this._onConfigSaved = () => this._fetchDevice();
+    this._onConfigSaved = async () => { await this._fetchDevice(); this._render(); };
   }
 
   connectedCallback() {

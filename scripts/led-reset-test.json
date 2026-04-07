@@ -1,0 +1,19 @@
+[
+  {"label": "Btn 2 - read current mode 01 (GET pushed color)",
+   "payload": {"c4_cmd": "c4.dmx.led 01 01"}},
+
+  {"label": "Btn 2 - read current mode 02 (GET released color)",
+   "payload": {"c4_cmd": "c4.dmx.led 01 02"}},
+
+  {"label": "Btn 6 - read current mode 01 (compare working button)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 01"}},
+
+  {"label": "Btn 6 - read current mode 02 (compare working button)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 02"}},
+
+  {"label": "Btn 3 - read current mode 01 (compare working button)",
+   "payload": {"c4_cmd": "c4.dmx.led 02 01"}},
+
+  {"label": "Btn 3 - read current mode 02 (compare working button)",
+   "payload": {"c4_cmd": "c4.dmx.led 02 02"}}
+]

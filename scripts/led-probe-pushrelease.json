@@ -1,0 +1,56 @@
+[
+  {"label": "=== TEST: Can mode 01/02 enable push/release on button 3? ==="},
+  {"label": "Button 3 currently: red static (mode 04), no press response"},
+  {"label": "Button 5 currently: black, green on press (mode 01/02 from earlier)"},
+
+  {"label": "Btn 3 - SET mode 01 (push color) to yellow",
+   "payload": {"c4_cmd": "c4.dmx.led 02 01 ffff00"}},
+
+  {"label": "Btn 3 - SET mode 02 (release color) to red",
+   "payload": {"c4_cmd": "c4.dmx.led 02 02 ff0000"}},
+
+  {"label": "--- Pause 5s: PRESS BUTTON 3 - does it flash yellow? ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "delay": 5},
+
+  {"label": "=== TEST: Can we disable push/release on button 5? ==="},
+
+  {"label": "Btn 5 - SET mode 01 (push color) to black (disable?)",
+   "payload": {"c4_cmd": "c4.dmx.led 04 01 000000"}},
+
+  {"label": "Btn 5 - SET mode 02 (release color) to black (disable?)",
+   "payload": {"c4_cmd": "c4.dmx.led 04 02 000000"}},
+
+  {"label": "--- Pause 5s: PRESS BUTTON 5 - does it still flash green? ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "delay": 5},
+
+  {"label": "=== TEST: Re-enable button 5 push/release ==="},
+
+  {"label": "Btn 5 - SET mode 01 (push color) to green",
+   "payload": {"c4_cmd": "c4.dmx.led 04 01 00ff00"}},
+
+  {"label": "Btn 5 - SET mode 02 (release color) to black",
+   "payload": {"c4_cmd": "c4.dmx.led 04 02 000000"}},
+
+  {"label": "--- Pause 5s: PRESS BUTTON 5 - green flash restored? ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "delay": 5},
+
+  {"label": "=== COMPARE: GET mode 01/02 for working vs non-working buttons ==="},
+
+  {"label": "Btn 5 - GET mode 01 (has push/release)",
+   "payload": {"c4_cmd": "c4.dmx.led 04 01"}},
+
+  {"label": "Btn 5 - GET mode 02 (has push/release)",
+   "payload": {"c4_cmd": "c4.dmx.led 04 02"}},
+
+  {"label": "Btn 6 - GET mode 01 (Composer push/release)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 01"}},
+
+  {"label": "Btn 6 - GET mode 02 (Composer push/release)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 02"}},
+
+  {"label": "Btn 3 - GET mode 01 (just set above)",
+   "payload": {"c4_cmd": "c4.dmx.led 02 01"}},
+
+  {"label": "Btn 3 - GET mode 02 (just set above)",
+   "payload": {"c4_cmd": "c4.dmx.led 02 02"}}
+]

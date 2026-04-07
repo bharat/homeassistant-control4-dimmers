@@ -1,0 +1,56 @@
+[
+  {"label": "=== PROBE: c4.dmx.led mode numbers 07-0f on button 3 (index 02) ==="},
+
+  {"label": "Btn 3 - GET mode 07",
+   "payload": {"c4_cmd": "c4.dmx.led 02 07"}},
+
+  {"label": "Btn 3 - GET mode 08",
+   "payload": {"c4_cmd": "c4.dmx.led 02 08"}},
+
+  {"label": "Btn 3 - GET mode 09",
+   "payload": {"c4_cmd": "c4.dmx.led 02 09"}},
+
+  {"label": "Btn 3 - GET mode 0a",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0a"}},
+
+  {"label": "Btn 3 - GET mode 0b",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0b"}},
+
+  {"label": "Btn 3 - GET mode 0c",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0c"}},
+
+  {"label": "Btn 3 - GET mode 0d",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0d"}},
+
+  {"label": "Btn 3 - GET mode 0e",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0e"}},
+
+  {"label": "Btn 3 - GET mode 0f",
+   "payload": {"c4_cmd": "c4.dmx.led 02 0f"}},
+
+  {"label": "=== PROBE: higher modes 10-1f ==="},
+
+  {"label": "Btn 3 - GET mode 10",
+   "payload": {"c4_cmd": "c4.dmx.led 02 10"}},
+
+  {"label": "Btn 3 - GET mode 11",
+   "payload": {"c4_cmd": "c4.dmx.led 02 11"}},
+
+  {"label": "Btn 3 - GET mode 12",
+   "payload": {"c4_cmd": "c4.dmx.led 02 12"}},
+
+  {"label": "Btn 3 - GET mode 13",
+   "payload": {"c4_cmd": "c4.dmx.led 02 13"}},
+
+  {"label": "Btn 3 - GET mode 14",
+   "payload": {"c4_cmd": "c4.dmx.led 02 14"}},
+
+  {"label": "Btn 3 - GET mode 15",
+   "payload": {"c4_cmd": "c4.dmx.led 02 15"}},
+
+  {"label": "Btn 3 - GET mode 16",
+   "payload": {"c4_cmd": "c4.dmx.led 02 16"}},
+
+  {"label": "Btn 3 - GET mode ff",
+   "payload": {"c4_cmd": "c4.dmx.led 02 ff"}}
+]

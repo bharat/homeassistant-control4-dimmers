@@ -1,0 +1,66 @@
+[
+  {"label": "=== PROBE: c4.dmx.key (mentioned in 2013 debug log) ==="},
+
+  {"label": "Try c4.dmx.key GET (no args)",
+   "payload": {"c4_cmd": "c4.dmx.key"}},
+
+  {"label": "Try c4.dmx.key 00",
+   "payload": {"c4_cmd": "c4.dmx.key 00"}},
+
+  {"label": "Try c4.dmx.key 01",
+   "payload": {"c4_cmd": "c4.dmx.key 01"}},
+
+  {"label": "Try c4.dmx.key 02",
+   "payload": {"c4_cmd": "c4.dmx.key 02"}},
+
+  {"label": "=== PROBE: other c4.dmx namespace commands ==="},
+
+  {"label": "Try c4.dmx.bp (button press - GET)",
+   "payload": {"c4_cmd": "c4.dmx.bp"}},
+
+  {"label": "Try c4.dmx.br (button release - GET)",
+   "payload": {"c4_cmd": "c4.dmx.br"}},
+
+  {"label": "Try c4.dmx.cc (click count - GET)",
+   "payload": {"c4_cmd": "c4.dmx.cc"}},
+
+  {"label": "Try c4.dmx.sc (scene - GET)",
+   "payload": {"c4_cmd": "c4.dmx.sc"}},
+
+  {"label": "Try c4.dmx.ls (load status - GET)",
+   "payload": {"c4_cmd": "c4.dmx.ls"}},
+
+  {"label": "Try c4.dmx.pmti (power measurement timer interval - GET)",
+   "payload": {"c4_cmd": "c4.dmx.pmti"}},
+
+  {"label": "Try c4.dmx.dim (dimmer type - GET)",
+   "payload": {"c4_cmd": "c4.dmx.dim"}},
+
+  {"label": "=== PROBE: c4.dmx.btn / c4.dmx.but / c4.dmx.bm (button mode?) ==="},
+
+  {"label": "Try c4.dmx.btn 01",
+   "payload": {"c4_cmd": "c4.dmx.btn 01"}},
+
+  {"label": "Try c4.dmx.but 01",
+   "payload": {"c4_cmd": "c4.dmx.but 01"}},
+
+  {"label": "Try c4.dmx.bm 01",
+   "payload": {"c4_cmd": "c4.dmx.bm 01"}},
+
+  {"label": "Try c4.dmx.lm 01 (LED mode?)",
+   "payload": {"c4_cmd": "c4.dmx.lm 01"}},
+
+  {"label": "Try c4.dmx.lm 02",
+   "payload": {"c4_cmd": "c4.dmx.lm 02"}},
+
+  {"label": "=== PROBE: c4.sy namespace (system) ==="},
+
+  {"label": "Try c4.sy.ver (version?)",
+   "payload": {"c4_cmd": "c4.sy.ver"}},
+
+  {"label": "Try c4.sy.id (device id?)",
+   "payload": {"c4_cmd": "c4.sy.id"}},
+
+  {"label": "Try c4.sy.rst (reset?)",
+   "payload": {"c4_cmd": "c4.sy.rst"}}
+]

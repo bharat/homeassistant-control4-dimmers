@@ -20,11 +20,11 @@ Example commands.json:
 """
 
 import json
+import os
+import select
 import subprocess
 import sys
-import threading
 import time
-from datetime import UTC, datetime
 
 MOSQUITTO_CONTAINER = "mosquitto"
 Z2M_CONTAINER = "zigbee2mqtt"
@@ -32,119 +32,145 @@ MQTT_USER = "ha"
 DEFAULT_TOPIC = "zigbee2mqtt/Entry Keypad/set"
 DEFAULT_DELAY = 2
 
+# Keywords to keep in filtered log output
+FILTER_KEYWORDS = (
+    "C4 RECV", "C4 BUTTON", "C4 LED", "c4.dmx", "c4.kp",
+    "c4_response", "c4_last_cmd", "0r", "0t", "e00", "000",
+)
 
-def tail_z2m_logs(stop_event, start_time, output_lines):
-    """Tail Z2M docker logs in a background thread, collecting relevant lines."""
-    proc = subprocess.Popen(
-        ["docker", "logs", "--since", start_time, "-f", Z2M_CONTAINER],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        while not stop_event.is_set():
-            line = proc.stdout.readline()
-            if not line:
-                break
-            line = line.rstrip()
-            # Filter to relevant C4 lines
-            if any(
-                k in line
-                for k in (
-                    "C4 RECV",
-                    "C4 BUTTON",
-                    "c4_cmd",
-                    "c4_last_cmd",
-                    "c4_response",
-                    "c4.dmx",
-                    "c4.kp",
-                    "action",
-                )
-            ):
-                output_lines.append(line)
-    finally:
-        proc.terminate()
+# Noisy keys to strip from large JSON payloads
+STRIP_KEYS = {
+    "c4_detect_result", "c4_device_type", "c4_led_1_off", "c4_led_1_on",
+    "c4_led_2_off", "c4_led_2_on", "c4_led_3_off", "c4_led_3_on",
+    "c4_led_4_off", "c4_led_4_on", "c4_led_5_off", "c4_led_5_on",
+    "c4_led_6_off", "c4_led_6_on", "effect", "linkquality",
+    "power_on_behavior", "state",
+}
 
 
-def send_mqtt(password, topic, payload_dict):
-    """Send a single MQTT message via mosquitto_pub in the docker container."""
-    payload_json = json.dumps(payload_dict)
+def check_docker_container(name):
+    """Verify a docker container is running."""
     result = subprocess.run(
-        [
-            "docker",
-            "exec",
-            MOSQUITTO_CONTAINER,
-            "mosquitto_pub",
-            "-u",
-            MQTT_USER,
-            "-P",
-            password,
-            "-t",
-            topic,
-            "-m",
-            payload_json,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+        ["docker", "inspect", "-f", "{{.State.Running}}", name],
+        capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        print(f"  ERROR: {result.stderr.strip()}", file=sys.stderr)
+    if result.returncode != 0 or "true" not in result.stdout:
+        print(f"ERROR: Docker container '{name}' is not running.", file=sys.stderr)
+        print(f"  docker inspect output: {result.stdout.strip()}", file=sys.stderr)
+        if result.stderr.strip():
+            print(f"  stderr: {result.stderr.strip()}", file=sys.stderr)
         return False
     return True
 
 
+def simplify_z2m_line(line):
+    """Extract the useful parts from a Z2M log line."""
+    # Try to find and simplify JSON payloads
+    if "payload '" in line:
+        try:
+            start = line.index("payload '") + len("payload '")
+            end = line.rindex("'")
+            payload_str = line[start:end]
+            payload = json.loads(payload_str)
+            # Keep only interesting keys
+            simplified = {k: v for k, v in payload.items() if k not in STRIP_KEYS}
+            if simplified:
+                prefix = line[:start - len("payload '")]
+                return f"{prefix}{json.dumps(simplified)}"
+            return None  # All keys were noise
+        except (ValueError, json.JSONDecodeError):
+            pass
+    return line
+
+
+def is_relevant(line):
+    """Check if a log line is relevant to C4 operations."""
+    return any(k in line for k in FILTER_KEYWORDS)
+
+
+def send_mqtt(password, topic, payload_dict):
+    """Send a single MQTT message. Returns (success, error_message)."""
+    payload_json = json.dumps(payload_dict)
+    result = subprocess.run(
+        ["docker", "exec", MOSQUITTO_CONTAINER,
+         "mosquitto_pub", "-u", MQTT_USER, "-P", password,
+         "-t", topic, "-m", payload_json],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip()
+    return True, None
+
+
 def run_commands(password, commands):
-    """Run a list of commands, capturing Z2M logs for each."""
-    for i, cmd in enumerate(commands):
-        label = cmd.get("label", f"Command {i + 1}")
-        topic = cmd.get("topic", DEFAULT_TOPIC)
-        payload = cmd.get("payload", {})
-        delay = cmd.get("delay", DEFAULT_DELAY)
+    """Run commands with a persistent Z2M log watcher."""
+    # Start the Z2M log tailer ONCE for the whole session
+    log_proc = subprocess.Popen(
+        ["docker", "logs", "-f", "--tail", "0", Z2M_CONTAINER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    # Make stdout non-blocking
+    fd = log_proc.stdout.fileno()
+    os.set_blocking(fd, False)
 
-        print(f"\n{'=' * 60}")
-        print(f"[{i + 1}/{len(commands)}] {label}")
-        print(f"  Topic: {topic}")
-        print(f"  Payload: {json.dumps(payload)}")
-        print(f"{'-' * 60}")
+    total_raw_lines = 0
+    total_relevant_lines = 0
 
-        # Start log capture
-        start_time = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-        stop_event = threading.Event()
-        log_lines = []
-        log_thread = threading.Thread(
-            target=tail_z2m_logs,
-            args=(stop_event, start_time, log_lines),
-            daemon=True,
-        )
-        log_thread.start()
+    try:
+        for i, cmd in enumerate(commands):
+            label = cmd.get("label", f"Command {i + 1}")
+            topic = cmd.get("topic", DEFAULT_TOPIC)
+            payload = cmd.get("payload", {})
+            delay = cmd.get("delay", DEFAULT_DELAY)
 
-        # Small delay to let the log tailer attach
-        time.sleep(0.3)
+            # Drain any buffered log lines before sending
+            while select.select([fd], [], [], 0)[0]:
+                line = log_proc.stdout.readline()
+                if not line:
+                    break
 
-        # Send the command
-        if not send_mqtt(password, topic, payload):
-            stop_event.set()
-            continue
+            print(f"\n>>> [{i + 1}/{len(commands)}] {label}")
+            print(f"    {json.dumps(payload)}")
 
-        # Wait for response
-        time.sleep(delay)
-        stop_event.set()
-        log_thread.join(timeout=1)
+            ok, err = send_mqtt(password, topic, payload)
+            if not ok:
+                print(f"    MQTT ERROR: {err}")
+                continue
 
-        # Print captured logs
-        if log_lines:
-            print("  Z2M Response:")
-            for line in log_lines:
-                print(f"    {line}")
-        else:
-            print("  Z2M Response: (no relevant output)")
+            # Collect log output for `delay` seconds
+            deadline = time.monotonic() + delay
+            cmd_raw = 0
+            cmd_relevant = 0
+            while time.monotonic() < deadline:
+                ready = select.select([fd], [], [], 0.1)
+                if ready[0]:
+                    line = log_proc.stdout.readline()
+                    if not line:
+                        break
+                    line = line.rstrip()
+                    cmd_raw += 1
+                    total_raw_lines += 1
+                    if is_relevant(line):
+                        simplified = simplify_z2m_line(line)
+                        if simplified:
+                            cmd_relevant += 1
+                            total_relevant_lines += 1
+                            print(f"    {simplified}")
 
-    print(f"\n{'=' * 60}")
-    print("Done.")
+            if cmd_relevant == 0:
+                print(f"    (no relevant output — {cmd_raw} raw lines seen)")
+
+    finally:
+        log_proc.terminate()
+        log_proc.wait()
+
+    print(f"\n--- Done: {total_relevant_lines} relevant / {total_raw_lines} raw log lines ---")
 
 
 def main():
+    """CLI entry point."""
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(1)
@@ -152,7 +178,6 @@ def main():
     password = sys.argv[1]
 
     if sys.argv[2] == "-c":
-        # Single command mode
         if len(sys.argv) < 4:
             print("ERROR: -c requires a JSON payload argument", file=sys.stderr)
             sys.exit(1)
@@ -160,10 +185,15 @@ def main():
         topic = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_TOPIC
         commands = [{"label": "Single command", "payload": payload, "topic": topic}]
     else:
-        # File mode
         with open(sys.argv[2]) as f:
             commands = json.load(f)
 
+    # Preflight checks
+    for container in (MOSQUITTO_CONTAINER, Z2M_CONTAINER):
+        if not check_docker_container(container):
+            sys.exit(1)
+
+    print(f"Sending {len(commands)} command(s)...")
     run_commands(password, commands)
 
 

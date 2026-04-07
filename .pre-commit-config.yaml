@@ -4,8 +4,10 @@ repos:
     rev: v0.13.1
     hooks:
       - id: ruff-format
+        exclude: ^scripts/c4mqtt$
       - id: ruff
         args: ["--fix", "--show-fixes"]
+        exclude: ^scripts/c4mqtt$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

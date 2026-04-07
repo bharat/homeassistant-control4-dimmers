@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""
+Send C4 MQTT commands and capture Z2M log output.
+
+Usage:
+  scripts/c4mqtt <mqtt_password> <command_file.json>
+  scripts/c4mqtt <mqtt_password> -c '{"c4_cmd": "c4.dmx.led 01 05 ff0000"}'
+
+The JSON file should be an array of objects, each with:
+  - "topic": MQTT topic (default: "zigbee2mqtt/Entry Keypad/set")
+  - "payload": dict to send as JSON
+  - "label": optional description for output
+  - "delay": seconds to wait after sending (default: 2)
+
+Example commands.json:
+[
+  {"label": "Button 2 red override", "payload": {"c4_cmd": "c4.dmx.led 01 05 ff0000"}},
+  {"label": "Button 3 red override", "payload": {"c4_cmd": "c4.dmx.led 02 05 ff0000"}}
+]
+"""
+
+import json
+import subprocess
+import sys
+import threading
+import time
+from datetime import UTC, datetime
+
+MOSQUITTO_CONTAINER = "mosquitto"
+Z2M_CONTAINER = "zigbee2mqtt"
+MQTT_USER = "ha"
+DEFAULT_TOPIC = "zigbee2mqtt/Entry Keypad/set"
+DEFAULT_DELAY = 2
+
+
+def tail_z2m_logs(stop_event, start_time, output_lines):
+    """Tail Z2M docker logs in a background thread, collecting relevant lines."""
+    proc = subprocess.Popen(
+        ["docker", "logs", "--since", start_time, "-f", Z2M_CONTAINER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        while not stop_event.is_set():
+            line = proc.stdout.readline()
+            if not line:
+                break
+            line = line.rstrip()
+            # Filter to relevant C4 lines
+            if any(
+                k in line
+                for k in (
+                    "C4 RECV",
+                    "C4 BUTTON",
+                    "c4_cmd",
+                    "c4_last_cmd",
+                    "c4_response",
+                    "c4.dmx",
+                    "c4.kp",
+                    "action",
+                )
+            ):
+                output_lines.append(line)
+    finally:
+        proc.terminate()
+
+
+def send_mqtt(password, topic, payload_dict):
+    """Send a single MQTT message via mosquitto_pub in the docker container."""
+    payload_json = json.dumps(payload_dict)
+    result = subprocess.run(
+        [
+            "docker",
+            "exec",
+            MOSQUITTO_CONTAINER,
+            "mosquitto_pub",
+            "-u",
+            MQTT_USER,
+            "-P",
+            password,
+            "-t",
+            topic,
+            "-m",
+            payload_json,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"  ERROR: {result.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
+
+
+def run_commands(password, commands):
+    """Run a list of commands, capturing Z2M logs for each."""
+    for i, cmd in enumerate(commands):
+        label = cmd.get("label", f"Command {i + 1}")
+        topic = cmd.get("topic", DEFAULT_TOPIC)
+        payload = cmd.get("payload", {})
+        delay = cmd.get("delay", DEFAULT_DELAY)
+
+        print(f"\n{'=' * 60}")
+        print(f"[{i + 1}/{len(commands)}] {label}")
+        print(f"  Topic: {topic}")
+        print(f"  Payload: {json.dumps(payload)}")
+        print(f"{'-' * 60}")
+
+        # Start log capture
+        start_time = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+        stop_event = threading.Event()
+        log_lines = []
+        log_thread = threading.Thread(
+            target=tail_z2m_logs,
+            args=(stop_event, start_time, log_lines),
+            daemon=True,
+        )
+        log_thread.start()
+
+        # Small delay to let the log tailer attach
+        time.sleep(0.3)
+
+        # Send the command
+        if not send_mqtt(password, topic, payload):
+            stop_event.set()
+            continue
+
+        # Wait for response
+        time.sleep(delay)
+        stop_event.set()
+        log_thread.join(timeout=1)
+
+        # Print captured logs
+        if log_lines:
+            print("  Z2M Response:")
+            for line in log_lines:
+                print(f"    {line}")
+        else:
+            print("  Z2M Response: (no relevant output)")
+
+    print(f"\n{'=' * 60}")
+    print("Done.")
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(__doc__)
+        sys.exit(1)
+
+    password = sys.argv[1]
+
+    if sys.argv[2] == "-c":
+        # Single command mode
+        if len(sys.argv) < 4:
+            print("ERROR: -c requires a JSON payload argument", file=sys.stderr)
+            sys.exit(1)
+        payload = json.loads(sys.argv[3])
+        topic = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_TOPIC
+        commands = [{"label": "Single command", "payload": payload, "topic": topic}]
+    else:
+        # File mode
+        with open(sys.argv[2]) as f:
+            commands = json.load(f)
+
+    run_commands(password, commands)
+
+
+if __name__ == "__main__":
+    main()

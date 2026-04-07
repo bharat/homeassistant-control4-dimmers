@@ -1,0 +1,29 @@
+[
+  {"label": "Btn 2 (Home) - mode 05 red override",
+   "payload": {"c4_cmd": "c4.dmx.led 01 05 ff0000"}},
+
+  {"label": "Btn 3 (Away) - mode 05 red override",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 ff0000"}},
+
+  {"label": "Btn 4 (Vacation) - mode 05 red override",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ff0000"}},
+
+  {"label": "Btn 5 - mode 05 red override",
+   "payload": {"c4_cmd": "c4.dmx.led 04 05 ff0000"}},
+
+  {"label": "Btn 6 - mode 05 red override",
+   "payload": {"c4_cmd": "c4.dmx.led 05 05 ff0000"}},
+
+  {"label": "--- Pause 3s to observe ---", "payload": {"c4_cmd": "c4.dmx.led 05 05 ff0000"}, "delay": 3},
+
+  {"label": "Btn 2 - reset pushed color (mode 01) to black",
+   "payload": {"c4_cmd": "c4.dmx.led 01 01 000000"}},
+
+  {"label": "Btn 2 - reset released color (mode 02) to black",
+   "payload": {"c4_cmd": "c4.dmx.led 01 02 000000"}},
+
+  {"label": "Btn 2 - set off-color (mode 04) to red",
+   "payload": {"c4_cmd": "c4.dmx.led 01 04 ff0000"}},
+
+  {"label": "--- Check if Btn 2 LED is now red ---", "payload": {"c4_cmd": "c4.dmx.led 01 05 ff0000"}, "delay": 3}
+]

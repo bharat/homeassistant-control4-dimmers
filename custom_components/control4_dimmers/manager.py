@@ -512,15 +512,13 @@ class Control4Manager:
         domain, svc_name = service.split(".", 1)
         target = action.get("target", {})
         entity_id = self._resolve_entity_id(ieee, target.get("entity_id", ""))
-        if not entity_id:
-            LOGGER.error("No entity for %s slot %d action %s", ieee, slot_id, service)
-            return
 
         if slot.led_track_entity_id:
             await self.async_optimistic_led(ieee, slot_id)
 
         service_data = dict(action.get("data", {}))
-        service_data["entity_id"] = entity_id
+        if entity_id:
+            service_data["entity_id"] = entity_id
         await self._hass.services.async_call(domain, svc_name, service_data)
 
     async def async_optimistic_led(self, ieee: str, slot_id: int) -> None:

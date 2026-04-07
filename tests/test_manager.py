@@ -602,6 +602,31 @@ class TestExecuteSlotAction:
         )
 
     @pytest.mark.asyncio
+    async def test_action_without_target_entity(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Actions like scripts don't need a target entity."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    led_mode="fixed",
+                    double_tap_action={"action": "script.activity_home"},
+                )
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._hass.services.async_call = AsyncMock()
+        await manager.execute_slot_action(IEEE_DIMMER, 2, "double_tap")
+        manager._hass.services.async_call.assert_awaited_once_with(
+            "script", "activity_home", {}
+        )
+
+    @pytest.mark.asyncio
     async def test_no_config_does_nothing(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:

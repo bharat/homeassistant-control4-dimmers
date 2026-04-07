@@ -74,6 +74,7 @@ class DeviceConfig:
     device_type: str = ""
     device_type_override: str | None = None
     slots: list[SlotConfig] = field(default_factory=list)
+    faceplate_color: str | None = None
 
     @property
     def effective_type(self) -> str:
@@ -82,13 +83,16 @@ class DeviceConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
-        return {
+        d = {
             "ieee_address": self.ieee_address,
             "friendly_name": self.friendly_name,
             "device_type": self.device_type,
             "device_type_override": self.device_type_override,
             "slots": [s.to_dict() for s in self.slots],
         }
+        if self.faceplate_color:
+            d["faceplate_color"] = self.faceplate_color
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DeviceConfig:
@@ -99,6 +103,7 @@ class DeviceConfig:
             device_type=data.get("device_type", ""),
             device_type_override=data.get("device_type_override"),
             slots=[SlotConfig.from_dict(s) for s in data.get("slots", [])],
+            faceplate_color=data.get("faceplate_color"),
         )
 
 

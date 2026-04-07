@@ -70,6 +70,7 @@ async def _ws_get_devices(
         vol.Required("ieee_address"): cv.string,
         vol.Optional("device_type_override"): vol.Any(cv.string, None),
         vol.Optional("slots"): list,
+        vol.Optional("faceplate_color"): vol.Any(cv.string, None),
     }
 )
 @websocket_api.async_response
@@ -88,6 +89,7 @@ async def _ws_configure_device(
         ieee_address=msg["ieee_address"],
         device_type_override=msg.get("device_type_override"),
         slots=msg.get("slots"),
+        faceplate_color=msg.get("faceplate_color"),
     )
     info = manager.get_device_info(msg["ieee_address"])
     connection.send_result(msg["id"], info)

@@ -1021,7 +1021,7 @@ class Control4Card extends HTMLElement {
             <div class="name">${dev.friendly_name}</div>
           </div>
 
-          <div class="chassis${(() => { const c = this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${(() => { const c = this._config.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); return `background:#${c}; --c4-btn-bg:#${bc}; --c4-btn-border:rgba(${parseInt(c,16) < 0x808080 ? "255,255,255,0.15" : "0,0,0,0.1"})`; })()}">
+          <div class="chassis${(() => { const c = dev.config?.faceplate_color || this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${(() => { const c = dev.config?.faceplate_color || this._config.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); return `background:#${c}; --c4-btn-bg:#${bc}; --c4-btn-border:rgba(${parseInt(c,16) < 0x808080 ? "255,255,255,0.15" : "0,0,0,0.1"})`; })()}">
             ${(() => {
               // Dimmer (2 buttons) should visually match 6-slot keypad height
               const totalSlots = layout.reduce((sum, btn) => sum + btn.size, 0);
@@ -1090,6 +1090,7 @@ class Control4CardEditor extends HTMLElement {
     this._lastDetectedType = null;
     this._editingAction = null; // which action field is being edited
     this._embedded = false; // true when used inside grid editor
+    this._localFaceplateColor = undefined;
   }
 
   set hass(hass) {
@@ -1153,6 +1154,7 @@ class Control4CardEditor extends HTMLElement {
         } else {
           this._localSlots = defaultSlotsForType(effectiveType);
         }
+        this._localFaceplateColor = info.config?.faceplate_color || undefined;
       }
       this._render();
     } catch (err) {
@@ -1317,11 +1319,15 @@ class Control4CardEditor extends HTMLElement {
     this._saving = true;
     this._render();
     try {
-      await this._hass.connection.sendMessagePromise({
+      const msg = {
         type: `${DOMAIN}/device_config`,
         ieee_address: this._deviceInfo.ieee_address,
         slots: this._localSlots,
-      });
+      };
+      if (this._localFaceplateColor !== undefined) {
+        msg.faceplate_color = this._localFaceplateColor;
+      }
+      await this._hass.connection.sendMessagePromise(msg);
       this._dirty = false;
       await this._fetchDevice();
       window.dispatchEvent(new CustomEvent(`${DOMAIN}-config-saved`));
@@ -1395,7 +1401,7 @@ class Control4CardEditor extends HTMLElement {
           <span class="section-label">Color</span>
           <div class="faceplate-swatches">
             ${FACEPLATE_COLORS.map((c) => `
-              <button class="swatch ${this._config.faceplate_color === c.value ? "active" : ""}"
+              <button class="swatch ${(this._localFaceplateColor || this._config.faceplate_color) === c.value ? "active" : ""}"
                 style="background:#${c.value}" data-color="${c.value}" title="${c.label}"></button>
             `).join("")}
           </div>
@@ -1600,11 +1606,11 @@ class Control4CardEditor extends HTMLElement {
     const typeSel = root.getElementById("type-select");
     if (typeSel) typeSel.addEventListener("change", (e) => this._handleTypeChange(e.target.value));
 
-    // Faceplate color swatches
+    // Faceplate color swatches — saved to backend with device config
     for (const swatch of root.querySelectorAll(".swatch")) {
       swatch.addEventListener("click", () => {
-        this._config = { ...this._config, faceplate_color: swatch.dataset.color };
-        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config } }));
+        this._localFaceplateColor = swatch.dataset.color;
+        this._dirty = true;
         this._render();
       });
     }
@@ -1769,12 +1775,6 @@ class Control4DimmerGrid extends HTMLElement {
 
   setConfig(config) {
     this._config = config || {};
-    // Re-apply colors to existing cards (per-device override or grid default)
-    const overrides = this._config.overrides || {};
-    for (const [eid, card] of this._cards) {
-      const color = overrides[eid]?.faceplate_color || this._config.faceplate_color;
-      card.setConfig({ entity: eid, faceplate_color: color });
-    }
   }
 
   getCardSize() { return 6; }
@@ -1800,12 +1800,10 @@ class Control4DimmerGrid extends HTMLElement {
     const currentIds = new Set(this._cards.keys());
     const newIds = new Set(entities);
 
-    const overrides = this._config.overrides || {};
     for (const eid of entities) {
       if (!this._cards.has(eid)) {
         const card = document.createElement(CARD_TAG);
-        const color = overrides[eid]?.faceplate_color || this._config.faceplate_color;
-        card.setConfig({ entity: eid, faceplate_color: color });
+        card.setConfig({ entity: eid });
         this._cards.set(eid, card);
       }
     }
@@ -1972,15 +1970,6 @@ class Control4DimmerGridEditor extends HTMLElement {
         <label>Columns</label>
         <input type="number" id="grid-columns" value="${this._config.columns || 4}" min="1" max="6" style="width:60px;flex:none">
       </div>
-      <div class="config-row">
-        <label>Color</label>
-        <div class="faceplate-swatches">
-          ${FACEPLATE_COLORS.map((c) => `
-            <button class="swatch ${this._config.faceplate_color === c.value ? "active" : ""}"
-              style="background:#${c.value}" data-color="${c.value}" title="${c.label}"></button>
-          `).join("")}
-        </div>
-      </div>
 
       ${entities.length === 0 ? `
         <div class="no-devices">No Control4 devices found.</div>
@@ -2006,21 +1995,9 @@ class Control4DimmerGridEditor extends HTMLElement {
         this._subEditor = document.createElement(EDITOR_TAG);
         this._subEditor._embedded = true;
         this._subEditor.hass = this._hass;
-        // Pass per-device color override or fall back to grid default
-        const overrides = this._config.overrides || {};
-        const deviceColor = overrides[selected.entity_id]?.faceplate_color || this._config.faceplate_color;
-        this._subEditor.setConfig({ entity: selected.entity_id, faceplate_color: deviceColor });
-        this._subEditor.addEventListener("config-changed", (e) => {
-          e.stopPropagation();
-          // Capture per-device color override
-          const subConfig = e.detail?.config;
-          if (subConfig?.faceplate_color) {
-            const newOverrides = { ...this._config.overrides };
-            newOverrides[selected.entity_id] = { faceplate_color: subConfig.faceplate_color };
-            this._config = { ...this._config, overrides: newOverrides };
-            this._fireConfigChanged();
-          }
-        });
+        this._subEditor.setConfig({ entity: selected.entity_id });
+        // Suppress config-changed (color is saved to backend on Save)
+        this._subEditor.addEventListener("config-changed", (e) => e.stopPropagation());
         container.appendChild(this._subEditor);
       }
     }
@@ -2044,14 +2021,6 @@ class Control4DimmerGridEditor extends HTMLElement {
       this._config = { ...this._config, columns: parseInt(e.target.value, 10) || 4 };
       this._fireConfigChanged();
     });
-
-    for (const swatch of root.querySelectorAll(".swatch")) {
-      swatch.addEventListener("click", () => {
-        this._config = { ...this._config, faceplate_color: swatch.dataset.color };
-        this._fireConfigChanged();
-        this._render();
-      });
-    }
 
     for (const tab of root.querySelectorAll(".tab")) {
       tab.addEventListener("click", () => {

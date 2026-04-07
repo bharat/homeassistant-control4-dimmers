@@ -360,6 +360,7 @@ class Control4Manager:
         ieee_address: str,
         device_type_override: str | None = None,
         slots: list[dict[str, Any]] | None = None,
+        faceplate_color: str | None = None,
     ) -> None:
         """Save device configuration and push LED colors via MQTT."""
         state = self._devices.get(ieee_address)
@@ -378,6 +379,9 @@ class Control4Manager:
 
         if slots is not None:
             config.slots = [SlotConfig.from_dict(s) for s in slots]
+
+        if faceplate_color is not None:
+            config.faceplate_color = faceplate_color
 
         config.friendly_name = state.friendly_name
         if state.device_type:

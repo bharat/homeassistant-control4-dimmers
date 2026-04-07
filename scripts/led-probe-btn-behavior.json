@@ -1,0 +1,36 @@
+[
+  {"label": "=== TEST: c4.dmx.btn param 01 behavioral effects on button 5 (index 04) ==="},
+  {"label": "First restore known LED colors for button 5"},
+
+  {"label": "Btn 5 - set on-color (mode 03) to green",
+   "payload": {"c4_cmd": "c4.dmx.led 04 03 00ff00"}},
+
+  {"label": "Btn 5 - set off-color (mode 04) to red",
+   "payload": {"c4_cmd": "c4.dmx.led 04 04 ff0000"}},
+
+  {"label": "Btn 5 - set push-color (mode 01) to yellow",
+   "payload": {"c4_cmd": "c4.dmx.led 04 01 ffff00"}},
+
+  {"label": "Btn 5 - set release-color (mode 02) to blue",
+   "payload": {"c4_cmd": "c4.dmx.led 04 02 0000ff"}},
+
+  {"label": "=== Now cycle through param 01 values. OBSERVE button 5 at each step ==="},
+
+  {"label": "--- VALUE 00: btn 04 01 00 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}, "delay": 6},
+
+  {"label": "--- VALUE 01: btn 04 01 01 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 01"}, "delay": 6},
+
+  {"label": "--- VALUE 02: btn 04 01 02 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 02"}, "delay": 6},
+
+  {"label": "--- VALUE 03: btn 04 01 03 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}, "delay": 6},
+
+  {"label": "--- VALUE 04: btn 04 01 04 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 04"}, "delay": 6},
+
+  {"label": "--- VALUE 05: btn 04 01 05 --- PRESS BTN 5, note color + press behavior ---",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 05"}, "delay": 6}
+]

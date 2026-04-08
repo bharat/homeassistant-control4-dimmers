@@ -340,6 +340,166 @@ for the C4-KC120277 (pure keypad with no load). This was the key to runtime
 device detection — all newer C4 devices share identical Zigbee endpoint
 structures and can't be differentiated by fingerprinting alone.
 
+## Decoding Button Behavior and LED Modes on the KD120
+
+The C4-KD120 keypad dimmer presented a deeper challenge than simple
+dimmers. Its six buttons can each be independently configured for
+different behaviors (toggle load, momentary, programmable) and LED modes
+(follow load, push/release colors, static colors). Control4's Composer
+software sets all of this — but how? The commands weren't in any public
+documentation.
+
+We knew from ArcadeMachinist's 2022 work that the older C4-KP6-Z keypad
+used `c4.kp.*` commands for button events and LED colors. But when we
+tried these on the KD120, every command returned `n01` — not implemented.
+The KD120 uses the newer `c4.dmx.*` namespace exclusively.
+
+### The LED Mode Mystery
+
+The mystery started with a simple observation: some buttons on a
+Composer-configured KD120 had "push/release" LED behavior — the LED
+flashes a different color while the button is physically held down, then
+reverts when released. Other buttons had static on/off colors that
+tracked the load state. We could set on-color (mode 03) and off-color
+(mode 04) easily, and override (mode 05) worked for immediate color
+changes. But we couldn't figure out how to switch between LED modes.
+
+We tried `c4.dmx.led` modes 01 and 02. They accepted SET commands
+(`000` success) but returned `e00` on GET — write-only. Setting mode 01
+to a color on button 5 (previously unconfigured) gave it push/release
+behavior — the LED flashed that color on press. Setting mode 01 back to
+`000000` disabled the flash. But the relationship was fragile:
+re-sending a non-black color to mode 01 didn't always restore the
+behavior.
+
+### Systematic Protocol Probing
+
+To solve this properly, we built `scripts/c4mqtt` — a diagnostic tool
+that sends C4 commands via MQTT through our Z2M converter and captures
+filtered log output with sequence-matched responses. With interactive
+mode (`"wait": true` in command files), we could send a command, observe
+the physical result at the keypad, and press Enter to continue.
+
+We probed systematically:
+
+**Mode scan** — tried GET on `c4.dmx.led` modes 07 through ff. Every
+one returned `e00`. Only modes 01–06 exist, and mode 06 is invalid. The
+complete LED mode map:
+
+| Mode | Function | GET | SET |
+|------|----------|-----|-----|
+| 01 | Push/pressed color | `e00` (write-only) | `000` |
+| 02 | Release color | `e00` (write-only) | `000` |
+| 03 | On-state color | Returns color | `000` |
+| 04 | Off-state color | Returns color | `000` |
+| 05 | Override (persistent) | `e00` | `000` |
+| 06 | Invalid | `e00` | `e00` |
+
+**Command namespace scan** — probed `c4.dmx.key`, `c4.dmx.btn`,
+`c4.dmx.lm`, `c4.dmx.but`, `c4.dmx.bm`, `c4.sy.ver`, `c4.sy.id`, and
+`c4.sy.rst`. Response codes told us which commands existed:
+
+- `e00` = command recognized, wrong arguments
+- `n01` = command not implemented
+- `v01` = command recognized, invalid value
+- `000` = success
+
+Two commands returned `e00` instead of `n01`: **`c4.dmx.key`** and
+**`c4.dmx.btn`**. Both were recognized by the firmware but we hadn't
+found the right argument format.
+
+### Discovering c4.dmx.btn
+
+We tried increasing numbers of arguments on `c4.dmx.btn`. Two args
+(`btn 01 00`) returned `e00`. Then three args:
+
+```
+0s<seq> c4.dmx.btn 01 00 00    → 0r<seq> v01   (format right, value wrong!)
+0s<seq> c4.dmx.btn 01 01 01    → 0r<seq> 000   (success!)
+```
+
+The `v01` response was the breakthrough — it meant the three-argument
+format was correct, but value `00` was invalid for parameter `00`. We'd
+found the syntax: `c4.dmx.btn <button_index> <param_id> <value>`.
+
+We mapped the parameter space by trying every combination. Only parameter
+`01` accepted values:
+
+| Param | Values 00–05 | Values 06+ |
+|-------|-------------|------------|
+| 00 | All `v01` | All `v01` |
+| **01** | **All `000`** | **All `000`** |
+| 02–10 | All `v01` | All `v01` |
+
+### Button Behavior Values
+
+With interactive pauses, we set parameter 01 to each value on button 5
+and physically tested the result:
+
+| Value | Firmware Behavior |
+|-------|------------------|
+| 00 | Disabled — no response to press |
+| 01 | Load on — single press turns load on |
+| 02 | Toggle load — each press toggles on/off |
+| 03 | Unknown — may be hold-related |
+| 04 | Momentary — hold dims load off, release restores |
+| 05 | Programmable — no firmware action, software-only events |
+
+This is the command that Control4's Composer uses to configure what each
+button does at the firmware level. Values 00–05 correspond to the button
+behavior options visible in Composer's UI.
+
+### The Override Discovery
+
+The most important finding was about `c4.dmx.led` mode 05. We'd assumed
+override was temporary — the 2013 debug log used it for momentary
+effects. But testing revealed it's **persistent**: an override color
+stays until another override replaces it, surviving across button
+presses, load state changes, and extended time periods.
+
+This explained a confusing observation. After we sent
+`c4.dmx.led 02 05 ff0000` (override button 3 to red) and later
+`c4.dmx.led 02 05 000000` (override to black), button 3 went black and
+*stayed* black — even after we set mode 04 (off-color) to red. The
+black override was sitting on top, hiding the on/off colors underneath.
+
+We confirmed this with button 6, which had working Composer LED behavior
+(red static, blue flash on press). Changing its button behavior with
+`c4.dmx.btn 05 01 00` (disabled) did **not** affect its LED — it
+continued showing red with blue flash. LED mode and button behavior are
+completely independent systems in the firmware.
+
+### The Practical Solution
+
+With these findings, we chose a pragmatic approach: use mode 05 override
+as the primary LED control mechanism, driven by software. Rather than
+trying to configure the firmware's internal LED mode switching (which
+would require cracking the still-unknown `c4.dmx.key` command or finding
+the LED mode parameter in `c4.dmx.btn`), we:
+
+1. Send `c4.dmx.btn <button> 01 <value>` to set the firmware button
+   behavior (toggle, load on, disabled, etc.)
+2. Store on/off colors in firmware via modes 03/04 (for future use if
+   we decode the LED mode command)
+3. Send mode 05 override with the correct color based on tracked entity
+   state
+4. Update the override in real-time via HA state change listeners
+
+This gives us full control over both button behavior and LED colors,
+with the LED tracking responding to any HA entity state change within
+milliseconds. The remaining mystery — how Composer configures push/release
+LED mode — is an optimization opportunity, not a blocker.
+
+### Unsolved: c4.dmx.key
+
+The `c4.dmx.key` command remains undecoded. It appeared in the 2013
+HC-800 debug log and returns `e00` (recognized) on the KD120, but every
+argument pattern we tried — single values, two-arg, three-arg with
+hex colors — returned `e00`. It may require a different value encoding,
+or it may be a GET-only command that needs the `0g` prefix (our
+diagnostic tool sends `0s` for all commands). This is a candidate for
+future investigation.
+
 ## What We Built
 
 The result is a bridge that lets Control4 hardware participate fully in a
@@ -347,7 +507,9 @@ Home Assistant environment:
 
 - **On/off and dimming** via standard Zigbee, no proprietary protocol needed
 - **Per-button LED color control** with ON-state and OFF-state colors,
-  exposed as native HA light entities with color pickers
+  using persistent mode 05 overrides driven by HA state tracking
+- **Firmware button behavior** — configure each button as toggle, load-on,
+  momentary, or programmable via `c4.dmx.btn`
 - **Button press events** (press, hold, click count) as HA actions
 - **Runtime device detection** — a single protocol query identifies which of
   three C4 device types you have

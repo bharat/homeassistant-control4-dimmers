@@ -436,18 +436,27 @@ We mapped the parameter space by trying every combination. Only parameter
 With interactive pauses, we set parameter 01 to each value on button 5
 and physically tested the result:
 
-| Value | Firmware Behavior |
-|-------|------------------|
-| 00 | Disabled — no response to press |
-| 01 | Load on — single press turns load on |
-| 02 | Toggle load — each press toggles on/off |
-| 03 | Unknown — may be hold-related |
-| 04 | Momentary — hold dims load off, release restores |
-| 05 | Programmable — no firmware action, software-only events |
+| Value | Firmware Behavior | Events? | Load Control? |
+|-------|------------------|---------|---------------|
+| 00 | Disabled | None | None |
+| 01 | Load off | Yes | Off only |
+| 02 | Toggle load | Yes | Toggle on/off |
+| 03 | Programmable | Yes (press, hold, release) | None |
+| 04 | Momentary hold | Yes | Hold dims off, release restores |
+| 05 | Unknown | Untested | Untested |
+
+The critical distinction is between value 00 (disabled — suppresses all
+button events) and value 03 (programmable — sends press, hold count, and
+hold end events but performs no firmware load control). For
+software-handled buttons, value 03 is correct; value 00 would silently
+swallow button presses.
+
+Value 01 is load-off only, not load-on. There is no firmware-level
+"load on only" command — the closest equivalent is value 02 (toggle),
+constrained by software.
 
 This is the command that Control4's Composer uses to configure what each
-button does at the firmware level. Values 00–05 correspond to the button
-behavior options visible in Composer's UI.
+button does at the firmware level.
 
 ### The Override Discovery
 
@@ -462,6 +471,12 @@ This explained a confusing observation. After we sent
 `c4.dmx.led 02 05 000000` (override to black), button 3 went black and
 *stayed* black — even after we set mode 04 (off-color) to red. The
 black override was sitting on top, hiding the on/off colors underneath.
+
+We tested three ways to clear an active override: sending mode 05 with
+no value (returned `e00`), re-sending mode 04, and re-sending mode 03.
+None of them broke through — the override stayed white while modes 03/04
+silently updated in firmware storage. **Once mode 05 is set, only
+another mode 05 command can change the LED.**
 
 We confirmed this with button 6, which had working Composer LED behavior
 (red static, blue flash on press). Changing its button behavior with

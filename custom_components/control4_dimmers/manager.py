@@ -406,12 +406,14 @@ class Control4Manager:
         self.setup_light_tracking()
         self.notify_listeners()
 
-    # Map our behavior names to c4.dmx.btn firmware values
+    # Map our behavior names to c4.dmx.btn firmware values:
+    #   00=disabled (no events), 01=load_off, 02=toggle, 03=programmable
+    #   (sends events, no load control), 04=momentary hold
     _BEHAVIOR_TO_FIRMWARE: ClassVar[dict[str, int]] = {
-        "keypad": 0,  # disabled in firmware, software handles actions
+        "keypad": 3,  # programmable: sends events, software handles actions
         "toggle_load": 2,
-        "load_on": 1,
-        "load_off": 1,  # firmware "on" — software inverts via action
+        "load_on": 2,  # no firmware "on only" — use toggle, software constrains
+        "load_off": 1,
     }
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:

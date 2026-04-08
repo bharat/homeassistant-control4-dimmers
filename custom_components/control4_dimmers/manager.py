@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components import mqtt
 from homeassistant.const import EVENT_STATE_CHANGED
@@ -406,6 +406,14 @@ class Control4Manager:
         self.setup_light_tracking()
         self.notify_listeners()
 
+    # Map our behavior names to c4.dmx.btn firmware values
+    _BEHAVIOR_TO_FIRMWARE: ClassVar[dict[str, int]] = {
+        "keypad": 0,  # disabled in firmware, software handles actions
+        "toggle_load": 2,
+        "load_on": 1,
+        "load_off": 1,  # firmware "on" — software inverts via action
+    }
+
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
         """Push slot LED colors and button config to the device via MQTT."""
         LOGGER.debug(
@@ -415,18 +423,29 @@ class Control4Manager:
         )
         for slot in config.slots:
             wire_id = slot.slot_id - 1
-            # Set LED on-color (mode 03)
+            # Set firmware button behavior via c4.dmx.btn
+            fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 0)
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
+            )
+            # Store on/off colors in firmware (modes 03/04)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
             )
-            # Set LED off-color (mode 04)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
-            # Store button behavior and LED mode in Z2M state
-            # "fixed" is our UI concept; firmware only knows "programmed"
+            # Set immediate LED color via override (mode 05)
+            # Mode 05 is persistent and takes priority over modes 03/04
+            initial_color = self._resolve_initial_led_color(state, slot)
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {initial_color}"},
+            )
+            # Store behavior and LED mode in Z2M state for frontend
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode
             )
@@ -437,6 +456,20 @@ class Control4Manager:
                     f"button_{slot.slot_id}_led_mode": firmware_led_mode,
                 },
             )
+
+    def _resolve_initial_led_color(self, state: DeviceState, slot: SlotConfig) -> str:
+        """Determine the correct LED color to display right now."""
+        if slot.led_mode == "fixed":
+            return slot.led_off_color
+        # For follow_load and programmed modes, check tracked entity state
+        track_id = slot.led_track_entity_id
+        if track_id:
+            resolved = self._resolve_entity_id(state.ieee_address, track_id)
+            if resolved:
+                entity_state = self._hass.states.get(resolved)
+                if entity_state and entity_state.state == "on":
+                    return slot.led_on_color
+        return slot.led_off_color
 
     @staticmethod
     def _find_slot(config: DeviceConfig, slot_id: int) -> SlotConfig | None:

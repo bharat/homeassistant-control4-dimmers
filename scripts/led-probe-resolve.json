@@ -1,0 +1,65 @@
+[
+  {"label": "=== RESOLVE: Verify behavior values and mode 05 clearing ==="},
+  {"label": "Using button 4 (index 03) which has mode 05 red override"},
+
+  {"label": "=== Q1: Can we clear mode 05 override? ==="},
+
+  {"label": "Btn 4 - confirm off-color is something visible (set mode 04 to green)",
+   "payload": {"c4_cmd": "c4.dmx.led 03 04 00ff00"}},
+
+  {"label": "Btn 4 - set override to white (confirm override works)",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ffffff"}},
+
+  {"label": "--- Btn 4 should be WHITE now (override). Confirm, then ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - try clearing override with mode 05 no-value (GET-style)",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05"}},
+
+  {"label": "--- Btn 4: still white, or changed to green (mode 04)? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - re-override to white",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ffffff"}},
+
+  {"label": "Btn 4 - try setting mode 04 green AFTER override - does it break through?",
+   "payload": {"c4_cmd": "c4.dmx.led 03 04 00ff00"}},
+
+  {"label": "--- Btn 4: still white, or green? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - re-override to white again",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ffffff"}},
+
+  {"label": "Btn 4 - try setting mode 03 blue AFTER override",
+   "payload": {"c4_cmd": "c4.dmx.led 03 03 0000ff"}},
+
+  {"label": "--- Btn 4: still white, or blue? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== Q2: Behavior value 01 — load_on or load_off? ==="},
+  {"label": "Make sure entry light is ON before this test"},
+
+  {"label": "Btn 4 - set behavior to value 01",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 01"}},
+
+  {"label": "--- LIGHT IS ON. Press Btn 4. Did light turn OFF or stay ON? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Turn light back on manually if needed, then ENTER",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - set behavior to value 00 (disabled) to stop accidental toggles",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 00"}},
+
+  {"label": "=== Q3: Behavior value 03 — test with hold ==="},
+
+  {"label": "Btn 4 - set behavior to value 03",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 03"}},
+
+  {"label": "--- TAP Btn 4. Then HOLD Btn 4 for 2s. Describe both. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - reset to disabled",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 00"}}
+]

@@ -124,12 +124,15 @@ class Control4Manager:
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
-            is_load = slot and slot.behavior in (
-                "load_on",
-                "load_off",
-                "toggle_load",
-            )
-            should_act = (is_scene and is_load) or (
+            behavior = slot.behavior if slot else "keypad"
+            # Scene on toggle_load: firmware toggled, software syncs LED.
+            # Scene on load_on/load_off: skip — firmware toggle (02)
+            # already ran; no "on only" mode exists so software can't
+            # reliably fix it.
+            # Press on programmable: execute tap_action immediately
+            # (unless double_tap configured — handled by click_count).
+            is_load = behavior in ("load_on", "load_off", "toggle_load")
+            should_act = (is_scene and behavior == "toggle_load") or (
                 not is_scene
                 and not is_load
                 and (not slot or not slot.double_tap_action)
@@ -426,12 +429,15 @@ class Control4Manager:
         for slot in config.slots:
             wire_id = slot.slot_id - 1
             # Set firmware button behavior via c4.dmx.btn
-            fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 0)
+            fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 3)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
             )
-            # Store on/off colors in firmware (modes 03/04)
+            # Store on/off colors in firmware (modes 03/04).
+            # These are NOT visible while mode 05 override is active,
+            # but are stored for potential future use if we decode
+            # the firmware LED mode command.
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},

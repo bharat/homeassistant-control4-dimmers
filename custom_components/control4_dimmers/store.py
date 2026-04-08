@@ -95,21 +95,6 @@ def _migrate_behavior(slot: SlotConfig) -> bool:
             "target": {"entity_id": target},
         }
         slot.led_track_entity_id = target
-    elif behavior == "toggle_load":
-        slot.tap_action = {
-            "action": "light.toggle",
-            "target": {"entity_id": "__self_load__"},
-        }
-    elif behavior == "load_on":
-        slot.tap_action = {
-            "action": "light.turn_on",
-            "target": {"entity_id": "__self_load__"},
-        }
-    elif behavior == "load_off":
-        slot.tap_action = {
-            "action": "light.turn_off",
-            "target": {"entity_id": "__self_load__"},
-        }
 
     slot.behavior = "keypad"
     slot.target_entity_id = None

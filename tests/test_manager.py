@@ -690,10 +690,10 @@ class TestDispatchWithActions:
         # Should NOT create a task — firmware handles load control
         manager._hass.async_create_task.assert_not_called()
 
-    def test_scene_event_triggers_load_control(
+    def test_scene_event_triggers_toggle_load(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Scene event (c4.dmx.sc) on load-control button triggers load."""
+        """Scene event (c4.dmx.sc) on toggle_load button triggers software load."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -705,8 +705,39 @@ class TestDispatchWithActions:
         )
         manager._store._devices[IEEE_DIMMER] = config
         manager._dispatch_button_action(dimmer_state, "button_1_scene")
-        # Scene events on load-control buttons SHOULD create a task
+        # Scene events on toggle_load SHOULD create a task
         manager._hass.async_create_task.assert_called()
+
+    def test_scene_event_skips_load_on(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Scene on load_on skips software: firmware already toggled."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        # Firmware toggle (02) already ran — no software action
+        manager._hass.async_create_task.assert_not_called()
+
+    def test_scene_event_skips_load_off(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Scene on load_off button does NOT trigger software."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=5, behavior="load_off", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._dispatch_button_action(dimmer_state, "button_5_scene")
+        manager._hass.async_create_task.assert_not_called()
 
     def test_press_defers_when_double_tap_configured(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -975,6 +1006,141 @@ class TestPushSlotConfig:
         assert len(behavior_calls) == 1
         payload = behavior_calls[0][0][1]
         assert payload["button_2_led_mode"] == "programmed"
+
+    @pytest.mark.asyncio
+    async def test_sends_c4_dmx_btn_for_toggle_load(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """toggle_load sends c4.dmx.btn with firmware value 02."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="toggle_load", led_mode="follow_load")
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        btn_calls = [c for c in mock_mqtt.call_args_list if "c4.dmx.btn" in str(c)]
+        assert len(btn_calls) == 1
+        assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 01 01 02"}
+
+    @pytest.mark.asyncio
+    async def test_sends_c4_dmx_btn_for_keypad(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Keypad sends c4.dmx.btn with firmware value 03 (programmable)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="keypad", led_mode="fixed")],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        btn_calls = [c for c in mock_mqtt.call_args_list if "c4.dmx.btn" in str(c)]
+        assert len(btn_calls) == 1
+        assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 01 01 03"}
+
+    @pytest.mark.asyncio
+    async def test_sends_c4_dmx_btn_for_load_off(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """load_off sends c4.dmx.btn with firmware value 01."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=5, behavior="load_off", led_mode="follow_load")],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        btn_calls = [c for c in mock_mqtt.call_args_list if "c4.dmx.btn" in str(c)]
+        assert len(btn_calls) == 1
+        assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 04 01 01"}
+
+    @pytest.mark.asyncio
+    async def test_sends_mode_05_override(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """_push_slot_config sends mode 05 override for visible LED color."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="keypad",
+                    led_mode="fixed",
+                    led_on_color="00ff00",
+                    led_off_color="ff0000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        override_calls = [
+            c
+            for c in mock_mqtt.call_args_list
+            if "c4.dmx.led" in str(c) and " 05 " in str(c)
+        ]
+        assert len(override_calls) == 1
+        # Fixed mode with no tracked entity → off_color
+        assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 ff0000"}
+
+    @pytest.mark.asyncio
+    async def test_mode_05_uses_on_color_when_tracked_entity_is_on(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Mode 05 override uses on_color when tracked entity is on."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="toggle_load",
+                    led_mode="follow_load",
+                    led_on_color="ffffff",
+                    led_off_color="000000",
+                    led_track_entity_id="__self_load__",
+                )
+            ],
+        )
+        # Mock the light entity as ON
+        light_state = MagicMock()
+        light_state.entity_id = "light.kitchen"
+        light_state.attributes = {"friendly_name": "Kitchen"}
+        light_state.state = "on"
+        manager._hass.states.async_all.return_value = [light_state]
+        manager._hass.states.get.return_value = light_state
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        override_calls = [
+            c
+            for c in mock_mqtt.call_args_list
+            if "c4.dmx.led" in str(c) and " 05 " in str(c)
+        ]
+        assert len(override_calls) == 1
+        assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 ffffff"}
 
 
 class TestGetDeviceInfo:

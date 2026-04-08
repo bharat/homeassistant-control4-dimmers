@@ -1,0 +1,128 @@
+[
+  {"label": "=========================================================="},
+  {"label": "PHYSICAL KEYPAD VERIFICATION TEST"},
+  {"label": "Tests button behavior, LED override, and LED tracking."},
+  {"label": "Using buttons 3-5 (index 02-04) on Entry Keypad."},
+  {"label": "Button 6 is left as Composer reference."},
+  {"label": "=========================================================="},
+
+  {"label": "=== SETUP: Reset buttons 3-5 to known state ==="},
+
+  {"label": "Btn 3 - disable (behavior 00)",
+   "payload": {"c4_cmd": "c4.dmx.btn 02 01 00"}},
+  {"label": "Btn 4 - disable (behavior 00)",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 00"}},
+  {"label": "Btn 5 - disable (behavior 00)",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}},
+  {"label": "Btn 3 - override black",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 000000"}},
+  {"label": "Btn 4 - override black",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 000000"}},
+  {"label": "Btn 5 - override black",
+   "payload": {"c4_cmd": "c4.dmx.led 04 05 000000"}},
+
+  {"label": "--- EXPECT: Buttons 3-5 are BLACK and do NOTHING when pressed. Verify, then ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 1: Mode 05 override sets LED color ==="},
+
+  {"label": "Btn 3 - override to RED",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 ff0000"}},
+
+  {"label": "--- EXPECT: Button 3 is RED. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 3 - override to GREEN",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 00ff00"}},
+
+  {"label": "--- EXPECT: Button 3 is GREEN. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 3 - override to BLACK",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 000000"}},
+
+  {"label": "--- EXPECT: Button 3 is BLACK (off). ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 2: Behavior 02 (toggle) controls load ==="},
+
+  {"label": "Btn 4 - set behavior to toggle (02)",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 02"}},
+  {"label": "Btn 4 - override to WHITE so you can see it",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ffffff"}},
+
+  {"label": "--- EXPECT: Btn 4 is WHITE. Press Btn 4 — load should TOGGLE. Press again — toggles back. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 3: Behavior 03 (programmable) sends events, no load ==="},
+
+  {"label": "Btn 5 - set behavior to programmable (03)",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 03"}},
+  {"label": "Btn 5 - override to BLUE so you can see it",
+   "payload": {"c4_cmd": "c4.dmx.led 04 05 0000ff"}},
+
+  {"label": "--- EXPECT: Btn 5 is BLUE. Press Btn 5 — load does NOT change. (Events fire in Z2M logs but no physical effect.) ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 4: Behavior 01 (load_off) only turns load off ==="},
+
+  {"label": "Make sure entry light is ON (use Btn 1 if needed)",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 3 - set behavior to load_off (01)",
+   "payload": {"c4_cmd": "c4.dmx.btn 02 01 01"}},
+  {"label": "Btn 3 - override to RED",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 ff0000"}},
+
+  {"label": "--- EXPECT: Light is ON. Btn 3 is RED. Press Btn 3 — light turns OFF. Press again — nothing (already off). ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 5: Behavior 00 (disabled) suppresses all events ==="},
+
+  {"label": "Btn 3 - set behavior to disabled (00)",
+   "payload": {"c4_cmd": "c4.dmx.btn 02 01 00"}},
+
+  {"label": "--- EXPECT: Btn 3 still RED. Press Btn 3 — NOTHING happens (no load change, no events in logs). ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 6: Mode 05 is the ONLY way to change LED ==="},
+
+  {"label": "Btn 4 - set mode 04 (off-color) to GREEN",
+   "payload": {"c4_cmd": "c4.dmx.led 03 04 00ff00"}},
+  {"label": "Btn 4 - set mode 03 (on-color) to BLUE",
+   "payload": {"c4_cmd": "c4.dmx.led 03 03 0000ff"}},
+
+  {"label": "--- EXPECT: Btn 4 is still WHITE (from test 2 override). Modes 03/04 do NOT break through mode 05. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 4 - override to YELLOW (proves mode 05 still works)",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 ffff00"}},
+
+  {"label": "--- EXPECT: Btn 4 is now YELLOW. Only mode 05 can change LED. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST 7: Button 6 (Composer reference) is unaffected ==="},
+
+  {"label": "--- EXPECT: Btn 6 is RED (Composer off-color), flashes BLUE when pressed. We never touched it. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== CLEANUP: Reset buttons 3-5 ==="},
+
+  {"label": "Btn 3 - disable + black",
+   "payload": {"c4_cmd": "c4.dmx.btn 02 01 00"}},
+  {"label": "Btn 3 - black LED",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 000000"}},
+  {"label": "Btn 4 - disable + black",
+   "payload": {"c4_cmd": "c4.dmx.btn 03 01 00"}},
+  {"label": "Btn 4 - black LED",
+   "payload": {"c4_cmd": "c4.dmx.led 03 05 000000"}},
+  {"label": "Btn 5 - disable + black",
+   "payload": {"c4_cmd": "c4.dmx.btn 04 01 00"}},
+  {"label": "Btn 5 - black LED",
+   "payload": {"c4_cmd": "c4.dmx.led 04 05 000000"}},
+
+  {"label": "=== ALL TESTS COMPLETE ==="},
+  {"label": "If all expectations matched, our protocol understanding is correct."},
+  {"label": "Gaps: mode 05 green, then mode 04 green = still see green (can't tell)."},
+  {"label": "But test 6 proves modes 03/04 can't override mode 05 (white stayed white)."}
+]

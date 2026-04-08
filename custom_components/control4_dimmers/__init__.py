@@ -195,10 +195,6 @@ async def _ws_event_entities(
 
 async def _svc_set_led(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle control4_dimmers.set_led service call."""
-    import json  # noqa: PLC0415
-
-    from homeassistant.components import mqtt  # noqa: PLC0415
-
     entity_id = call.data["entity_id"]
     mode = call.data["mode"]
     color = call.data["color"].lstrip("#")
@@ -223,11 +219,8 @@ async def _svc_set_led(hass: HomeAssistant, call: ServiceCall) -> None:
         return
 
     wire_id = slot_id - 1
-    mode_code = "03" if mode == "on" else "04"
-    topic = f"{manager.mqtt_topic}/{device.friendly_name}/set"
-    payload = {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode_code} {color}"}
-    await mqtt.async_publish(hass, topic, json.dumps(payload), qos=1)
 
+    # Update stored config
     config = manager.store.get_device(ieee)
     if config:
         for s in config.slots:
@@ -238,6 +231,13 @@ async def _svc_set_led(hass: HomeAssistant, call: ServiceCall) -> None:
                     s.led_off_color = color
                 break
         await manager.store.async_save()
+
+    # Mode 05 override is the only way to visibly change the LED.
+    # Modes 03/04 are silently stored in firmware but hidden by any
+    # active mode 05 override (which _push_slot_config always sets).
+    await manager.async_send_mqtt(
+        ieee, {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"}
+    )
 
     manager.notify_listeners()
 

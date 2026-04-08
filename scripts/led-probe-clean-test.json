@@ -1,0 +1,54 @@
+[
+  {"label": "=== CLEAN TEST: Does override still work on button 5? ==="},
+
+  {"label": "Btn 5 - override to bright white",
+   "payload": {"c4_cmd": "c4.dmx.led 04 05 ffffff"}},
+
+  {"label": "--- Is Btn 5 white? Press ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== CLEAN TEST on button 3 (index 02) - less corrupted ==="},
+  {"label": "Button 3 was set to mode 04=red earlier and showed red"},
+
+  {"label": "Btn 3 - override to black (clear override)",
+   "payload": {"c4_cmd": "c4.dmx.led 02 05 000000"}},
+
+  {"label": "--- Is Btn 3 still red (from mode 04)? Press ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 3 - set behavior to toggle (02)",
+   "payload": {"c4_cmd": "c4.dmx.btn 02 01 02"}},
+
+  {"label": "--- Btn 3: any LED change after setting toggle? Press to test toggle. ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 3 - set on-color green",
+   "payload": {"c4_cmd": "c4.dmx.led 02 03 00ff00"}},
+
+  {"label": "Btn 3 - set off-color red",
+   "payload": {"c4_cmd": "c4.dmx.led 02 04 ff0000"}},
+
+  {"label": "--- Btn 3: LED red or green now? Press it - does LED change? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "=== TEST: Button 6 comparison - has working Composer LED ==="},
+  {"label": "Button 6 currently red, blue flash on press (Composer config)"},
+
+  {"label": "Btn 6 - GET on-color (mode 03)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 03"}},
+
+  {"label": "Btn 6 - GET off-color (mode 04)",
+   "payload": {"c4_cmd": "c4.dmx.led 05 04"}},
+
+  {"label": "Btn 6 - set behavior to disabled (00) - does LED go off?",
+   "payload": {"c4_cmd": "c4.dmx.btn 05 01 00"}},
+
+  {"label": "--- Btn 6: LED still red or went off? Press it - still blue flash? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true},
+
+  {"label": "Btn 6 - restore behavior to toggle (02)",
+   "payload": {"c4_cmd": "c4.dmx.btn 05 01 02"}},
+
+  {"label": "--- Btn 6: LED restored? Press it - toggle + LED change? ENTER ---",
+   "payload": {"c4_cmd": "c4.dmx.led 00 05 000000"}, "wait": true}
+]

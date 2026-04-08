@@ -438,22 +438,23 @@ and physically tested the result:
 
 | Value | Firmware Behavior | Events? | Load Control? |
 |-------|------------------|---------|---------------|
-| 00 | Disabled | None | None |
+| 00 | Load on | Yes | On only |
 | 01 | Load off | Yes | Off only |
 | 02 | Toggle load | Yes | Toggle on/off |
 | 03 | Programmable | Yes (press, hold, release) | None |
 | 04 | Momentary hold | Yes | Hold dims off, release restores |
-| 05 | Unknown | Untested | Untested |
+| 05 | Disabled | None observed | None |
 
-The critical distinction is between value 00 (disabled — suppresses all
-button events) and value 03 (programmable — sends press, hold count, and
-hold end events but performs no firmware load control). For
-software-handled buttons, value 03 is correct; value 00 would silently
-swallow button presses.
+The initial test of value 00 appeared to show "disabled" because the
+load was already on — pressing a "load on" button when the load is on
+has no visible effect. A later verification test with the load off
+confirmed that value 00 turns the load on. This gives us a clean
+progression: 00=on, 01=off, 02=toggle.
 
-Value 01 is load-off only, not load-on. There is no firmware-level
-"load on only" command — the closest equivalent is value 02 (toggle),
-constrained by software.
+The critical distinction for software-handled buttons is value 03
+(programmable — sends press, hold count, and hold end events but
+performs no firmware load control). Value 05 appears to be the true
+disabled mode.
 
 This is the command that Control4's Composer uses to configure what each
 button does at the firmware level.

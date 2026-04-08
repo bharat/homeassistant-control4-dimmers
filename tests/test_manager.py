@@ -690,54 +690,27 @@ class TestDispatchWithActions:
         # Should NOT create a task — firmware handles load control
         manager._hass.async_create_task.assert_not_called()
 
-    def test_scene_event_triggers_toggle_load(
+    def test_scene_event_triggers_load_control(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Scene event (c4.dmx.sc) on toggle_load button triggers software load."""
-        manager._devices[IEEE_DIMMER] = dimmer_state
-        config = DeviceConfig(
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            device_type="dimmer",
-            slots=[
-                SlotConfig(slot_id=1, behavior="toggle_load", led_mode="follow_load")
-            ],
-        )
-        manager._store._devices[IEEE_DIMMER] = config
-        manager._dispatch_button_action(dimmer_state, "button_1_scene")
-        # Scene events on toggle_load SHOULD create a task
-        manager._hass.async_create_task.assert_called()
-
-    def test_scene_event_skips_load_on(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        """Scene on load_on skips software: firmware already toggled."""
-        manager._devices[IEEE_DIMMER] = dimmer_state
-        config = DeviceConfig(
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            device_type="dimmer",
-            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
-        )
-        manager._store._devices[IEEE_DIMMER] = config
-        manager._dispatch_button_action(dimmer_state, "button_2_scene")
-        # Firmware toggle (02) already ran — no software action
-        manager._hass.async_create_task.assert_not_called()
-
-    def test_scene_event_skips_load_off(
-        self, manager: Control4Manager, dimmer_state: DeviceState
-    ) -> None:
-        """Scene on load_off button does NOT trigger software."""
-        manager._devices[IEEE_DIMMER] = dimmer_state
-        config = DeviceConfig(
-            ieee_address=IEEE_DIMMER,
-            friendly_name="Kitchen",
-            device_type="dimmer",
-            slots=[SlotConfig(slot_id=5, behavior="load_off", led_mode="follow_load")],
-        )
-        manager._store._devices[IEEE_DIMMER] = config
-        manager._dispatch_button_action(dimmer_state, "button_5_scene")
-        manager._hass.async_create_task.assert_not_called()
+        """Scene event (c4.dmx.sc) on load-control button triggers software."""
+        for behavior in ("toggle_load", "load_on", "load_off"):
+            manager._hass.reset_mock()
+            manager._devices[IEEE_DIMMER] = dimmer_state
+            config = DeviceConfig(
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                device_type="dimmer",
+                slots=[
+                    SlotConfig(slot_id=1, behavior=behavior, led_mode="follow_load")
+                ],
+            )
+            manager._store._devices[IEEE_DIMMER] = config
+            manager._dispatch_button_action(dimmer_state, "button_1_scene")
+            (
+                manager._hass.async_create_task.assert_called(),
+                (f"Scene on {behavior} should dispatch"),
+            )
 
     def test_press_defers_when_double_tap_configured(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -1048,6 +1021,26 @@ class TestPushSlotConfig:
         btn_calls = [c for c in mock_mqtt.call_args_list if "c4.dmx.btn" in str(c)]
         assert len(btn_calls) == 1
         assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 01 01 03"}
+
+    @pytest.mark.asyncio
+    async def test_sends_c4_dmx_btn_for_load_on(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """load_on sends c4.dmx.btn with firmware value 00."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        btn_calls = [c for c in mock_mqtt.call_args_list if "c4.dmx.btn" in str(c)]
+        assert len(btn_calls) == 1
+        assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 01 01 00"}
 
     @pytest.mark.asyncio
     async def test_sends_c4_dmx_btn_for_load_off(

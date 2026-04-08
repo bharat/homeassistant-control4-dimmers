@@ -125,14 +125,13 @@ class Control4Manager:
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
             behavior = slot.behavior if slot else "keypad"
-            # Scene on toggle_load: firmware toggled, software syncs LED.
-            # Scene on load_on/load_off: skip — firmware toggle (02)
-            # already ran; no "on only" mode exists so software can't
-            # reliably fix it.
+            # Scene on load-control: firmware handled the load, software
+            # syncs LED tracking. All three load behaviors now have
+            # matching firmware modes (00=on, 01=off, 02=toggle).
             # Press on programmable: execute tap_action immediately
             # (unless double_tap configured — handled by click_count).
             is_load = behavior in ("load_on", "load_off", "toggle_load")
-            should_act = (is_scene and behavior == "toggle_load") or (
+            should_act = (is_scene and is_load) or (
                 not is_scene
                 and not is_load
                 and (not slot or not slot.double_tap_action)
@@ -410,12 +409,12 @@ class Control4Manager:
         self.notify_listeners()
 
     # Map our behavior names to c4.dmx.btn firmware values:
-    #   00=disabled (no events), 01=load_off, 02=toggle, 03=programmable
-    #   (sends events, no load control), 04=momentary hold
+    #   00=load_on, 01=load_off, 02=toggle, 03=programmable
+    #   (sends events, no load control), 04=momentary hold, 05=disabled
     _BEHAVIOR_TO_FIRMWARE: ClassVar[dict[str, int]] = {
         "keypad": 3,  # programmable: sends events, software handles actions
         "toggle_load": 2,
-        "load_on": 2,  # no firmware "on only" — use toggle, software constrains
+        "load_on": 0,
         "load_off": 1,
     }
 

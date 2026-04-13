@@ -12,6 +12,6 @@ ruff==0.15.4
 pre_commit==4.5.1
 paho-mqtt==2.1.0
 pytest==9.0.0
-pytest-homeassistant-custom-component==0.13.317
+pytest-homeassistant-custom-component==0.13.323
 pytest-timeout==2.4.0
 pytest-xdist==3.8.0

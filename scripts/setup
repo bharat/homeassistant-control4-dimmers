@@ -5,9 +5,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 python3 -m pip install --upgrade pip -r requirements.txt
-npm install -g concurrently @anthropic-ai/claude-code
 curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo BINDIR=/usr/local/bin bash
 pre-commit install
 
-# Copy host's claude.json settings/credentials into the container
-cp .devcontainer/.claude.json ~/.claude.json 2>/dev/null || true
+curl -fsSL https://claude.ai/install.sh | bash

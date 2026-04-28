@@ -383,7 +383,7 @@ def rename_with_git_mv(old_path: Path, new_path: Path, repo_root: Path) -> bool:
     if is_git_repo(repo_root):
         try:
             # Use `-k` to skip errors for unrelated collisions; we guard above anyway
-            subprocess.run(  # noqa: S603 - fixed argv; no shell; trusted executable
+            subprocess.run(
                 (
                     "git",
                     "mv",

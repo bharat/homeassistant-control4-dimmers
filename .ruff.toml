@@ -30,6 +30,7 @@ ignore = [
 ]
 "scripts/**" = [
     "T201",     # print is fine in scripts
+    "S603", "S607",  # subprocess with PATH-resolved executables (e.g. `git`) is fine in dev scripts
 ]
 
 [lint.flake8-pytest-style]

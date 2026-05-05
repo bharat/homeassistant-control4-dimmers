@@ -1,7 +1,7 @@
 colorlog==6.10.1
 ha-ffmpeg==3.2.2
 hassil==3.5.0
-home-assistant-intents==2026.3.24
+home-assistant-intents==2026.5.5
 isal==1.8.0
 mutagen==1.47.0
 pymicro-vad==2.0.1

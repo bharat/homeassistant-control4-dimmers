@@ -114,7 +114,7 @@ cd z2m && make push                                 # Push multi-arch to ghcr.io
 
 ## Releases
 
-Tags use SemVer: `v<MAJOR>.<MINOR>.<PATCH>` (no releases cut yet — first one establishes the convention). Release titles use `Control4 Dimmers v<version>` to match the convention used by sister fleet projects (`Lockly v…`, `Triad AMS v…`).
+Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Dimmers v<YYYY>.<M>.<DD>` (e.g. `Control4 Dimmers v2026.5.13`). Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape). No releases have been cut for this repo yet, so the first one establishes the on-disk history under the CalVer convention.
 
 The release workflow (`.github/workflows/release.yml`) auto-creates the GitHub release on `v*` tag push. HACS reads the version from the git tag, not `manifest.json` — so do not bump `manifest.json`'s `"0.0.0"`.
 

@@ -5,16 +5,15 @@
 [![Lint](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml)
 [![Z2M Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml)
 
-> **Background:** Control4 makes beautifully engineered Zigbee dimmers and
-> keypads. This project bridges them into the Home Assistant ecosystem so
-> they can participate alongside other Zigbee devices — preserving the
-> hardware you already have and the features that make it great. For the
-> full story of how this integration was researched and built using publicly
+> **Background:** Control4 ships solid Zigbee dimmers and keypads. This
+> project bridges them into Home Assistant alongside other Zigbee devices,
+> so the hardware you already have keeps doing what it does. For the full
+> story of how the integration was reverse-engineered from publicly
 > available information, see **[RESEARCH.md](RESEARCH.md)**.
 
-A Zigbee2MQTT converter that brings Control4 Zigbee dimmers and keypads into
-Home Assistant with full on/off, dimming, LED color control, and keypad
-button events — preserving the original Control4 experience.
+A Zigbee2MQTT converter and Home Assistant integration for Control4 Zigbee
+dimmers and keypads: on/off, dimming, per-button LED color control, and
+keypad button events.
 
 ## What you can do
 
@@ -230,11 +229,11 @@ appropriate contrast.
 
 ## How it works
 
-Control4 dimmers have a thoughtful two-layer architecture. Endpoint 1 speaks
-standard Zigbee HA — `genOnOff` (cluster `0x0006`) and `genLevelCtrl`
-(cluster `0x0008`) — for basic on/off and dimming. The advanced features that
-make C4 hardware special (LED colors, button events, device identification)
-use a text-based protocol on Zigbee profile `0xC25C` with raw ASCII payloads.
+Control4 dimmers split their Zigbee surface across two profiles on
+endpoint 1. The standard HA profile carries on/off and dimming via
+`genOnOff` (cluster `0x0006`) and `genLevelCtrl` (cluster `0x0008`). LED
+colors, button events, and device identification ride on a separate
+Control4-specific text protocol on profile `0xC25C` with ASCII payloads.
 
 This project has three layers:
 

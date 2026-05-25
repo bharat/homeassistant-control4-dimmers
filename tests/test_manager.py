@@ -1154,6 +1154,9 @@ class TestPushSlotConfig:
         assert {"c4_cmd": "c4.dmx.led 02 00 00"} in payloads
         assert {"c4_cmd": "c4.dmx.led 02 01 01"} in payloads
         assert {"c4_cmd": "c4.dmx.led 02 02 00"} in payloads
+        # Mode 05 (override) must NOT be written for follow_load: doing so
+        # disengages the firmware load-tracking behavior we just enabled.
+        assert not any("c4.dmx.led 02 05" in p.get("c4_cmd", "") for p in payloads)
 
     @pytest.mark.asyncio
     async def test_fixed_sends_mode_selector_trio(
@@ -1186,10 +1189,10 @@ class TestPushSlotConfig:
         assert not any("c4.dmx.led 03 02" in p.get("c4_cmd", "") for p in payloads)
 
     @pytest.mark.asyncio
-    async def test_mode_05_uses_on_color_when_tracked_entity_is_on(
+    async def test_follow_load_does_not_write_mode_05_even_when_tracked(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Mode 05 override uses on_color when tracked entity is on."""
+        """follow_load relies on firmware LED tracking; mode 05 is skipped."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1206,7 +1209,10 @@ class TestPushSlotConfig:
                 )
             ],
         )
-        # Mock the light entity as ON
+        # Even with a tracked entity in the "on" state, follow_load must
+        # not write mode 05 — Composer doesn't, and doing so disengages
+        # the firmware load-tracking behavior the selector trio just
+        # enabled.
         light_state = MagicMock()
         light_state.entity_id = "light.kitchen"
         light_state.attributes = {"friendly_name": "Kitchen"}
@@ -1217,13 +1223,8 @@ class TestPushSlotConfig:
             manager, "async_send_mqtt", new_callable=AsyncMock
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
-        override_calls = [
-            c
-            for c in mock_mqtt.call_args_list
-            if "c4.dmx.led" in str(c) and " 05 " in str(c)
-        ]
-        assert len(override_calls) == 1
-        assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 ffffff"}
+        payloads = [call.args[1] for call in mock_mqtt.call_args_list]
+        assert not any("c4.dmx.led 01 05" in p.get("c4_cmd", "") for p in payloads)
 
 
 class TestGetDeviceInfo:

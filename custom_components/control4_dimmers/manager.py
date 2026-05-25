@@ -490,17 +490,28 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
-            # Set the persistent override (mode 05). For "fixed" this is
-            # what the LED actually shows (we set it to led_on_color so the
-            # button reads as that one color forever). For follow_load and
-            # push_release the firmware ignores mode 05 once those LED
-            # modes are active, so the value is effectively a fallback for
-            # any case where the mode-selector trio above failed to land.
-            initial_color = self._resolve_initial_led_color(state, slot)
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {initial_color}"},
-            )
+            # Set the persistent override (mode 05) *only* for "fixed"
+            # mode. Mode 05 is what drives the visible LED when the
+            # firmware is in Programmed (fixed); we set it to led_on_color
+            # so the button reads as that one color forever.
+            #
+            # For follow_load and push_release we deliberately do not
+            # write mode 05. A non-zero mode 05 acts as a persistent
+            # override that disengages the firmware behavior we just
+            # selected with the mode-selector trio, leaving the LED
+            # parked on the override color and never flashing on press
+            # or tracking the load. Composer's traces never write mode 05
+            # for these modes either.
+            if slot.led_mode == "fixed":
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {
+                        "c4_cmd": (
+                            f"c4.dmx.led {wire_id:02x} 05 "
+                            f"{self._resolve_initial_led_color(state, slot)}"
+                        )
+                    },
+                )
             # Store behavior and LED mode in Z2M state for frontend
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode

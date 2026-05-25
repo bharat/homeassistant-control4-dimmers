@@ -1097,10 +1097,10 @@ class TestPushSlotConfig:
         assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 00ff00"}
 
     @pytest.mark.asyncio
-    async def test_push_release_arms_modes_01_and_02(
+    async def test_push_release_sends_mode_selector_trio(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """push_release writes mode 01 = on color and mode 02 = off color."""
+        """push_release: c4.dmx.led <btn> 00 04 + 01 02, no 02 param."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1121,14 +1121,16 @@ class TestPushSlotConfig:
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
         payloads = [call.args[1] for call in mock_mqtt.call_args_list]
-        assert {"c4_cmd": "c4.dmx.led 01 01 00ff00"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 01 02 ff0000"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 01 00 04"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 01 01 02"} in payloads
+        # No param-02 write for push_release.
+        assert not any("c4.dmx.led 01 02" in p.get("c4_cmd", "") for p in payloads)
 
     @pytest.mark.asyncio
-    async def test_non_push_release_clears_modes_01_and_02(
+    async def test_follow_load_sends_mode_selector_trio(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Fixed and follow_load both write 01=000000 and 02=000000."""
+        """follow_load: c4.dmx.led <btn> 00 00 + 01 01 + 02 00."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1136,19 +1138,12 @@ class TestPushSlotConfig:
             device_type="dimmer",
             slots=[
                 SlotConfig(
-                    slot_id=2,
-                    behavior="keypad",
-                    led_mode="fixed",
-                    led_on_color="00ff00",
-                    led_off_color="000000",
-                ),
-                SlotConfig(
                     slot_id=3,
                     behavior="toggle_load",
                     led_mode="follow_load",
                     led_on_color="ffffff",
                     led_off_color="0000ff",
-                ),
+                )
             ],
         )
         with patch.object(
@@ -1156,12 +1151,39 @@ class TestPushSlotConfig:
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
         payloads = [call.args[1] for call in mock_mqtt.call_args_list]
-        # Slot 2 (wire id 01) — fixed
-        assert {"c4_cmd": "c4.dmx.led 01 01 000000"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 01 02 000000"} in payloads
-        # Slot 3 (wire id 02) — follow_load
-        assert {"c4_cmd": "c4.dmx.led 02 01 000000"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 02 02 000000"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 02 00 00"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 02 01 01"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 02 02 00"} in payloads
+
+    @pytest.mark.asyncio
+    async def test_fixed_sends_mode_selector_trio(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Fixed (Composer's Programmed): c4.dmx.led <btn> 00 00 + 01 00, no 02."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=4,
+                    behavior="keypad",
+                    led_mode="fixed",
+                    led_on_color="00ff00",
+                    led_off_color="000000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        payloads = [call.args[1] for call in mock_mqtt.call_args_list]
+        assert {"c4_cmd": "c4.dmx.led 03 00 00"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 03 01 00"} in payloads
+        # No param-02 write for fixed.
+        assert not any("c4.dmx.led 03 02" in p.get("c4_cmd", "") for p in payloads)
 
     @pytest.mark.asyncio
     async def test_mode_05_uses_on_color_when_tracked_entity_is_on(

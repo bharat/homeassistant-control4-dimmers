@@ -450,6 +450,22 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
             )
+            # Reset the slot to Programmed (00 00 + 01 00) before
+            # selecting the target mode. Composer follows this pattern on
+            # every mode transition and we suspect it clears residual
+            # firmware state (button-press scenes, broadcast LED behavior,
+            # etc.) that would otherwise persist from prior configuration.
+            # For the fixed LED mode the "reset" writes are identical to
+            # the target writes, so we skip the redundant reset there.
+            if slot.led_mode != "fixed":
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 00 00"},
+                )
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 00"},
+                )
             # Select the LED behavior mode at the firmware level via the
             # param 00 / 01 / 02 selector trio. Composer uses these three
             # writes; without them the firmware stays in whatever mode it

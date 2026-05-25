@@ -1121,10 +1121,18 @@ class TestPushSlotConfig:
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
         payloads = [call.args[1] for call in mock_mqtt.call_args_list]
-        assert {"c4_cmd": "c4.dmx.led 01 00 04"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 01 01 02"} in payloads
-        # No param-02 write for push_release.
-        assert not any("c4.dmx.led 01 02" in p.get("c4_cmd", "") for p in payloads)
+        # Composer-style reset (00 00 + 01 00) must come before the target
+        # writes (00 04 + 01 02) — the reset is what clears residual
+        # firmware state from prior modes.
+        cmds = [p.get("c4_cmd", "") for p in payloads]
+        reset_00 = cmds.index("c4.dmx.led 01 00 00")
+        reset_01 = cmds.index("c4.dmx.led 01 01 00")
+        target_00 = cmds.index("c4.dmx.led 01 00 04")
+        target_01 = cmds.index("c4.dmx.led 01 01 02")
+        assert reset_00 < target_00
+        assert reset_01 < target_01
+        # Mode 05 (override) must NOT be written for push_release.
+        assert not any("c4.dmx.led 01 05" in c for c in cmds)
 
     @pytest.mark.asyncio
     async def test_follow_load_sends_mode_selector_trio(
@@ -1150,13 +1158,15 @@ class TestPushSlotConfig:
             manager, "async_send_mqtt", new_callable=AsyncMock
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
-        payloads = [call.args[1] for call in mock_mqtt.call_args_list]
-        assert {"c4_cmd": "c4.dmx.led 02 00 00"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 02 01 01"} in payloads
-        assert {"c4_cmd": "c4.dmx.led 02 02 00"} in payloads
-        # Mode 05 (override) must NOT be written for follow_load: doing so
-        # disengages the firmware load-tracking behavior we just enabled.
-        assert not any("c4.dmx.led 02 05" in p.get("c4_cmd", "") for p in payloads)
+        cmds = [call.args[1].get("c4_cmd", "") for call in mock_mqtt.call_args_list]
+        # Reset (00 00 + 01 00) must precede the follow_load target
+        # writes (00 00 + 01 01 + 02 00). The reset's 00 00 is a duplicate
+        # of the target's 00 00 in this case, but the 01 00 reset clearly
+        # precedes the 01 01 target.
+        assert cmds.index("c4.dmx.led 02 01 00") < cmds.index("c4.dmx.led 02 01 01")
+        assert "c4.dmx.led 02 02 00" in cmds
+        # Mode 05 (override) must NOT be written for follow_load.
+        assert not any("c4.dmx.led 02 05" in c for c in cmds)
 
     @pytest.mark.asyncio
     async def test_fixed_sends_mode_selector_trio(

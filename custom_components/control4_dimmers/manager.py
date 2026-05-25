@@ -473,8 +473,9 @@ class Control4Manager:
             # decides their meaning:
             #   - follow_load: load-on color / load-off color
             #   - push_release: press color / release color
-            #   - fixed (Programmed): firmware does not auto-display these
-            #     in Programmed mode; mode 05 below drives the actual LED.
+            #   - fixed (Programmed): firmware displays mode 03 at rest
+            #     (matching Composer's behavior); mode 04 is unused but
+            #     harmless to set.
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
@@ -483,16 +484,6 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
-            # Programmed-mode display color. The firmware does not auto-
-            # display mode 03 / mode 04 in Programmed mode, so mode 05 is
-            # what actually drives the LED. Skipped for follow_load and
-            # push_release because those modes are firmware-driven and a
-            # mode-05 write would park the LED on a static override.
-            if slot.led_mode == "fixed":
-                await self.async_send_mqtt(
-                    state.ieee_address,
-                    {"c4_cmd": (f"c4.dmx.led {wire_id:02x} 05 {slot.led_on_color}")},
-                )
             # Store behavior and LED mode in Z2M state for frontend.
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode

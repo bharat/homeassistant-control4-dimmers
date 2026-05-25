@@ -1063,14 +1063,16 @@ class TestPushSlotConfig:
         assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 04 01 01"}
 
     @pytest.mark.asyncio
-    async def test_fixed_writes_mode_05_override(
+    async def test_fixed_does_not_write_mode_05(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
         """
-        Fixed mode writes mode 05 = led_on_color to drive the LED.
+        Fixed mode drives the LED via mode 03 only, matching Composer.
 
-        The firmware does not auto-display mode 03 / mode 04 in
-        Programmed mode, so mode 05 is what actually lights the LED.
+        Composer's wire trace shows a Programmed-mode color change as a
+        single mode-03 write. The firmware displays mode 03 at rest in
+        Programmed mode; mode 05 is an override our integration used to
+        write that turned out to have firmware-level side effects.
         """
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
@@ -1092,11 +1094,11 @@ class TestPushSlotConfig:
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
         cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
-        assert "c4.dmx.led 01 05 00ff00" in cmds
-        # Mode 03 / 04 are still written even though Programmed mode
-        # doesn't auto-display them; harmless and keeps state coherent.
+        # Mode 03 drives the displayed color in Programmed mode.
         assert "c4.dmx.led 01 03 00ff00" in cmds
-        assert "c4.dmx.led 01 04 ff0000" in cmds
+        # Mode 05 is never written from _push_slot_config; it's reserved
+        # for transient tracked-LED overrides handled elsewhere.
+        assert not any(" 05 " in c for c in cmds if c.startswith("c4.dmx.led 01"))
 
     @pytest.mark.asyncio
     async def test_push_release_sends_mode_selector_pair(

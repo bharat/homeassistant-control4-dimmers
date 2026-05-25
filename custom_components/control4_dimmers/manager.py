@@ -473,7 +473,8 @@ class Control4Manager:
             # decides their meaning:
             #   - follow_load: load-on color / load-off color
             #   - push_release: press color / release color
-            #   - fixed (Programmed): on/off color pair
+            #   - fixed (Programmed): firmware does not auto-display these
+            #     in Programmed mode; mode 05 below drives the actual LED.
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
@@ -482,6 +483,16 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
+            # Programmed-mode display color. The firmware does not auto-
+            # display mode 03 / mode 04 in Programmed mode, so mode 05 is
+            # what actually drives the LED. Skipped for follow_load and
+            # push_release because those modes are firmware-driven and a
+            # mode-05 write would park the LED on a static override.
+            if slot.led_mode == "fixed":
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": (f"c4.dmx.led {wire_id:02x} 05 {slot.led_on_color}")},
+                )
             # Store behavior and LED mode in Z2M state for frontend.
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode
@@ -708,6 +719,8 @@ class Control4Manager:
         if state is None:
             return
         topic = f"{self.mqtt_topic}/{state.friendly_name}/set"
+        if "c4_cmd" in payload:
+            LOGGER.info("MQTT -> %s: %s", state.friendly_name, payload["c4_cmd"])
         await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
 
     def get_default_slots(self, device_type: str) -> list[SlotConfig]:

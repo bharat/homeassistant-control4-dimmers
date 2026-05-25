@@ -487,34 +487,88 @@ completely independent systems in the firmware.
 
 ### The Practical Solution
 
-With these findings, we chose a pragmatic approach: use mode 05 override
-as the primary LED control mechanism, driven by software. Rather than
-trying to configure the firmware's internal LED mode switching (which
-would require cracking the still-unknown `c4.dmx.key` command or finding
-the LED mode parameter in `c4.dmx.btn`), we:
+The integration uses **two complementary mechanisms** depending on the
+configured LED mode:
 
-1. Send `c4.dmx.btn <button> 01 <value>` to set the firmware button
-   behavior (toggle, load on, disabled, etc.)
-2. Store on/off colors in firmware via modes 03/04 (for future use if
-   we decode the LED mode command)
-3. Send mode 05 override with the correct color based on tracked entity
-   state
-4. Update the override in real-time via HA state change listeners
+1. **Software-driven via mode 05 override** for the `fixed` LED mode.
+   Mode 05 is persistent and is what the firmware actually displays in
+   this configuration. The integration sets it once on push, and
+   updates it in response to HA state-change listeners when a tracked
+   entity is configured.
 
-This gives us full control over both button behavior and LED colors,
-with the LED tracking responding to any HA entity state change within
-milliseconds. The remaining mystery — how Composer configures push/release
-LED mode — is an optimization opportunity, not a blocker.
+2. **Firmware-driven via the LED behavior selector trio**
+   (see [LED Behavior Mode Selection](#led-behavior-mode-selection)
+   below) for `follow_load` and `push_release`. The selector writes
+   put the firmware into a mode where it tracks the local load or
+   flashes the press color on its own, with no software-side
+   round-trip latency.
 
-### Unsolved: c4.dmx.key
+In every mode, the integration also writes:
 
-The `c4.dmx.key` command remains undecoded. It appeared in the 2013
-HC-800 debug log and returns `e00` (recognized) on the KD120, but every
-argument pattern we tried — single values, two-arg, three-arg with
-hex colors — returned `e00`. It may require a different value encoding,
-or it may be a GET-only command that needs the `0g` prefix (our
-diagnostic tool sends `0s` for all commands). This is a candidate for
-future investigation.
+- `c4.dmx.btn <button> 01 <value>` to set the firmware **button**
+  behavior (toggle, load on, programmable, etc.), which is an
+  independent system from the LED behavior.
+- `c4.dmx.led <btn> 03 <RGB>` and `c4.dmx.led <btn> 04 <RGB>` to
+  populate the universal color slots. What those slots *mean* depends
+  on the active LED behavior; the table below spells it out.
+
+### LED Behavior Mode Selection
+
+`c4.dmx.led <btn> <param> <value>` accepts three small-integer
+parameters that together select the firmware's LED behavior mode:
+
+- **param `00`**: activity flag. `00` for passive modes (software- or
+  load-driven). `04` for the active press-feedback mode (firmware
+  flashes the LED while the button is physically held).
+- **param `01`**: LED behavior selector.
+- **param `02`**: load/connection identifier, only written for modes
+  that track an external state; `00` selects the device's own load.
+
+The defined behavior values:
+
+| Behavior         | param 00 | param 01 | param 02       | LED display                                                                                       |
+|------------------|----------|----------|----------------|---------------------------------------------------------------------------------------------------|
+| Programmed       | `00`     | `00`     | (not written)  | Static; firmware does not auto-display modes 03/04. Mode 05 override drives the visible color.    |
+| Follow Load      | `00`     | `01`     | `00`           | Firmware tracks the local load: mode 03 color when on, mode 04 color when off.                    |
+| Push/Release     | `04`     | `02`     | (not written)  | Firmware flashes mode 03 color while the button is held; shows mode 04 color at rest.             |
+| Follow Connection| (unknown)| (unknown)| (unknown)      | Not exercised by this integration; documented for completeness.                                   |
+
+Modes 03 and 04 are **universal RGB color slots**. The active behavior
+decides how they're interpreted:
+
+- Programmed: nominally "on color" / "off color" but neither is
+  auto-displayed; the visible color comes from mode 05.
+- Follow Load: load-on color (mode 03) / load-off color (mode 04),
+  driven by firmware.
+- Push/Release: press color (mode 03) / release color (mode 04),
+  driven by firmware.
+
+Mode 05 override takes priority over modes 03/04 only when the active
+behavior is Programmed. Once Follow Load or Push/Release is active,
+the firmware displays mode 03 / mode 04 directly and mode 05 is
+ignored until the behavior is set back to Programmed.
+
+This is the missing piece referenced in the LED Mode Mystery section
+above. With these three writes, the integration can configure any of
+the firmware-driven behaviors directly, removing the need for a
+software-side state-listener for push/release flashing and for
+load-tracking on a keypad's own load.
+
+### c4.dmx.key
+
+`c4.dmx.key` with no arguments is a GET-only device status query. The
+device returns a 22-byte status structure: a status byte, a state
+counter, and five 32-bit values. The state counter increments on
+button activity; the remaining fields are typically zero on a
+quiescent device. The director uses this as a lightweight wake / health
+poll, which is why it shows up in older debug logs as routine traffic.
+
+The integration does not use this command at runtime — button events
+arrive on the standard event surface (`c4.dmx.bp` / `c4.dmx.br` /
+`c4.dmx.cc` / `c4.dmx.sc`). It's documented here for completeness;
+the historical `0g … c4.dmx.key` traffic visible in the
+[2013 debug log](https://www.c4forums.com/forums/topic/13696-what-happened-director-not-accessible-hc800/)
+is just this health poll, not anything keypad-specific.
 
 ## What We Built
 

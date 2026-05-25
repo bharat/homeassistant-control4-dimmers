@@ -452,6 +452,18 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {initial_color}"},
             )
+            # For push_release, the firmware drives the visible press-time
+            # flash from mode 01 (release color is mode 02). The integration
+            # has never explicitly set 01, so the flash color is whatever
+            # Composer or earlier tools left in firmware. Make it explicit
+            # so a user reconfiguring colors in HA sees the new flash color
+            # apply on the next press. After release the LED falls back to
+            # mode 05, so the release color is already governed correctly.
+            if slot.led_mode == "push_release":
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {slot.led_on_color}"},
+                )
             # Store behavior and LED mode in Z2M state for frontend
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode
@@ -466,8 +478,10 @@ class Control4Manager:
 
     def _resolve_initial_led_color(self, state: DeviceState, slot: SlotConfig) -> str:
         """Determine the correct LED color to display right now."""
+        # "fixed" means the LED is statically that color regardless of load
+        # state; led_off_color is meaningless in this mode.
         if slot.led_mode == "fixed":
-            return slot.led_off_color
+            return slot.led_on_color
         # For follow_load and programmed modes, check tracked entity state
         track_id = slot.led_track_entity_id
         if track_id:

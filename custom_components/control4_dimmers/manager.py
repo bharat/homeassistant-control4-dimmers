@@ -445,25 +445,38 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
-            # Set immediate LED color via override (mode 05)
-            # Mode 05 is persistent and takes priority over modes 03/04
+            # Set immediate LED color via override (mode 05).
+            # This is what the LED shows when push_release is disabled.
             initial_color = self._resolve_initial_led_color(state, slot)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {initial_color}"},
             )
-            # For push_release, the firmware drives the visible press-time
-            # flash from mode 01 (release color is mode 02). The integration
-            # has never explicitly set 01, so the flash color is whatever
-            # Composer or earlier tools left in firmware. Make it explicit
-            # so a user reconfiguring colors in HA sees the new flash color
-            # apply on the next press. After release the LED falls back to
-            # mode 05, so the release color is already governed correctly.
+            # Modes 01 (press color) and 02 (release color) jointly drive
+            # the firmware's push_release behavior: when either is set to
+            # a non-zero color, the firmware enters push_release behavior
+            # and ignores mode 05 entirely, flashing mode 01 while the
+            # button is held and showing mode 02 at rest. We always write
+            # both modes explicitly so a slot never inherits stale state
+            # from Composer or earlier code paths:
+            #   - push_release LED mode: arm the firmware behavior with
+            #     on/off colors (mode 01 = on, mode 02 = off).
+            #   - any other LED mode: clear both to 000000 so the firmware
+            #     disengages push_release and mode 05 takes over again.
             if slot.led_mode == "push_release":
-                await self.async_send_mqtt(
-                    state.ieee_address,
-                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {slot.led_on_color}"},
-                )
+                push_color = slot.led_on_color
+                release_color = slot.led_off_color
+            else:
+                push_color = "000000"
+                release_color = "000000"
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {push_color}"},
+            )
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 02 {release_color}"},
+            )
             # Store behavior and LED mode in Z2M state for frontend
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode

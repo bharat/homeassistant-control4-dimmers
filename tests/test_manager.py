@@ -1102,10 +1102,17 @@ class TestPushSlotConfig:
         assert "c4.dmx.led 01 04 ff0000" in cmds
 
     @pytest.mark.asyncio
-    async def test_push_release_sends_mode_selector_pair(
+    async def test_push_release_selector_listens_to_own_wire(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """push_release: c4.dmx.led <btn> 00 04 + 01 02, no 02 param, no reset."""
+        """
+        push_release: selector param-00 must be the slot's own wire.
+
+        param-00 in the LED selector trio is the wire whose press
+        triggers this slot's behavior. For push_release each slot must
+        listen to itself; using a hardcoded value would cause the LED
+        to react to a different button's press.
+        """
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1126,17 +1133,37 @@ class TestPushSlotConfig:
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
         cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
-        # Target selector writes match Composer's push_release trace.
-        assert "c4.dmx.led 01 00 04" in cmds
+        # Slot 2 = wire 01, so param-00 must be 01 (own wire).
+        assert "c4.dmx.led 01 00 01" in cmds
         assert "c4.dmx.led 01 01 02" in cmds
-        # Composer never writes selector 02 when entering push_release.
+        # Selector 02 is not written for push_release.
         assert not any(c.startswith("c4.dmx.led 01 02 ") for c in cmds)
-        # The 00 00 / 01 00 "reset" pre-writes don't appear in Composer's
-        # trace and must not be emitted here either.
-        assert "c4.dmx.led 01 00 00" not in cmds
-        assert "c4.dmx.led 01 01 00" not in cmds
         # Mode 05 (override) is not written.
         assert not any(" 05 " in c for c in cmds if c.startswith("c4.dmx.led 01"))
+
+    @pytest.mark.asyncio
+    async def test_push_release_param_00_varies_by_wire(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Each push_release slot writes its own wire to param-00."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="keypad", led_mode="push_release"),
+                SlotConfig(slot_id=5, behavior="keypad", led_mode="push_release"),
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
+        # Slot 2 (wire 01) listens to wire 01; slot 5 (wire 04) listens to 04.
+        assert "c4.dmx.led 01 00 01" in cmds
+        assert "c4.dmx.led 04 00 04" in cmds
 
     @pytest.mark.asyncio
     async def test_follow_load_sends_mode_selector_trio(

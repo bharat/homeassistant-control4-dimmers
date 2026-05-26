@@ -11,6 +11,7 @@ frontend:
 config:
 my:
 automation: !include automations.yaml
+script: !include scripts.yaml
 recorder:
 
 logger:

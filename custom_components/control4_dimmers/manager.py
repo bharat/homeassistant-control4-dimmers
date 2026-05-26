@@ -418,10 +418,12 @@ class Control4Manager:
         "load_off": 1,
     }
 
-    # Composer's LED-mode selector trio over the wire, decoded by tracing
-    # zserver.log while toggling a button between Programmed / Follow Load /
-    # Push/Release. Each tuple is (param 00, param 01, param 02-or-None):
-    #   param 00 = activity flag (00 = passive, 04 = press-active)
+    # LED-mode selector trio over the wire. Each tuple is
+    # (param 00, param 01, param 02-or-None):
+    #   param 00 = which wire to listen to for press triggers. For
+    #     push_release this must be the slot's own wire; the integration
+    #     overrides this dynamically below. For fixed and follow_load,
+    #     the value is 0x00 (no press listener).
     #   param 01 = behavior mode (00 = Programmed, 01 = Follow Load,
     #                             02 = Push/Release)
     #   param 02 = connection/load ID, only written for Follow Load
@@ -432,7 +434,10 @@ class Control4Manager:
     _LED_MODE_TO_FIRMWARE: ClassVar[dict[str, tuple[int, int, int | None]]] = {
         "fixed": (0x00, 0x00, None),
         "follow_load": (0x00, 0x01, 0x00),
-        "push_release": (0x04, 0x02, None),
+        # param 00 here is a placeholder; _push_slot_config substitutes
+        # the slot's own wire so each push_release LED listens to its
+        # own button press, not wire 04's.
+        "push_release": (0x00, 0x02, None),
     }
 
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
@@ -451,11 +456,17 @@ class Control4Manager:
                 {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
             )
             # Select the LED behavior mode via the param 00 / 01 / 02
-            # selector trio. Param 02 is only written for follow_load
-            # (the load/connection ID slot).
+            # selector trio. Param 00 is the wire whose press triggers
+            # the behavior; for push_release this must be the slot's
+            # own wire (otherwise the LED ends up reacting to a
+            # different button's press, which is what produced the
+            # original cross-flash bug). Param 02 is only written for
+            # follow_load (the load/connection ID slot).
             param_00, param_01, param_02 = self._LED_MODE_TO_FIRMWARE.get(
                 slot.led_mode, (0x00, 0x00, None)
             )
+            if slot.led_mode == "push_release":
+                param_00 = wire_id
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 00 {param_00:02x}"},

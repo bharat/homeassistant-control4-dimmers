@@ -1258,9 +1258,11 @@ class Control4CardEditor extends HTMLElement {
         const dot = slotEl.querySelector(".led-dot");
         if (dot) {
           // Match the main render: show the at-rest color, not the
-          // press / active color, so the preview matches the LED.
+          // press / active color, and hide black dots so the editor
+          // preview matches the dashboard preview and the physical LED.
           const color = ledColor(slot, this._deviceInfo?.state);
           dot.style.background = `#${color}`;
+          dot.style.visibility = color === "000000" ? "hidden" : "";
         }
       }
       const saveBtn = root?.getElementById("save-btn");
@@ -1435,12 +1437,16 @@ class Control4CardEditor extends HTMLElement {
                 // what the physical LED actually displays: led_off_color
                 // for push_release (release color) and fixed (the user-
                 // picked Color in the editor), and the load-state-driven
-                // color for follow_load.
+                // color for follow_load. Hide the dot when the rest
+                // color is black so the editor matches the dashboard
+                // (which suppresses black LEDs to represent the
+                // physically-off state).
                 const color = ledColor(cfg, dev?.state);
+                const hidden = color === "000000" ? "visibility:hidden" : "";
                 return `
                   <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}" data-slot="${btn.startSlot}">
                     <span class="slot-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                    <div class="led-dot" style="background:#${color}; ${ledRingStyle(color)}"></div>
+                    <div class="led-dot" style="background:#${color}; ${ledRingStyle(color)}; ${hidden}"></div>
                   </div>
                 `;
               }).join("")}

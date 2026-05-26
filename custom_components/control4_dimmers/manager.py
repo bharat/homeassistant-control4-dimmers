@@ -552,17 +552,32 @@ class Control4Manager:
 
         if behavior in ("load_on", "load_off", "toggle_load"):
             light_entity = self._find_light_entity(ieee)
-            if not light_entity:
-                LOGGER.error("press_button: no light entity for %s", ieee)
-                return
-            svc = {
-                "load_on": "turn_on",
-                "load_off": "turn_off",
-                "toggle_load": "toggle",
-            }[behavior]
-            await self._hass.services.async_call(
-                "light", svc, {"entity_id": light_entity}
-            )
+            if light_entity:
+                svc = {
+                    "load_on": "turn_on",
+                    "load_off": "turn_off",
+                    "toggle_load": "toggle",
+                }[behavior]
+                await self._hass.services.async_call(
+                    "light", svc, {"entity_id": light_entity}
+                )
+            else:
+                # No HA light entity matches this device's friendly
+                # name. That's the normal case when the keypad controls
+                # its own local load directly in firmware: the physical
+                # button never went through HA, so no light entity got
+                # auto-discovered with a matching name. Fake a press by
+                # publishing the on/off command straight to the
+                # device's Z2M topic; Z2M sends the standard Zigbee
+                # on/off cluster command and the keypad firmware
+                # toggles the local load just as it would for a
+                # physical button press.
+                state_value = {
+                    "load_on": "ON",
+                    "load_off": "OFF",
+                    "toggle_load": "TOGGLE",
+                }[behavior]
+                await self.async_send_mqtt(ieee, {"state": state_value})
         else:
             trigger = {
                 "pressed": "tap",

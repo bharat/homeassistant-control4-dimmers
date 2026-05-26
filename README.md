@@ -227,6 +227,102 @@ appropriate contrast.
   set to **Load Control** (not Programmable). The integration uses
   the Z2M light entity for load control.
 
+## Services
+
+The integration exposes the following service actions you can call
+from automations, scripts, or HA's Developer Tools.
+
+### `control4_dimmers.set_slot_led`
+
+Change a button slot's LED mode and/or colors at runtime. Any field
+you omit keeps its current value.
+
+```yaml
+# Switch slot 2 to push/release with green on press, red at rest
+service: control4_dimmers.set_slot_led
+data:
+  entity_id: event.entry_keypad_home
+  led_mode: push_release
+  on_color: "00ff00"
+  off_color: "ff0000"
+```
+
+```yaml
+# Just change the resting color, leave mode and press color alone
+service: control4_dimmers.set_slot_led
+data:
+  entity_id: event.entry_keypad_home
+  off_color: "0000ff"
+```
+
+```yaml
+# Set the slot to a single fixed color
+service: control4_dimmers.set_slot_led
+data:
+  entity_id: event.entry_keypad_home
+  led_mode: fixed
+  off_color: "ffffff"
+```
+
+Color semantics by mode:
+
+- **fixed**: `off_color` is the displayed color (matches the
+  chassis editor's single Color picker).
+- **push_release**: `on_color` flashes while held, `off_color`
+  shows at rest.
+- **follow_load**: `on_color` shows while the load is on,
+  `off_color` shows while off.
+
+### `control4_dimmers.set_led`
+
+Set a single LED color slot directly (lower-level than
+`set_slot_led`). Useful when you only want to change one specific
+color without re-publishing the slot config.
+
+```yaml
+service: control4_dimmers.set_led
+data:
+  entity_id: event.entry_keypad_home
+  mode: "on"          # or "off"
+  color: "#00ff00"
+```
+
+### `control4_dimmers.press_button`
+
+Simulate a button press from an automation.
+
+```yaml
+service: control4_dimmers.press_button
+data:
+  entity_id: event.entry_keypad_home
+  event_type: pressed    # or single_tap, double_tap, triple_tap, hold
+```
+
+### `control4_dimmers.set_device_type`
+
+Override the auto-detected device type. Use this when detection
+misclassifies a keypad as a dimmer or vice versa.
+
+```yaml
+service: control4_dimmers.set_device_type
+data:
+  entity_id: sensor.entry_keypad
+  device_type: keypaddim    # or dimmer, keypad
+```
+
+### `control4_dimmers.send_raw_command`
+
+Forward an arbitrary `c4_cmd` string to the device's MQTT topic.
+Intended for protocol experimentation from Developer Tools, not
+normal use.
+
+```yaml
+service: control4_dimmers.send_raw_command
+data:
+  entity_id: sensor.entry_keypad
+  command: "c4.dmx.led 04 05 ff00ff"
+```
+
 ## How it works
 
 Control4 dimmers split their Zigbee surface across two profiles on

@@ -527,21 +527,31 @@ In every mode, the integration also writes:
 `c4.dmx.led <btn> <param> <value>` accepts three small-integer
 parameters that together select the firmware's LED behavior mode:
 
-- **param `00`**: activity flag. `00` for passive modes (software- or
-  load-driven). `04` for the active press-feedback mode (firmware
-  flashes the LED while the button is physically held).
+- **param `00`**: the **wire** whose press triggers this LED's
+  behavior. For push_release this must be the slot's own wire (so the
+  LED reacts to its own button press). For passive modes that aren't
+  press-driven (Programmed, Follow Load), the value is `00`.
 - **param `01`**: LED behavior selector.
 - **param `02`**: load/connection identifier, only written for modes
   that track an external state; `00` selects the device's own load.
 
 The defined behavior values:
 
-| Behavior         | param 00 | param 01 | param 02       | LED display                                                                                       |
-|------------------|----------|----------|----------------|---------------------------------------------------------------------------------------------------|
-| Programmed       | `00`     | `00`     | (not written)  | Static; firmware does not auto-display modes 03/04. Mode 05 override drives the visible color.    |
-| Follow Load      | `00`     | `01`     | `00`           | Firmware tracks the local load: mode 03 color when on, mode 04 color when off.                    |
-| Push/Release     | `04`     | `02`     | (not written)  | Firmware flashes mode 03 color while the button is held; shows mode 04 color at rest.             |
-| Follow Connection| (unknown)| (unknown)| (unknown)      | Not exercised by this integration; documented for completeness.                                   |
+| Behavior         | param 00       | param 01 | param 02       | LED display                                                                                       |
+|------------------|----------------|----------|----------------|---------------------------------------------------------------------------------------------------|
+| Programmed       | `00`           | `00`     | (not written)  | Static; firmware does not auto-display modes 03/04. Mode 05 override drives the visible color.    |
+| Follow Load      | `00`           | `01`     | `00`           | Firmware tracks the local load: mode 03 color when on, mode 04 color when off.                    |
+| Push/Release     | own wire       | `02`     | (not written)  | Firmware flashes mode 03 color while the slot's own button is held; shows mode 04 color at rest.  |
+| Follow Connection| (unknown)      | (unknown)| (unknown)      | Not exercised by this integration; documented for completeness.                                   |
+
+The "own wire" rule for push_release was an easy thing to miss: an
+isolated wire trace of one slot updating itself shows `c4.dmx.led <wire> 00 <same wire>`
+twice, and reads naturally as "a constant `04` activity flag" if the
+slot under test happens to be wire 04. Writing that constant to other
+slots makes their LEDs listen to wire 04 instead of themselves, so the
+keypad appears to cross-flash on slot 5 presses. The correct
+interpretation is "param-00 is the wire to listen to" and the
+integration substitutes the slot's own wire when writing push_release.
 
 Modes 03 and 04 are **universal RGB color slots**. The active behavior
 decides how they're interpreted:

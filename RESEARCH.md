@@ -456,6 +456,16 @@ The critical distinction for software-handled buttons is value 03
 performs no firmware load control). Value 05 appears to be the true
 disabled mode.
 
+Follow-up: value 05 has a subtler effect than "disabled" when the
+button is participating in firmware-side broadcast state. With such
+state present, writing `c4.dmx.btn <wire> 01 05` causes the button
+to fire press events on **both** the press and release edges (rather
+than press only). In Home Assistant the two events arrive close
+together and the click-count debouncer reads them as a `double_tap`.
+The behavior reverses when another value is written. The integration
+must therefore never write `01 05` to a user-facing button — it would
+turn every physical tap into a phantom double-tap.
+
 This is the command that Control4's Composer uses to configure what each
 button does at the firmware level.
 

@@ -867,6 +867,80 @@ class TestLoadControlBehavior:
         )
 
     @pytest.mark.asyncio
+    async def test_press_toggle_load_falls_back_to_mqtt_when_no_light_entity(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """
+        Without a matching HA light entity, send TOGGLE to Z2M directly.
+
+        Some C4 keypads control their local load via firmware without a
+        Z2M light entity bearing the same friendly name; the dashboard
+        button still needs to toggle that load, so we publish to the
+        device's Z2M topic instead.
+        """
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="toggle_load", led_mode="follow_load")
+            ],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        # No light entity matches the device's friendly name.
+        manager._hass.states.async_all.return_value = []
+        manager._hass.services.async_call = AsyncMock()
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager.press_button(IEEE_DIMMER, 2)
+        manager._hass.services.async_call.assert_not_called()
+        mock_mqtt.assert_awaited_once_with(IEEE_DIMMER, {"state": "TOGGLE"})
+
+    @pytest.mark.asyncio
+    async def test_press_load_on_falls_back_to_mqtt_when_no_light_entity(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Load-on without a matching light entity publishes state=ON."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_on", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._hass.states.async_all.return_value = []
+        manager._hass.services.async_call = AsyncMock()
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager.press_button(IEEE_DIMMER, 2)
+        mock_mqtt.assert_awaited_once_with(IEEE_DIMMER, {"state": "ON"})
+
+    @pytest.mark.asyncio
+    async def test_press_load_off_falls_back_to_mqtt_when_no_light_entity(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Load-off without a matching light entity publishes state=OFF."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=2, behavior="load_off", led_mode="follow_load")],
+        )
+        manager._store._devices[IEEE_DIMMER] = config
+        manager._hass.states.async_all.return_value = []
+        manager._hass.services.async_call = AsyncMock()
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager.press_button(IEEE_DIMMER, 2)
+        mock_mqtt.assert_awaited_once_with(IEEE_DIMMER, {"state": "OFF"})
+
+    @pytest.mark.asyncio
     async def test_press_programmable_calls_execute_slot_action(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:

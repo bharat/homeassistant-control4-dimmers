@@ -1257,8 +1257,10 @@ class Control4CardEditor extends HTMLElement {
       if (slotEl) {
         const dot = slotEl.querySelector(".led-dot");
         if (dot) {
-          const onColor = slot.led_on_color || "0000ff";
-          dot.style.background = `#${onColor}`;
+          // Match the main render: show the at-rest color, not the
+          // press / active color, so the preview matches the LED.
+          const color = ledColor(slot, this._deviceInfo?.state);
+          dot.style.background = `#${color}`;
         }
       }
       const saveBtn = root?.getElementById("save-btn");
@@ -1429,11 +1431,16 @@ class Control4CardEditor extends HTMLElement {
               ${layout.map((btn) => {
                 const cfg = btn.slots[0];
                 const isSelected = this._selectedSlotId === btn.startSlot;
-                const onColor = cfg.led_on_color || DEFAULT_COLORS.on;
+                // Show the at-rest color so the editor preview matches
+                // what the physical LED actually displays: led_off_color
+                // for push_release (release color) and fixed (the user-
+                // picked Color in the editor), and the load-state-driven
+                // color for follow_load.
+                const color = ledColor(cfg, dev?.state);
                 return `
                   <div class="chassis-slot size-${btn.size} ${isSelected ? "selected" : ""}" data-slot="${btn.startSlot}">
                     <span class="slot-label">${cfg.name || `Button ${btn.startSlot}`}</span>
-                    <div class="led-dot" style="background:#${onColor}; ${ledRingStyle(onColor)}"></div>
+                    <div class="led-dot" style="background:#${color}; ${ledRingStyle(color)}"></div>
                   </div>
                 `;
               }).join("")}

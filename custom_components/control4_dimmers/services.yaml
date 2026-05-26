@@ -1,3 +1,48 @@
+set_slot_led:
+  name: Set Slot LED Mode and Colors
+  description: >
+    Set the LED mode and/or colors for a single button slot. Any
+    field you omit keeps its current value, so you can call this with
+    just `led_mode` to switch behavior without disturbing the colors,
+    or with just colors to recolor without changing the mode.
+
+    Color semantics depend on the mode:
+      - fixed: `off_color` drives the displayed color (the chassis
+        editor's single "Color" picker)
+      - push_release: `on_color` flashes on press, `off_color` shows at rest
+      - follow_load: `on_color` shows when the load is on,
+        `off_color` shows when off
+  fields:
+    entity_id:
+      name: Button Entity
+      description: The event entity for the button.
+      required: true
+      selector:
+        entity:
+          domain: event
+    led_mode:
+      name: LED Mode
+      description: One of fixed, follow_load, push_release.
+      required: false
+      selector:
+        select:
+          options:
+            - fixed
+            - follow_load
+            - push_release
+    on_color:
+      name: On / Press / Load-On Color
+      description: Hex RGB (e.g. "#ff0000" or "ff0000").
+      required: false
+      selector:
+        text:
+    off_color:
+      name: Off / Release / Load-Off Color
+      description: Hex RGB (e.g. "#000000" or "000000").
+      required: false
+      selector:
+        text:
+
 set_led:
   name: Set LED Color
   description: Set an LED color on a Control4 button.

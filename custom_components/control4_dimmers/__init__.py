@@ -304,6 +304,55 @@ async def _svc_send_raw_command(hass: HomeAssistant, call: ServiceCall) -> None:
     await manager.async_send_mqtt(ieee, {"c4_cmd": command})
 
 
+async def _svc_set_slot_led(hass: HomeAssistant, call: ServiceCall) -> None:
+    """
+    Handle control4_dimmers.set_slot_led service call.
+
+    Updates the LED mode and/or colors for a single slot, then re-
+    publishes the slot's full config so the changes land on the
+    device. Fields not provided keep their stored values.
+    """
+    entity_id = call.data["entity_id"]
+    state = hass.states.get(entity_id)
+    if state is None:
+        LOGGER.error("set_slot_led: entity not found: %s", entity_id)
+        return
+    ieee = state.attributes.get("ieee_address")
+    slot_id = state.attributes.get("slot_id")
+    if not ieee or slot_id is None:
+        LOGGER.error("set_slot_led: entity %s missing ieee_address/slot_id", entity_id)
+        return
+
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return
+    manager: Control4Manager = runtime["manager"]
+
+    config = manager.store.get_device(ieee)
+    if config is None:
+        LOGGER.error("set_slot_led: no stored config for device %s", ieee)
+        return
+    slot = next((s for s in config.slots if s.slot_id == slot_id), None)
+    if slot is None:
+        LOGGER.error("set_slot_led: no slot %s on device %s", slot_id, ieee)
+        return
+
+    if "led_mode" in call.data:
+        slot.led_mode = call.data["led_mode"]
+    if "on_color" in call.data:
+        slot.led_on_color = call.data["on_color"].lstrip("#")
+    if "off_color" in call.data:
+        slot.led_off_color = call.data["off_color"].lstrip("#")
+
+    await manager.store.async_save_device(config)
+
+    device_state = manager.devices.get(ieee)
+    if device_state is not None:
+        await manager._push_slot_config(device_state, config)  # noqa: SLF001
+    manager.setup_light_tracking()
+    manager.notify_listeners()
+
+
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle control4_dimmers.set_device_type service call."""
     entity_id = call.data["entity_id"]
@@ -338,6 +387,9 @@ async def _register_services(hass: HomeAssistant) -> None:
 
     async def _wrap_send_raw_command(call: ServiceCall) -> None:
         await _svc_send_raw_command(hass, call)
+
+    async def _wrap_set_slot_led(call: ServiceCall) -> None:
+        await _svc_set_slot_led(hass, call)
 
     async def _wrap_set_device_type(call: ServiceCall) -> None:
         await _svc_set_device_type(hass, call)
@@ -377,6 +429,22 @@ async def _register_services(hass: HomeAssistant) -> None:
             {
                 vol.Required("entity_id"): cv.string,
                 vol.Required("command"): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_slot_led",
+        _wrap_set_slot_led,
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): cv.string,
+                vol.Optional("led_mode"): vol.In(
+                    ["fixed", "follow_load", "push_release"]
+                ),
+                vol.Optional("on_color"): cv.string,
+                vol.Optional("off_color"): cv.string,
             }
         ),
     )

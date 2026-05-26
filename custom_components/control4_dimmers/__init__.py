@@ -278,6 +278,32 @@ async def _svc_press_button(hass: HomeAssistant, call: ServiceCall) -> None:
     await manager.press_button(ieee, slot_id, event_type)
 
 
+async def _svc_send_raw_command(hass: HomeAssistant, call: ServiceCall) -> None:
+    """
+    Handle control4_dimmers.send_raw_command service call.
+
+    Forwards a raw c4_cmd string to the device's MQTT topic so it lands
+    on the proprietary text protocol verbatim.  Intended for protocol
+    experimentation, not normal use.
+    """
+    entity_id = call.data["entity_id"]
+    command = call.data["command"]
+    state = hass.states.get(entity_id)
+    if state is None:
+        LOGGER.error("send_raw_command: entity not found: %s", entity_id)
+        return
+    ieee = state.attributes.get("ieee_address")
+    if not ieee:
+        LOGGER.error("send_raw_command: entity %s missing ieee_address", entity_id)
+        return
+
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        return
+    manager: Control4Manager = runtime["manager"]
+    await manager.async_send_mqtt(ieee, {"c4_cmd": command})
+
+
 async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle control4_dimmers.set_device_type service call."""
     entity_id = call.data["entity_id"]
@@ -310,6 +336,9 @@ async def _register_services(hass: HomeAssistant) -> None:
     async def _wrap_press_button(call: ServiceCall) -> None:
         await _svc_press_button(hass, call)
 
+    async def _wrap_send_raw_command(call: ServiceCall) -> None:
+        await _svc_send_raw_command(hass, call)
+
     async def _wrap_set_device_type(call: ServiceCall) -> None:
         await _svc_set_device_type(hass, call)
 
@@ -336,6 +365,18 @@ async def _register_services(hass: HomeAssistant) -> None:
                 vol.Optional("event_type", default="pressed"): vol.In(
                     ["pressed", "single_tap", "double_tap", "triple_tap", "hold"]
                 ),
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "send_raw_command",
+        _wrap_send_raw_command,
+        schema=vol.Schema(
+            {
+                vol.Required("entity_id"): cv.string,
+                vol.Required("command"): cv.string,
             }
         ),
     )

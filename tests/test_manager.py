@@ -1063,10 +1063,17 @@ class TestPushSlotConfig:
         assert btn_calls[0][0][1] == {"c4_cmd": "c4.dmx.btn 04 01 01"}
 
     @pytest.mark.asyncio
-    async def test_sends_mode_05_override(
+    async def test_fixed_writes_mode_05_from_off_color(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """_push_slot_config sends mode 05 override for visible LED color."""
+        """
+        Fixed mode drives the LED via mode-05 = led_off_color.
+
+        Without a Composer programming engine driving the firmware
+        state, Programmed mode keeps the LED off unless mode 05 is
+        set. The chassis editor's single "Color" picker for fixed
+        mode binds to led_off_color, so that's what mode 05 gets.
+        """
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1086,20 +1093,144 @@ class TestPushSlotConfig:
             manager, "async_send_mqtt", new_callable=AsyncMock
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
-        override_calls = [
-            c
-            for c in mock_mqtt.call_args_list
-            if "c4.dmx.led" in str(c) and " 05 " in str(c)
-        ]
-        assert len(override_calls) == 1
-        # Fixed mode with no tracked entity → off_color
-        assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 ff0000"}
+        cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
+        # Mode 05 = led_off_color (the chassis "Color" picker value).
+        assert "c4.dmx.led 01 05 ff0000" in cmds
+        # Mode 03 and mode 04 still get written but don't drive the
+        # displayed color in Programmed mode on their own.
+        assert "c4.dmx.led 01 03 00ff00" in cmds
+        assert "c4.dmx.led 01 04 ff0000" in cmds
 
     @pytest.mark.asyncio
-    async def test_mode_05_uses_on_color_when_tracked_entity_is_on(
+    async def test_push_release_selector_listens_to_own_wire(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
-        """Mode 05 override uses on_color when tracked entity is on."""
+        """
+        push_release: selector param-00 must be the slot's own wire.
+
+        param-00 in the LED selector trio is the wire whose press
+        triggers this slot's behavior. For push_release each slot must
+        listen to itself; using a hardcoded value would cause the LED
+        to react to a different button's press.
+        """
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=2,
+                    behavior="keypad",
+                    led_mode="push_release",
+                    led_on_color="00ff00",
+                    led_off_color="ff0000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
+        # Slot 2 = wire 01, so param-00 must be 01 (own wire).
+        assert "c4.dmx.led 01 00 01" in cmds
+        assert "c4.dmx.led 01 01 02" in cmds
+        # Selector 02 is not written for push_release.
+        assert not any(c.startswith("c4.dmx.led 01 02 ") for c in cmds)
+        # Mode 05 (override) is not written.
+        assert not any(" 05 " in c for c in cmds if c.startswith("c4.dmx.led 01"))
+
+    @pytest.mark.asyncio
+    async def test_push_release_param_00_varies_by_wire(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Each push_release slot writes its own wire to param-00."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(slot_id=2, behavior="keypad", led_mode="push_release"),
+                SlotConfig(slot_id=5, behavior="keypad", led_mode="push_release"),
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
+        # Slot 2 (wire 01) listens to wire 01; slot 5 (wire 04) listens to 04.
+        assert "c4.dmx.led 01 00 01" in cmds
+        assert "c4.dmx.led 04 00 04" in cmds
+
+    @pytest.mark.asyncio
+    async def test_follow_load_sends_mode_selector_trio(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """follow_load: c4.dmx.led <btn> 00 00 + 01 01 + 02 00, no reset."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=3,
+                    behavior="toggle_load",
+                    led_mode="follow_load",
+                    led_on_color="ffffff",
+                    led_off_color="0000ff",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        cmds = [c.args[1].get("c4_cmd", "") for c in mock_mqtt.call_args_list]
+        assert "c4.dmx.led 02 00 00" in cmds
+        assert "c4.dmx.led 02 01 01" in cmds
+        assert "c4.dmx.led 02 02 00" in cmds
+        # Mode 05 (override) is not written.
+        assert not any(" 05 " in c for c in cmds if c.startswith("c4.dmx.led 02"))
+
+    @pytest.mark.asyncio
+    async def test_fixed_sends_mode_selector_trio(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Fixed (Composer's Programmed): c4.dmx.led <btn> 00 00 + 01 00, no 02."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[
+                SlotConfig(
+                    slot_id=4,
+                    behavior="keypad",
+                    led_mode="fixed",
+                    led_on_color="00ff00",
+                    led_off_color="000000",
+                )
+            ],
+        )
+        with patch.object(
+            manager, "async_send_mqtt", new_callable=AsyncMock
+        ) as mock_mqtt:
+            await manager._push_slot_config(dimmer_state, config)
+        payloads = [call.args[1] for call in mock_mqtt.call_args_list]
+        assert {"c4_cmd": "c4.dmx.led 03 00 00"} in payloads
+        assert {"c4_cmd": "c4.dmx.led 03 01 00"} in payloads
+        # No param-02 write for fixed.
+        assert not any("c4.dmx.led 03 02" in p.get("c4_cmd", "") for p in payloads)
+
+    @pytest.mark.asyncio
+    async def test_follow_load_does_not_write_mode_05_even_when_tracked(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """follow_load relies on firmware LED tracking; mode 05 is skipped."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         config = DeviceConfig(
             ieee_address=IEEE_DIMMER,
@@ -1116,7 +1247,10 @@ class TestPushSlotConfig:
                 )
             ],
         )
-        # Mock the light entity as ON
+        # Even with a tracked entity in the "on" state, follow_load must
+        # not write mode 05 — Composer doesn't, and doing so disengages
+        # the firmware load-tracking behavior the selector trio just
+        # enabled.
         light_state = MagicMock()
         light_state.entity_id = "light.kitchen"
         light_state.attributes = {"friendly_name": "Kitchen"}
@@ -1127,13 +1261,8 @@ class TestPushSlotConfig:
             manager, "async_send_mqtt", new_callable=AsyncMock
         ) as mock_mqtt:
             await manager._push_slot_config(dimmer_state, config)
-        override_calls = [
-            c
-            for c in mock_mqtt.call_args_list
-            if "c4.dmx.led" in str(c) and " 05 " in str(c)
-        ]
-        assert len(override_calls) == 1
-        assert override_calls[0][0][1] == {"c4_cmd": "c4.dmx.led 01 05 ffffff"}
+        payloads = [call.args[1] for call in mock_mqtt.call_args_list]
+        assert not any("c4.dmx.led 01 05" in p.get("c4_cmd", "") for p in payloads)
 
 
 class TestGetDeviceInfo:

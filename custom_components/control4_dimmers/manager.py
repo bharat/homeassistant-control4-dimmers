@@ -418,6 +418,28 @@ class Control4Manager:
         "load_off": 1,
     }
 
+    # LED-mode selector trio over the wire. Each tuple is
+    # (param 00, param 01, param 02-or-None):
+    #   param 00 = which wire to listen to for press triggers. For
+    #     push_release this must be the slot's own wire; the integration
+    #     overrides this dynamically below. For fixed and follow_load,
+    #     the value is 0x00 (no press listener).
+    #   param 01 = behavior mode (00 = Programmed, 01 = Follow Load,
+    #                             02 = Push/Release)
+    #   param 02 = connection/load ID, only written for Follow Load
+    # Mode 03 (RGB) is reused as "on color" / "load-on color" / "press color"
+    # and mode 04 as "off color" / "load-off color" / "release color"
+    # depending on the selected mode. Mode 05 is the persistent override
+    # used by the integration to drive the LED in software for "fixed".
+    _LED_MODE_TO_FIRMWARE: ClassVar[dict[str, tuple[int, int, int | None]]] = {
+        "fixed": (0x00, 0x00, None),
+        "follow_load": (0x00, 0x01, 0x00),
+        # param 00 here is a placeholder; _push_slot_config substitutes
+        # the slot's own wire so each push_release LED listens to its
+        # own button press, not wire 04's.
+        "push_release": (0x00, 0x02, None),
+    }
+
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
         """Push slot LED colors and button config to the device via MQTT."""
         LOGGER.debug(
@@ -427,16 +449,43 @@ class Control4Manager:
         )
         for slot in config.slots:
             wire_id = slot.slot_id - 1
-            # Set firmware button behavior via c4.dmx.btn
+            # Set firmware button behavior via c4.dmx.btn.
             fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 3)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
             )
-            # Store on/off colors in firmware (modes 03/04).
-            # These are NOT visible while mode 05 override is active,
-            # but are stored for potential future use if we decode
-            # the firmware LED mode command.
+            # Select the LED behavior mode via the param 00 / 01 / 02
+            # selector trio. Param 00 is the wire whose press triggers
+            # the behavior; for push_release this must be the slot's
+            # own wire (otherwise the LED ends up reacting to a
+            # different button's press, which is what produced the
+            # original cross-flash bug). Param 02 is only written for
+            # follow_load (the load/connection ID slot).
+            param_00, param_01, param_02 = self._LED_MODE_TO_FIRMWARE.get(
+                slot.led_mode, (0x00, 0x00, None)
+            )
+            if slot.led_mode == "push_release":
+                param_00 = wire_id
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 00 {param_00:02x}"},
+            )
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {param_01:02x}"},
+            )
+            if param_02 is not None:
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 02 {param_02:02x}"},
+                )
+            # Mode-03 / mode-04 RGB color slots. Active LED behavior
+            # decides their meaning:
+            #   - follow_load: load-on color / load-off color
+            #   - push_release: press color / release color
+            #   - fixed (Programmed): mode 03 / mode 04 alone don't light
+            #     the LED; the mode-05 override below is what drives it.
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
@@ -445,14 +494,18 @@ class Control4Manager:
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
             )
-            # Set immediate LED color via override (mode 05)
-            # Mode 05 is persistent and takes priority over modes 03/04
-            initial_color = self._resolve_initial_led_color(state, slot)
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {initial_color}"},
-            )
-            # Store behavior and LED mode in Z2M state for frontend
+            # Programmed-mode display. Without a Composer programming
+            # engine driving the firmware's internal "state", neither
+            # mode 03 nor mode 04 lights the LED in Programmed mode.
+            # Mode 05 is the explicit override that does. The chassis
+            # editor's single "Color" picker for fixed mode binds to
+            # led_off_color, so the user's picked color lives there.
+            if slot.led_mode == "fixed":
+                await self.async_send_mqtt(
+                    state.ieee_address,
+                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {slot.led_off_color}"},
+                )
+            # Store behavior and LED mode in Z2M state for frontend.
             firmware_led_mode = (
                 "programmed" if slot.led_mode == "fixed" else slot.led_mode
             )
@@ -463,20 +516,6 @@ class Control4Manager:
                     f"button_{slot.slot_id}_led_mode": firmware_led_mode,
                 },
             )
-
-    def _resolve_initial_led_color(self, state: DeviceState, slot: SlotConfig) -> str:
-        """Determine the correct LED color to display right now."""
-        if slot.led_mode == "fixed":
-            return slot.led_off_color
-        # For follow_load and programmed modes, check tracked entity state
-        track_id = slot.led_track_entity_id
-        if track_id:
-            resolved = self._resolve_entity_id(state.ieee_address, track_id)
-            if resolved:
-                entity_state = self._hass.states.get(resolved)
-                if entity_state and entity_state.state == "on":
-                    return slot.led_on_color
-        return slot.led_off_color
 
     @staticmethod
     def _find_slot(config: DeviceConfig, slot_id: int) -> SlotConfig | None:
@@ -692,6 +731,8 @@ class Control4Manager:
         if state is None:
             return
         topic = f"{self.mqtt_topic}/{state.friendly_name}/set"
+        if "c4_cmd" in payload:
+            LOGGER.info("MQTT -> %s: %s", state.friendly_name, payload["c4_cmd"])
         await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
 
     def get_default_slots(self, device_type: str) -> list[SlotConfig]:

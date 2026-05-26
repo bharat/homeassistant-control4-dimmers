@@ -50,6 +50,28 @@ press_button:
             - "triple_tap"
             - "hold"
 
+send_raw_command:
+  name: Send Raw c4_cmd
+  description: >
+    Send an arbitrary c4_cmd string to a Control4 device.  Intended for
+    protocol experimentation from Developer Tools, not normal use.  The
+    command string is forwarded verbatim to Z2M and onto the device's
+    proprietary text protocol.
+  fields:
+    entity_id:
+      name: Device Sensor
+      description: The sensor anchor entity for the target device.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+    command:
+      name: Command
+      description: 'Raw c4_cmd string (e.g. "c4.dmx.led 04 05 ffffff").'
+      required: true
+      selector:
+        text:
+
 set_device_type:
   name: Set Device Type
   description: Override the auto-detected device type.

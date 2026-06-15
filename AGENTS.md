@@ -34,7 +34,7 @@ A Home Assistant custom integration for **Control4 Zigbee dimmers / keypads** (C
 │   ├── frontend/
 │   │   ├── __init__.py         # Serves the Lovelace card as a JS module
 │   │   └── control4-dimmer-card.js  # LitElement; dashboard + chassis editor (~1500 LOC)
-│   └── services.yaml           # set_led, press_button, set_device_type
+│   └── services.yaml           # set_device_config, set_slot, push_config, set_led, set_slot_led, press_button, send_raw_command, set_device_type
 │
 ├── z2m/
 │   ├── converters/control4.mjs # Self-contained converter: protocol + Z2M glue

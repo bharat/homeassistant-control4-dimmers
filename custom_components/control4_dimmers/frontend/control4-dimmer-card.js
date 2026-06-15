@@ -72,6 +72,46 @@ function faceplateButtonColor(hex) {
   return `${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
 }
 
+/**
+ * Derive on-faceplate foreground colors from the faceplate's OWN luminance
+ * (not the HA theme), so slot text, sublabels, and LED borders stay legible
+ * on any faceplate color regardless of light/dark theme. Returns null when no
+ * faceplate color is set, so callers fall back to the theme variables.
+ * Uses the same 0.299/0.587/0.114 luminance + 128 threshold as the chassis
+ * dark/light split so both stay in lockstep.
+ */
+function faceplateForeground(hex) {
+  if (!hex) return null;
+  const c = hex.replace("#", "");
+  const r = parseInt(c.substring(0, 2), 16) || 0;
+  const g = parseInt(c.substring(2, 4), 16) || 0;
+  const b = parseInt(c.substring(4, 6), 16) || 0;
+  const dark = (0.299 * r + 0.587 * g + 0.114 * b) < 128;
+  return {
+    dark,
+    // Dark plate => light ink; light plate => dark ink.
+    text: dark ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.85)",
+    subtext: dark ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.6)",
+    border: dark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)",
+    ledBorder: dark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.35)",
+  };
+}
+
+/** Build the chassis inline-style vars for a faceplate color (empty when none). */
+function faceplateChassisStyle(hex, prefix = "--c4-btn") {
+  if (!hex) return "";
+  const fg = faceplateForeground(hex);
+  const bc = faceplateButtonColor(hex);
+  return [
+    `background:#${hex}`,
+    `${prefix}-bg:#${bc}`,
+    `${prefix}-border:${fg.border}`,
+    `${prefix}-text:${fg.text}`,
+    `${prefix}-subtext:${fg.subtext}`,
+    `--c4-led-border:${fg.ledBorder}`,
+  ].join("; ");
+}
+
 const DEVICE_TYPES = {
   dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [2, 5],        fixedLayout: true },
   keypaddim: { label: "Keypad Dimmer", model: "C4-KD120",    slots: [1,2,3,4,5,6], fixedLayout: false },
@@ -191,6 +231,11 @@ const CARD_STYLES = `
     height: 210px;
     box-sizing: border-box;
     margin: 0 10px 10px;
+    /* Subtle grounding so a bright faceplate reads as a framed physical keypad
+       against a dark dashboard rather than a raw glowing slab. Kept low-alpha
+       so it stays invisible on theme-colored (no-faceplate) chassis. */
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   }
   .chassis-btn {
     flex: 1;
@@ -224,10 +269,6 @@ const CARD_STYLES = `
   .chassis-btn.size-5 { flex: 5; }
   .chassis-btn.size-6 { flex: 6; }
 
-  .dark-faceplate .btn-label {
-    color: rgba(255,255,255,0.9);
-  }
-
   .btn-inner {
     display: flex;
     align-items: center;
@@ -241,7 +282,8 @@ const CARD_STYLES = `
     flex: 1;
     font-size: 12px;
     font-weight: 400;
-    color: var(--primary-text-color);
+    /* Faceplate-derived ink, falling back to the theme when no faceplate set. */
+    color: var(--c4-btn-text, var(--primary-text-color));
   }
   .led {
     width: 10px;
@@ -249,7 +291,7 @@ const CARD_STYLES = `
     border-radius: 50%;
     flex-shrink: 0;
     margin-left: 6px;
-    border: 1.5px solid var(--divider-color);
+    border: 1.5px solid var(--c4-led-border, var(--divider-color));
   }
 
 `;
@@ -386,7 +428,7 @@ const EDITOR_STYLES = `
     transition: box-shadow 0.15s ease;
     font-size: 12px;
     font-weight: 400;
-    color: var(--c4-editor-text, var(--primary-text-color));
+    color: var(--c4-editor-btn-text, var(--primary-text-color));
     user-select: none;
     background: var(--c4-editor-btn-bg, var(--card-background-color, #fff));
     border: 1px solid var(--c4-editor-btn-border, var(--divider-color));
@@ -1023,7 +1065,7 @@ class Control4Card extends HTMLElement {
             <div class="name">${dev.friendly_name}</div>
           </div>
 
-          <div class="chassis${(() => { const c = dev.config?.faceplate_color || this._config.faceplate_color; if (!c) return ""; const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; return (0.299*r+0.587*g+0.114*b) < 128 ? " dark-faceplate" : ""; })()}" style="${(() => { const c = dev.config?.faceplate_color || this._config.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); return `background:#${c}; --c4-btn-bg:#${bc}; --c4-btn-border:rgba(${parseInt(c,16) < 0x808080 ? "255,255,255,0.15" : "0,0,0,0.1"})`; })()}">
+          <div class="chassis" style="${faceplateChassisStyle(dev.config?.faceplate_color || this._config.faceplate_color)}">
             ${(() => {
               // Dimmer (2 buttons) should visually match 6-slot keypad height
               const totalSlots = layout.reduce((sum, btn) => sum + btn.size, 0);
@@ -1429,7 +1471,7 @@ class Control4CardEditor extends HTMLElement {
         <div class="device-config-box">
           <div class="box-header">Configuration</div>
           <div class="config-layout">
-            <div class="chassis" style="${(() => { const c = this._localFaceplateColor || dev?.config?.faceplate_color; if (!c) return ""; const bc = faceplateButtonColor(c); const r = parseInt(c.substring(0,2),16)||0, g = parseInt(c.substring(2,4),16)||0, b = parseInt(c.substring(4,6),16)||0; const dark = (0.299*r+0.587*g+0.114*b) < 128; return `background:#${c}; --c4-editor-btn-bg:#${bc}; --c4-editor-btn-border:rgba(${dark ? "255,255,255,0.15" : "0,0,0,0.1"}); --c4-editor-text:${dark ? "rgba(255,255,255,0.9)" : "var(--primary-text-color)"}`; })()}">
+            <div class="chassis" style="${faceplateChassisStyle(this._localFaceplateColor || dev?.config?.faceplate_color, "--c4-editor-btn")}">
               ${layout.map((btn) => {
                 const cfg = btn.slots[0];
                 const isSelected = this._selectedSlotId === btn.startSlot;

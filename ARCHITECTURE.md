@@ -173,6 +173,27 @@ HA Device: "Theater Keypad"
 
 ## Services
 
+### `control4_dimmers.set_device_config`
+
+Apply a full device configuration in one call (device type override,
+faceplate color, and an optional slots list that replaces the device's
+entire slot list). Identify the device with either `entity_id` (any
+entity belonging to the device) or `ieee_address`. Routes through
+`manager.async_configure_device`, the same path as the Lovelace card's
+`control4_dimmers/device_config` websocket command. Returns the
+resulting stored config.
+
+### `control4_dimmers.set_slot`
+
+Set or replace a single slot, merging omitted fields from the existing
+slot (or defaults), then routing the full slot list through
+`async_configure_device`. Returns the resulting stored config.
+
+### `control4_dimmers.push_config`
+
+Re-push a device's stored config to firmware and re-run LED tracking
+without mutating the store (`manager.async_push_config`).
+
 ### `control4_dimmers.set_led`
 
 Set an LED color on a specific button.

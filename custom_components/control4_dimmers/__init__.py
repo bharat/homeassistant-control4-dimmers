@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
-from homeassistant.core import CoreState, Event, ServiceCall
+from homeassistant.core import CoreState, Event, ServiceCall, SupportsResponse
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, INTEGRATION_VERSION, LOGGER
+from .const import (
+    DEVICE_TYPE_SLOTS,
+    DEVICE_TYPES,
+    DOMAIN,
+    INTEGRATION_VERSION,
+    LOGGER,
+)
 from .frontend import JSModuleRegistration
 from .manager import Control4Manager
 from .store import Control4Store
@@ -23,6 +31,137 @@ PLATFORMS: list[Platform] = [
     Platform.EVENT,
     Platform.SENSOR,
 ]
+
+# The "control this device's own load" sentinel an action target can
+# carry. Stored verbatim; the manager resolves it at execution time.
+SELF_LOAD_SENTINEL = "__self_load__"
+
+# Firmware-supported button behaviors (manager._BEHAVIOR_TO_FIRMWARE).
+_BEHAVIORS = ["keypad", "load_on", "load_off", "toggle_load"]
+
+# LED behavior modes (manager._LED_MODE_TO_FIRMWARE).
+_LED_MODES = ["fixed", "follow_load", "push_release"]
+
+_HEX_RE = re.compile(r"[0-9a-fA-F]{6}")
+
+
+def _hex_color(value: Any) -> str:
+    """Validate a 6-digit hex color, accepting and stripping a leading #."""
+    if not isinstance(value, str):
+        msg = "color must be a string"
+        raise vol.Invalid(msg)
+    stripped = value.lstrip("#")
+    if not _HEX_RE.fullmatch(stripped):
+        msg = f"color must be 6-digit hex (e.g. ff0000), got {value!r}"
+        raise vol.Invalid(msg)
+    return stripped.lower()
+
+
+def _action_field(value: Any) -> Any:
+    """Validate an action field: the self-load sentinel or an action dict."""
+    if value == SELF_LOAD_SENTINEL:
+        return value
+    if not isinstance(value, dict):
+        msg = "action must be a mapping or the '__self_load__' sentinel"
+        raise vol.Invalid(msg)
+    if "action" not in value and "service" not in value:
+        msg = "action mapping must include an 'action' or 'service' key"
+        raise vol.Invalid(msg)
+    return value
+
+
+# Strict per-slot validation, shared by set_device_config and set_slot.
+# slot_id range is checked separately against the device's effective type.
+_SLOT_SCHEMA = vol.Schema(
+    {
+        vol.Required("slot_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("size"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("name"): cv.string,
+        vol.Optional("behavior"): vol.In(_BEHAVIORS),
+        vol.Optional("led_mode"): vol.In(_LED_MODES),
+        vol.Optional("led_on_color"): _hex_color,
+        vol.Optional("led_off_color"): _hex_color,
+        vol.Optional("tap_action"): vol.Any(None, _action_field),
+        vol.Optional("double_tap_action"): vol.Any(None, _action_field),
+        vol.Optional("hold_action"): vol.Any(None, _action_field),
+        vol.Optional("led_track_entity_id"): vol.Any(None, cv.string),
+    }
+)
+
+
+def _validate_slot(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate one slot dict, raising ServiceValidationError on bad input."""
+    try:
+        return _SLOT_SCHEMA(raw)
+    except vol.Invalid as err:
+        raise ServiceValidationError(str(err)) from err
+
+
+def _resolve_ieee(
+    hass: HomeAssistant,
+    manager: Control4Manager,
+    data: dict[str, Any],
+) -> str:
+    """
+    Resolve the IEEE address from a service call's device identifiers.
+
+    Accepts exactly one of entity_id (any entity belonging to the
+    device) or ieee_address. Raises ServiceValidationError if neither
+    or both are given, or if the device cannot be resolved to a known
+    discovered device.
+    """
+    entity_id = data.get("entity_id")
+    ieee = data.get("ieee_address")
+    if (entity_id is None) == (ieee is None):
+        msg = "Provide exactly one of entity_id or ieee_address"
+        raise ServiceValidationError(msg)
+
+    if entity_id is not None:
+        state = hass.states.get(entity_id)
+        if state is None:
+            msg = f"Entity not found: {entity_id}"
+            raise ServiceValidationError(msg)
+        ieee = state.attributes.get("ieee_address")
+        if not ieee:
+            msg = f"Entity {entity_id} has no ieee_address attribute"
+            raise ServiceValidationError(msg)
+
+    if manager.devices.get(ieee) is None:
+        msg = f"Unknown or undiscovered device: {ieee}"
+        raise ServiceValidationError(msg)
+    return ieee
+
+
+def _effective_type(
+    manager: Control4Manager,
+    ieee: str,
+    override: str | None = None,
+) -> str | None:
+    """Return the device's effective type, honoring an incoming override."""
+    if override:
+        return override
+    config = manager.store.get_device(ieee)
+    if config and config.effective_type:
+        return config.effective_type
+    state = manager.devices.get(ieee)
+    return state.device_type if state else None
+
+
+def _validate_slot_id(slot_id: int, effective_type: str | None) -> None:
+    """Validate slot_id is legal for the device's effective type."""
+    allowed = DEVICE_TYPE_SLOTS.get(effective_type or "")
+    if allowed is None:
+        msg = (
+            f"Cannot validate slot {slot_id}: device type "
+            f"{effective_type!r} is unknown. Pass device_type_override."
+        )
+        raise ServiceValidationError(msg)
+    if slot_id not in allowed:
+        msg = (
+            f"Slot {slot_id} is not valid for a {effective_type} device "
+            f"(allowed slots: {allowed})"
+        )
+        raise ServiceValidationError(msg)
 
 
 async def _register_websocket_handlers(hass: HomeAssistant) -> None:
@@ -376,6 +515,121 @@ async def _svc_set_device_type(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
+async def _svc_set_device_config(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any] | None:
+    """
+    Handle control4_dimmers.set_device_config service call.
+
+    Applies a full device configuration in one call: optional
+    device_type_override, optional faceplate_color, and an optional
+    slots list that replaces the device's entire slot configuration.
+    Omitted fields are left unchanged. Routes through
+    async_configure_device so persistence, the firmware push, and entity
+    refresh stay identical to the Lovelace card's websocket path.
+    Returns the device's resulting stored config.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    device_type_override = call.data.get("device_type_override")
+    raw_slots = call.data.get("slots")
+
+    slots: list[dict[str, Any]] | None = None
+    if raw_slots is not None:
+        effective = _effective_type(manager, ieee, device_type_override)
+        slots = []
+        for raw in raw_slots:
+            validated = _validate_slot(raw)
+            _validate_slot_id(validated["slot_id"], effective)
+            slots.append(validated)
+
+    await manager.async_configure_device(
+        ieee_address=ieee,
+        device_type_override=device_type_override,
+        slots=slots,
+        faceplate_color=call.data.get("faceplate_color"),
+    )
+
+    config = manager.store.get_device(ieee)
+    return config.to_dict() if config else None
+
+
+async def _svc_set_slot(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any] | None:
+    """
+    Handle control4_dimmers.set_slot service call.
+
+    Sets or replaces a single slot's config without resending every
+    slot. Omitted slot fields default from the existing slot if one is
+    present, otherwise from SlotConfig's dataclass defaults. The
+    resulting full slot list is routed through async_configure_device so
+    save, push, and refresh happen exactly as for set_device_config.
+    Returns the device's resulting stored config.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+
+    raw_slot = {
+        k: v for k, v in call.data.items() if k not in ("entity_id", "ieee_address")
+    }
+    validated = _validate_slot(raw_slot)
+    slot_id = validated["slot_id"]
+
+    _validate_slot_id(slot_id, _effective_type(manager, ieee))
+
+    config = manager.store.get_device(ieee)
+    existing_slots = config.slots if config else []
+    existing = next((s for s in existing_slots if s.slot_id == slot_id), None)
+    merged = {**(existing.to_dict() if existing else {}), **validated}
+    merged["slot_id"] = slot_id
+
+    new_slots: list[dict[str, Any]] = []
+    replaced = False
+    for slot in existing_slots:
+        if slot.slot_id == slot_id:
+            new_slots.append(merged)
+            replaced = True
+        else:
+            new_slots.append(slot.to_dict())
+    if not replaced:
+        new_slots.append(merged)
+
+    await manager.async_configure_device(ieee_address=ieee, slots=new_slots)
+
+    config = manager.store.get_device(ieee)
+    return config.to_dict() if config else None
+
+
+async def _svc_push_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.push_config service call.
+
+    Explicitly re-pushes the device's stored config to firmware and
+    re-runs light tracking, so pushing is no longer only an implicit
+    side effect of other services. Does not mutate the stored config.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    pushed = await manager.async_push_config(ieee)
+    return {"pushed": pushed, "ieee_address": ieee}
+
+
 async def _register_services(hass: HomeAssistant) -> None:
     """Register custom service calls."""
 
@@ -393,6 +647,15 @@ async def _register_services(hass: HomeAssistant) -> None:
 
     async def _wrap_set_device_type(call: ServiceCall) -> None:
         await _svc_set_device_type(hass, call)
+
+    async def _wrap_set_device_config(call: ServiceCall) -> dict[str, Any] | None:
+        return await _svc_set_device_config(hass, call)
+
+    async def _wrap_set_slot(call: ServiceCall) -> dict[str, Any] | None:
+        return await _svc_set_slot(hass, call)
+
+    async def _wrap_push_config(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_push_config(hass, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -459,6 +722,61 @@ async def _register_services(hass: HomeAssistant) -> None:
                 vol.Required("device_type"): vol.In(["dimmer", "keypaddim", "keypad"]),
             }
         ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_device_config",
+        _wrap_set_device_config,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Optional("device_type_override"): vol.Any(
+                    None, vol.In(DEVICE_TYPES)
+                ),
+                vol.Optional("faceplate_color"): vol.Any(None, cv.string),
+                vol.Optional("slots"): [dict],
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_slot",
+        _wrap_set_slot,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Required("slot_id"): vol.Coerce(int),
+                vol.Optional("size"): vol.Coerce(int),
+                vol.Optional("name"): cv.string,
+                vol.Optional("behavior"): cv.string,
+                vol.Optional("led_mode"): cv.string,
+                vol.Optional("led_on_color"): cv.string,
+                vol.Optional("led_off_color"): cv.string,
+                vol.Optional("tap_action"): vol.Any(None, dict, cv.string),
+                vol.Optional("double_tap_action"): vol.Any(None, dict, cv.string),
+                vol.Optional("hold_action"): vol.Any(None, dict, cv.string),
+                vol.Optional("led_track_entity_id"): vol.Any(None, cv.string),
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "push_config",
+        _wrap_push_config,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 

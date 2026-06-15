@@ -232,6 +232,89 @@ appropriate contrast.
 The integration exposes the following service actions you can call
 from automations, scripts, or HA's Developer Tools.
 
+Every service identifies a device by either `entity_id` (any entity
+that belongs to the device, such as its sensor anchor or one of its
+button event entities) or `ieee_address` (the raw Zigbee address).
+Provide exactly one.
+
+### `control4_dimmers.set_device_config`
+
+Apply a full device configuration in one call. This is the primary
+service for scripting per-device setup (for example, migrating many
+devices onto Zigbee2MQTT). Omitted fields are left unchanged. When
+`slots` is provided it replaces the device's entire slot list, so
+include every slot you want to keep. Returns the resulting stored
+config (enable "Return response" to capture it).
+
+```yaml
+# Configure a keypad end to end (e.g. during a bulk migration)
+service: control4_dimmers.set_device_config
+data:
+  ieee_address: "0x000fff0000ccc001"
+  device_type_override: keypad
+  faceplate_color: "ffffff"
+  slots:
+    - slot_id: 1
+      name: Lights
+      behavior: keypad
+      led_mode: fixed
+      led_off_color: "ffffff"
+      tap_action:
+        action: light.toggle
+        target:
+          entity_id: light.living_room
+      led_track_entity_id: light.living_room
+    - slot_id: 2
+      name: Fan
+      behavior: keypad
+      led_mode: fixed
+      led_off_color: "00ff00"
+response_variable: result
+```
+
+You can also touch just one device-level field. With `slots` omitted,
+the existing slots are left intact:
+
+```yaml
+# Recolor just the faceplate, leave slots and type unchanged
+service: control4_dimmers.set_device_config
+data:
+  entity_id: sensor.theater_keypad
+  faceplate_color: "0000ff"
+```
+
+### `control4_dimmers.set_slot`
+
+Set or replace a single slot without resending every slot. Omitted
+slot fields default from the existing slot if one is present, otherwise
+from the built-in defaults. If no slot with that `slot_id` exists yet,
+it is created. Returns the resulting stored config.
+
+```yaml
+# Rename slot 3 and point its tap at a scene, leaving its LED alone
+service: control4_dimmers.set_slot
+data:
+  entity_id: event.theater_keypad_button_3
+  slot_id: 3
+  name: Movie Night
+  tap_action:
+    action: scene.turn_on
+    target:
+      entity_id: scene.movie_night
+```
+
+### `control4_dimmers.push_config`
+
+Re-push a device's stored config to firmware and re-run LED tracking,
+without changing anything in the store. Use this to resync a device
+whose firmware drifted from the stored config.
+
+```yaml
+service: control4_dimmers.push_config
+data:
+  ieee_address: "0x000fff0000ccc001"
+```
+
 ### `control4_dimmers.set_slot_led`
 
 Change a button slot's LED mode and/or colors at runtime. Any field

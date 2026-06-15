@@ -1,3 +1,211 @@
+set_device_config:
+  name: Set Device Config
+  description: >
+    Apply a full device configuration in one call. Identify the device
+    with either a single entity_id (the device's sensor anchor or any of
+    its button event entities) or its ieee_address (provide exactly one).
+    Any field you omit is left unchanged. When `slots` is provided it
+    replaces the device's entire slot list, so include every slot you
+    want to keep. Intended for scripting per-device setup (for example,
+    migrating many devices onto Zigbee2MQTT). Returns the resulting
+    stored config.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device (its sensor anchor or a button
+        event entity). Provide this or ieee_address, not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address (e.g. "0x000fff0000aaa001").
+        Provide this or entity_id, not both.
+      required: false
+      selector:
+        text:
+    device_type_override:
+      name: Device Type Override
+      description: Force the device type (dimmer, keypaddim, or keypad).
+      required: false
+      selector:
+        select:
+          options:
+            - "dimmer"
+            - "keypaddim"
+            - "keypad"
+    faceplate_color:
+      name: Faceplate Color
+      description: Hex RGB faceplate color (e.g. "#ffffff" or "ffffff").
+      required: false
+      selector:
+        text:
+    slots:
+      name: Slots
+      description: >
+        A list of slot configuration objects that REPLACES the device's
+        full slot list. Each slot is an object with: slot_id (required,
+        positive int, must be legal for the device type), size, name,
+        behavior (keypad, load_on, load_off, toggle_load), led_mode
+        (fixed, follow_load, push_release), led_on_color / led_off_color
+        (6-digit hex, optional leading #), tap_action / double_tap_action
+        / hold_action (an HA action mapping with an action/service key, or
+        the "__self_load__" sentinel, or null), and led_track_entity_id.
+        Example slot: {"slot_id": 1, "name": "Lights", "behavior":
+        "keypad", "led_mode": "fixed", "led_off_color": "ffffff"}.
+      required: false
+      selector:
+        object:
+
+set_slot:
+  name: Set Slot
+  description: >
+    Set or replace a single slot's config without resending every slot.
+    Identify the device with either entity_id or ieee_address (exactly
+    one). Omitted slot fields default from the existing slot if present,
+    otherwise from the built-in defaults. If no slot with that slot_id
+    exists yet it is created. Returns the resulting stored config.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+    slot_id:
+      name: Slot ID
+      description: >
+        The slot to set (positive int, must be legal for the device
+        type).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box
+    size:
+      name: Size
+      description: The slot's visual size in the chassis editor.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box
+    name:
+      name: Name
+      description: Display name for the slot.
+      required: false
+      selector:
+        text:
+    behavior:
+      name: Behavior
+      description: One of keypad, load_on, load_off, toggle_load.
+      required: false
+      selector:
+        select:
+          options:
+            - "keypad"
+            - "load_on"
+            - "load_off"
+            - "toggle_load"
+    led_mode:
+      name: LED Mode
+      description: One of fixed, follow_load, push_release.
+      required: false
+      selector:
+        select:
+          options:
+            - "fixed"
+            - "follow_load"
+            - "push_release"
+    led_on_color:
+      name: LED On Color
+      description: Hex RGB (e.g. "#ff0000" or "ff0000").
+      required: false
+      selector:
+        text:
+    led_off_color:
+      name: LED Off Color
+      description: Hex RGB (e.g. "#000000" or "000000").
+      required: false
+      selector:
+        text:
+    tap_action:
+      name: Tap Action
+      description: >
+        An HA action mapping (an object carrying an action/service key,
+        with optional target and data), or the "__self_load__" sentinel,
+        or null. Example: {"action": "light.toggle", "target":
+        {"entity_id": "light.kitchen"}}.
+      required: false
+      selector:
+        object:
+    double_tap_action:
+      name: Double Tap Action
+      description: >
+        Same shape as tap_action. An HA action mapping, "__self_load__",
+        or null.
+      required: false
+      selector:
+        object:
+    hold_action:
+      name: Hold Action
+      description: >
+        Same shape as tap_action. An HA action mapping, "__self_load__",
+        or null.
+      required: false
+      selector:
+        object:
+    led_track_entity_id:
+      name: LED Track Entity
+      description: >
+        Entity whose on/off state drives this slot's LED, or null.
+      required: false
+      selector:
+        text:
+
+push_config:
+  name: Push Config
+  description: >
+    Re-push a device's stored config to firmware and re-run LED
+    tracking, without changing anything in the store. Use this to
+    resync a device whose firmware drifted from the stored config.
+    Identify the device with either entity_id or ieee_address (exactly
+    one).
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+
 set_slot_led:
   name: Set Slot LED Mode and Colors
   description: >

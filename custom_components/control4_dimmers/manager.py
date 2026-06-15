@@ -408,6 +408,24 @@ class Control4Manager:
         self.setup_light_tracking()
         self.notify_listeners()
 
+    async def async_push_config(self, ieee_address: str) -> bool:
+        """
+        Re-push a device's stored config to firmware.
+
+        Resends the stored slot config over MQTT, rebuilds light
+        tracking, and notifies listeners without mutating anything in
+        the store. Returns False if the device or its config is unknown.
+        """
+        state = self._devices.get(ieee_address)
+        config = self._store.get_device(ieee_address)
+        if state is None or config is None:
+            LOGGER.error("Cannot push config for unknown device: %s", ieee_address)
+            return False
+        await self._push_slot_config(state, config)
+        self.setup_light_tracking()
+        self.notify_listeners()
+        return True
+
     # Map our behavior names to c4.dmx.btn firmware values:
     #   00=load_on, 01=load_off, 02=toggle, 03=programmable
     #   (sends events, no load control), 04=momentary hold, 05=disabled

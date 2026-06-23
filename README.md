@@ -315,6 +315,48 @@ data:
   ieee_address: "0x000fff0000ccc001"
 ```
 
+### Snapshot and restore
+
+Four actions let you take a reversible checkpoint of a device's stored
+config and put it back later. They are handy for temporary overrides:
+darken keypads at night and restore them in the morning, or flip a
+panel into a "party" look and roll it back when you are done.
+
+- `control4_dimmers.snapshot` saves the device's current stored config
+  under a `name`. It fails if the device has no stored config yet.
+- `control4_dimmers.restore` re-applies a named snapshot, persisting it
+  and pushing it to firmware just like `push_config`. Pass `delete:
+  true` to discard the snapshot after a successful restore.
+- `control4_dimmers.list_snapshots` returns the snapshot names saved for
+  a device, sorted.
+- `control4_dimmers.delete_snapshot` removes a named snapshot (returns
+  `deleted: false` if it did not exist).
+
+A Goodnight routine takes a checkpoint, darkens the keypad, and a
+Good Morning routine restores it:
+
+```yaml
+# Goodnight: snapshot, then dim the keypad LEDs to off-white
+- service: control4_dimmers.snapshot
+  data:
+    ieee_address: "0x000fff0000ccc001"
+    name: before_goodnight
+- service: control4_dimmers.set_slot_led
+  data:
+    entity_id: event.theater_keypad_button_1
+    led_mode: fixed
+    off_color: "050505"
+```
+
+```yaml
+# Good Morning: restore the keypad and discard the one-shot snapshot
+- service: control4_dimmers.restore
+  data:
+    ieee_address: "0x000fff0000ccc001"
+    name: before_goodnight
+    delete: true
+```
+
 ### `control4_dimmers.set_slot_led`
 
 Change a button slot's LED mode and/or colors at runtime. Any field

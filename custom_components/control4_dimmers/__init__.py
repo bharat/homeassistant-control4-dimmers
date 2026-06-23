@@ -630,6 +630,109 @@ async def _svc_push_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     return {"pushed": pushed, "ieee_address": ieee}
 
 
+async def _svc_snapshot(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.snapshot service call.
+
+    Saves the device's current stored config under a name so it can be
+    restored later. Raises if the device has no stored config yet.
+    Returns the ieee, the name, and the captured config dict.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    name = call.data["name"]
+
+    config = manager.store.get_device(ieee)
+    if config is None:
+        msg = f"No stored config to snapshot for device {ieee}"
+        raise ServiceValidationError(msg)
+
+    config_dict = config.to_dict()
+    await manager.store.async_save_snapshot(ieee, name, config_dict)
+    return {"ieee_address": ieee, "name": name, "snapshot": config_dict}
+
+
+async def _svc_restore(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.restore service call.
+
+    Re-applies a named snapshot, persisting and pushing to firmware the
+    same way push_config does. With delete=True the snapshot is removed
+    after a successful restore. Returns the resulting stored config.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    name = call.data["name"]
+
+    snapshot = manager.store.get_snapshot(ieee, name)
+    if snapshot is None:
+        msg = f"No snapshot named {name!r} for device {ieee}"
+        raise ServiceValidationError(msg)
+
+    await manager.async_configure_device(
+        ieee_address=ieee,
+        device_type_override=snapshot.get("device_type_override"),
+        slots=snapshot.get("slots", []),
+        faceplate_color=snapshot.get("faceplate_color"),
+    )
+
+    if call.data.get("delete", False):
+        await manager.store.async_delete_snapshot(ieee, name)
+
+    config = manager.store.get_device(ieee)
+    return {
+        "ieee_address": ieee,
+        "name": name,
+        "restored": config.to_dict() if config else None,
+    }
+
+
+async def _svc_list_snapshots(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.list_snapshots service call.
+
+    Returns the sorted snapshot names stored for the device.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    return {"ieee_address": ieee, "snapshots": manager.store.list_snapshots(ieee)}
+
+
+async def _svc_delete_snapshot(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.delete_snapshot service call.
+
+    Removes a named snapshot. Returns deleted=False if it did not exist.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    name = call.data["name"]
+    deleted = await manager.store.async_delete_snapshot(ieee, name)
+    return {"ieee_address": ieee, "name": name, "deleted": deleted}
+
+
 async def _register_services(hass: HomeAssistant) -> None:
     """Register custom service calls."""
 
@@ -656,6 +759,18 @@ async def _register_services(hass: HomeAssistant) -> None:
 
     async def _wrap_push_config(call: ServiceCall) -> dict[str, Any]:
         return await _svc_push_config(hass, call)
+
+    async def _wrap_snapshot(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_snapshot(hass, call)
+
+    async def _wrap_restore(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_restore(hass, call)
+
+    async def _wrap_list_snapshots(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_list_snapshots(hass, call)
+
+    async def _wrap_delete_snapshot(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_delete_snapshot(hass, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -774,6 +889,62 @@ async def _register_services(hass: HomeAssistant) -> None:
             {
                 vol.Optional("entity_id"): cv.string,
                 vol.Optional("ieee_address"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "snapshot",
+        _wrap_snapshot,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Required("name"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "restore",
+        _wrap_restore,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Required("name"): cv.string,
+                vol.Optional("delete", default=False): cv.boolean,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "list_snapshots",
+        _wrap_list_snapshots,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "delete_snapshot",
+        _wrap_delete_snapshot,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Required("name"): cv.string,
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

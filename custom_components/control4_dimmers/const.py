@@ -37,6 +37,7 @@ CONF_MQTT_TOPIC: Final = "mqtt_topic"
 DEFAULT_MQTT_TOPIC: Final = "zigbee2mqtt"
 
 STORAGE_KEY: Final = "control4_dimmers_devices"
+SNAPSHOT_STORAGE_KEY: Final = "control4_dimmers_snapshots"
 STORAGE_VERSION: Final = 1
 
 C4_MANUFACTURER_NAME: Final = "Control4"

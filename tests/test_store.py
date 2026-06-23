@@ -24,6 +24,10 @@ class TestControl4Store:
             mock_ha_store.async_save = AsyncMock()
             s = Control4Store(MagicMock(), "entry1")
         s._store = mock_ha_store
+        snapshot_store = MagicMock()
+        snapshot_store.async_load = AsyncMock(return_value=None)
+        snapshot_store.async_save = AsyncMock()
+        s._snapshot_store = snapshot_store
         return s
 
     @pytest.mark.asyncio

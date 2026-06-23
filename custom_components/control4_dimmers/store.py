@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.storage import Store
 
-from .const import LOGGER, STORAGE_KEY, STORAGE_VERSION
+from .const import (
+    LOGGER,
+    SNAPSHOT_STORAGE_KEY,
+    STORAGE_KEY,
+    STORAGE_VERSION,
+)
 from .models import DeviceConfig, SlotConfig
 
 if TYPE_CHECKING:
@@ -22,6 +27,13 @@ class Control4Store:
             hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry_id}"
         )
         self._devices: dict[str, DeviceConfig] = {}
+        # Named snapshots of device configs, kept in a separate HA Store so
+        # the device store's schema and migration path stay untouched.
+        # Shape: {ieee_address: {snapshot_name: config_dict}}.
+        self._snapshot_store = Store[dict[str, Any]](
+            hass, STORAGE_VERSION, f"{SNAPSHOT_STORAGE_KEY}.{entry_id}"
+        )
+        self._snapshots: dict[str, dict[str, dict[str, Any]]] = {}
 
     @property
     def devices(self) -> dict[str, DeviceConfig]:
@@ -29,7 +41,9 @@ class Control4Store:
         return self._devices
 
     async def async_load(self) -> None:
-        """Load device configs from persistent storage."""
+        """Load device configs and snapshots from persistent storage."""
+        await self._load_snapshots()
+
         stored = await self._store.async_load()
         self._devices = {}
         if not stored or not isinstance(stored, dict):
@@ -46,6 +60,15 @@ class Control4Store:
         if migrated:
             LOGGER.info("Migrated legacy behavior configs to action system")
             await self.async_save()
+
+    async def _load_snapshots(self) -> None:
+        """Load named config snapshots from persistent storage."""
+        stored = await self._snapshot_store.async_load()
+        self._snapshots = {}
+        if not stored or not isinstance(stored, dict):
+            return
+        for ieee, named in stored.get("snapshots", {}).items():
+            self._snapshots[ieee] = dict(named)
 
     async def async_save(self) -> None:
         """Persist device configs to storage."""
@@ -64,6 +87,37 @@ class Control4Store:
         """Save or update a device config."""
         self._devices[config.ieee_address] = config
         await self.async_save()
+
+    async def async_save_snapshots(self) -> None:
+        """Persist named config snapshots to storage."""
+        payload = {"snapshots": self._snapshots}
+        await self._snapshot_store.async_save(payload)
+
+    def get_snapshot(self, ieee_address: str, name: str) -> dict[str, Any] | None:
+        """Get a named snapshot config dict for a device, or None."""
+        return self._snapshots.get(ieee_address, {}).get(name)
+
+    def list_snapshots(self, ieee_address: str) -> list[str]:
+        """Return the sorted snapshot names stored for a device."""
+        return sorted(self._snapshots.get(ieee_address, {}))
+
+    async def async_save_snapshot(
+        self, ieee_address: str, name: str, config_dict: dict[str, Any]
+    ) -> None:
+        """Save (or overwrite) a named snapshot for a device."""
+        self._snapshots.setdefault(ieee_address, {})[name] = config_dict
+        await self.async_save_snapshots()
+
+    async def async_delete_snapshot(self, ieee_address: str, name: str) -> bool:
+        """Delete a named snapshot. Returns True if one was removed."""
+        named = self._snapshots.get(ieee_address)
+        if not named or name not in named:
+            return False
+        del named[name]
+        if not named:
+            del self._snapshots[ieee_address]
+        await self.async_save_snapshots()
+        return True
 
 
 def _migrate_slot(slot: SlotConfig) -> bool:

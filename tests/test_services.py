@@ -9,9 +9,13 @@ import pytest
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.control4_dimmers import (
+    _svc_delete_snapshot,
+    _svc_list_snapshots,
     _svc_push_config,
+    _svc_restore,
     _svc_set_device_config,
     _svc_set_slot,
+    _svc_snapshot,
 )
 from custom_components.control4_dimmers.const import DOMAIN
 from custom_components.control4_dimmers.manager import Control4Manager
@@ -38,6 +42,7 @@ def _make_runtime(
     with patch("custom_components.control4_dimmers.store.Store"):
         store = Control4Store(mock_hass, "entry1")
     store._store.async_save = AsyncMock()
+    store._snapshot_store.async_save = AsyncMock()
     if config is not None:
         store._devices[config.ieee_address] = config
 
@@ -364,3 +369,96 @@ class TestResponseShape:
         )
         assert result["ieee_address"] == IEEE
         assert isinstance(result["slots"], list)
+
+
+# ── snapshot / restore ───────────────────────────────────────────────
+
+
+class TestSnapshot:
+    @pytest.mark.asyncio
+    async def test_snapshot_saves_current_config(self, mock_hass: MagicMock) -> None:
+        _, store = _make_runtime(mock_hass, config=_keypad_config())
+        result = await _svc_snapshot(
+            mock_hass, _call({"ieee_address": IEEE, "name": "night"})
+        )
+        assert result["ieee_address"] == IEEE
+        assert result["name"] == "night"
+        # The captured snapshot matches the device's current stored config.
+        assert result["snapshot"] == store.get_device(IEEE).to_dict()
+        assert store.get_snapshot(IEEE, "night") == store.get_device(IEEE).to_dict()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_without_stored_config_raises(
+        self, mock_hass: MagicMock
+    ) -> None:
+        _make_runtime(mock_hass, config=None)
+        with pytest.raises(ServiceValidationError):
+            await _svc_snapshot(
+                mock_hass, _call({"ieee_address": IEEE, "name": "night"})
+            )
+
+
+class TestRestore:
+    @pytest.mark.asyncio
+    async def test_restore_reapplies_snapshot(self, mock_hass: MagicMock) -> None:
+        mgr, store = _make_runtime(mock_hass, config=_keypad_config())
+        await _svc_snapshot(mock_hass, _call({"ieee_address": IEEE, "name": "saved"}))
+        # Mutate the live config away from the snapshot.
+        await _svc_set_device_config(
+            mock_hass,
+            _call({"ieee_address": IEEE, "slots": [{"slot_id": 3, "name": "Three"}]}),
+        )
+        assert [s.slot_id for s in store.get_device(IEEE).slots] == [3]
+
+        result = await _svc_restore(
+            mock_hass, _call({"ieee_address": IEEE, "name": "saved"})
+        )
+        # Restoring brings back the snapshot's slots and pushes to firmware.
+        assert [s.slot_id for s in store.get_device(IEEE).slots] == [1, 2]
+        assert [s["slot_id"] for s in result["restored"]["slots"]] == [1, 2]
+        mgr._push_slot_config.assert_awaited()
+        # The snapshot survives a restore without delete.
+        assert store.get_snapshot(IEEE, "saved") is not None
+
+    @pytest.mark.asyncio
+    async def test_restore_with_delete_removes_snapshot(
+        self, mock_hass: MagicMock
+    ) -> None:
+        _, store = _make_runtime(mock_hass, config=_keypad_config())
+        await _svc_snapshot(mock_hass, _call({"ieee_address": IEEE, "name": "oneshot"}))
+        await _svc_restore(
+            mock_hass,
+            _call({"ieee_address": IEEE, "name": "oneshot", "delete": True}),
+        )
+        assert store.get_snapshot(IEEE, "oneshot") is None
+
+    @pytest.mark.asyncio
+    async def test_restore_unknown_name_raises(self, mock_hass: MagicMock) -> None:
+        _make_runtime(mock_hass, config=_keypad_config())
+        with pytest.raises(ServiceValidationError):
+            await _svc_restore(
+                mock_hass, _call({"ieee_address": IEEE, "name": "missing"})
+            )
+
+
+class TestSnapshotHousekeeping:
+    @pytest.mark.asyncio
+    async def test_list_snapshots_sorted(self, mock_hass: MagicMock) -> None:
+        _make_runtime(mock_hass, config=_keypad_config())
+        for name in ("zulu", "alpha", "mike"):
+            await _svc_snapshot(mock_hass, _call({"ieee_address": IEEE, "name": name}))
+        result = await _svc_list_snapshots(mock_hass, _call({"ieee_address": IEEE}))
+        assert result["snapshots"] == ["alpha", "mike", "zulu"]
+
+    @pytest.mark.asyncio
+    async def test_delete_snapshot_true_then_false(self, mock_hass: MagicMock) -> None:
+        _make_runtime(mock_hass, config=_keypad_config())
+        await _svc_snapshot(mock_hass, _call({"ieee_address": IEEE, "name": "gone"}))
+        first = await _svc_delete_snapshot(
+            mock_hass, _call({"ieee_address": IEEE, "name": "gone"})
+        )
+        assert first["deleted"] is True
+        second = await _svc_delete_snapshot(
+            mock_hass, _call({"ieee_address": IEEE, "name": "gone"})
+        )
+        assert second["deleted"] is False

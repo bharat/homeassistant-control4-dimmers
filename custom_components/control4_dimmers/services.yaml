@@ -206,6 +206,137 @@ push_config:
       selector:
         text:
 
+snapshot:
+  name: Snapshot Device Config
+  description: >
+    Save the device's current stored config under a name so you can
+    restore it later. Use this to take a reversible checkpoint before
+    temporarily overriding LEDs or slots (for example, a Goodnight
+    routine that darkens keypads). Identify the device with either
+    entity_id or ieee_address (exactly one). Fails if the device has no
+    stored config yet. Returns the captured config.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+    name:
+      name: Snapshot Name
+      description: A label for the snapshot (reused to restore or delete it).
+      required: true
+      selector:
+        text:
+
+restore:
+  name: Restore Device Config
+  description: >
+    Re-apply a previously saved snapshot, persisting it and pushing it
+    to firmware just like push_config. Identify the device with either
+    entity_id or ieee_address (exactly one). Fails if no snapshot with
+    that name exists. Returns the resulting stored config.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+    name:
+      name: Snapshot Name
+      description: The name of the snapshot to restore.
+      required: true
+      selector:
+        text:
+    delete:
+      name: Delete After Restore
+      description: >
+        When on, the snapshot is removed after a successful restore. Use
+        this for one-shot checkpoints (snapshot, override, then restore
+        and discard).
+      required: false
+      selector:
+        boolean:
+
+list_snapshots:
+  name: List Device Snapshots
+  description: >
+    List the names of the snapshots saved for a device. Identify the
+    device with either entity_id or ieee_address (exactly one). Returns
+    the snapshot names, sorted.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+
+delete_snapshot:
+  name: Delete Device Snapshot
+  description: >
+    Remove a named snapshot from a device. Identify the device with
+    either entity_id or ieee_address (exactly one). Returns deleted:
+    false if no snapshot with that name existed.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+    name:
+      name: Snapshot Name
+      description: The name of the snapshot to delete.
+      required: true
+      selector:
+        text:
+
 set_slot_led:
   name: Set Slot LED Mode and Colors
   description: >

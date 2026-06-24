@@ -1,6 +1,6 @@
 colorlog==6.10.1
 ha-ffmpeg==3.2.2
-hassil==3.6.0
+hassil==3.7.0
 home-assistant-intents==2026.6.1
 isal==1.8.0
 mutagen==1.47.0

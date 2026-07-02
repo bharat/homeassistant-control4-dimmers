@@ -1,6 +1,6 @@
 colorlog==6.10.1
 ha-ffmpeg==3.2.2
-hassil==3.8.0
+hassil==3.8.1
 home-assistant-intents==2026.6.1
 isal==1.8.0
 mutagen==1.47.0
@@ -11,7 +11,7 @@ pip==26.1.2
 ruff==0.15.17
 pre_commit==4.6.0
 paho-mqtt==2.1.0
-pytest==9.0.3
+pytest==9.1.0
 pytest-homeassistant-custom-component==0.13.339
 pytest-timeout==2.4.0
 pytest-xdist==3.8.0

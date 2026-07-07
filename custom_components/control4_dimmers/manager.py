@@ -18,6 +18,7 @@ from .const import (
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
+    DEVICE_TYPES,
     DOMAIN,
     LOGGER,
     SLOT_COUNT,
@@ -400,9 +401,23 @@ class Control4Manager:
         if state.device_type:
             config.device_type = state.device_type
 
+        # Seed default slots when a device is typed but has no slots yet.
+        # Only seed when the caller did not provide slots at all (slots is None),
+        # so an explicit empty list is respected as "clear my slots".
+        seeded = False
+        if slots is None and not config.slots and config.effective_type in DEVICE_TYPES:
+            config.slots = self.get_default_slots(config.effective_type)
+            seeded = True
+            LOGGER.info(
+                "Seeded %d default slots for %s (type %s)",
+                len(config.slots),
+                config.friendly_name,
+                config.effective_type,
+            )
+
         await self._store.async_save_device(config)
 
-        if slots is not None:
+        if slots is not None or seeded:
             await self._push_slot_config(state, config)
 
         self.setup_light_tracking()

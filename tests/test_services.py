@@ -14,6 +14,7 @@ from custom_components.control4_dimmers import (
     _svc_push_config,
     _svc_restore,
     _svc_set_device_config,
+    _svc_set_device_type,
     _svc_set_slot,
     _svc_snapshot,
 )
@@ -158,6 +159,31 @@ class TestSetDeviceConfig:
         )
         with pytest.raises(ServiceValidationError):
             await _svc_set_device_config(mock_hass, call)
+
+
+# ── set_device_type ──────────────────────────────────────────────────
+
+
+class TestSetDeviceType:
+    @pytest.mark.asyncio
+    async def test_seeds_dimmer_defaults_when_no_config(
+        self, mock_hass: MagicMock
+    ) -> None:
+        mgr, store = _make_runtime(mock_hass, config=None)
+        mock_hass.states.get.return_value = _entity_state(IEEE)
+        call = _call({"entity_id": "light.theater", "device_type": "dimmer"})
+        await _svc_set_device_type(mock_hass, call)
+        config = store.get_device(IEEE)
+        assert config is not None
+        assert [s.slot_id for s in config.slots] == [2, 5]
+        top = next(s for s in config.slots if s.slot_id == 2)
+        assert top.name == "Top"
+        assert top.behavior == "load_on"
+        bottom = next(s for s in config.slots if s.slot_id == 5)
+        assert bottom.name == "Bottom"
+        assert bottom.behavior == "load_off"
+        # Seeded slots are pushed to firmware.
+        mgr._push_slot_config.assert_awaited_once()
 
 
 # ── set_slot ─────────────────────────────────────────────────────────

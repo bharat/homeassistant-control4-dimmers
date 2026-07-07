@@ -437,6 +437,7 @@ class TestManagerConfigureDevice:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
         await manager.async_configure_device(
             ieee_address=IEEE_DIMMER,
             device_type_override="keypaddim",
@@ -462,6 +463,7 @@ class TestManagerConfigureDevice:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
         listener = MagicMock()
         manager.add_listener(listener)
         await manager.async_configure_device(
@@ -469,6 +471,93 @@ class TestManagerConfigureDevice:
             device_type_override="keypad",
         )
         listener.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_seeds_defaults_and_pushes_on_type_set(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """Typing a device with empty stored slots seeds defaults and pushes."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER,
+            device_type_override="dimmer",
+        )
+        saved = manager._store.async_save_device.call_args[0][0]
+        assert [s.slot_id for s in saved.slots] == [2, 5]
+        top = next(s for s in saved.slots if s.slot_id == 2)
+        assert top.name == "Top"
+        assert top.behavior == "load_on"
+        bottom = next(s for s in saved.slots if s.slot_id == 5)
+        assert bottom.name == "Bottom"
+        assert bottom.behavior == "load_off"
+        # Seeded slots are pushed to firmware.
+        manager._push_slot_config.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_reseed_over_existing_slots(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """A device that already has user slots keeps them (no reseed, no push)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        existing = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            slots=[SlotConfig(slot_id=3, name="Mine", behavior="keypad")],
+        )
+        manager._store._devices[IEEE_DIMMER] = existing
+        manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER,
+            device_type_override="keypad",
+        )
+        saved = manager._store.async_save_device.call_args[0][0]
+        assert [s.slot_id for s in saved.slots] == [3]
+        assert saved.slots[0].name == "Mine"
+        manager._push_slot_config.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_explicit_empty_slots_clears_not_reseeds(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """Passing slots=[] clears slots and does not reseed defaults."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER,
+            slots=[],
+        )
+        saved = manager._store.async_save_device.call_args[0][0]
+        assert saved.slots == []
+
+    @pytest.mark.asyncio
+    async def test_keypad_seeding_matches_get_default_slots(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """Keypad override seeds the same slots get_default_slots produces."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER,
+            device_type_override="keypad",
+        )
+        saved = manager._store.async_save_device.call_args[0][0]
+        expected = manager.get_default_slots("keypad")
+        assert len(saved.slots) == len(expected)
+        assert [s.slot_id for s in saved.slots] == [s.slot_id for s in expected]
 
 
 # ── Manager: _execute_slot_action ──────────────────────────────────

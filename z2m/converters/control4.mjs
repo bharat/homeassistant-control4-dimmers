@@ -894,6 +894,76 @@ const tzControl4Detect = {
     },
 };
 
+// ─── Debounced Load State Read (manual paddle sync) ─────────────────
+//
+// Control4 devices do NOT support ZCL attribute reporting (the load light
+// is registered with configureReporting: false), so a manual paddle press
+// at the wall never pushes a state update to Z2M. The Z2M light entity
+// only moves when Z2M itself commands the device, leaving it stale after
+// physical interaction.
+//
+// C4 devices DO answer ZCL reads, and button presses arrive as C4 text
+// telemetry. So on every button event we schedule a read of the load
+// state (genOnOff.onOff + genLevelCtrl.currentLevel on EP1). The standard
+// light() fromZigbee handlers pick those read responses up and update
+// state/brightness automatically.
+//
+// The read is debounced per device: a dimmer paddle hold emits a burst of
+// events, so we wait until the device has been quiet for the debounce
+// window before reading, letting the load settle and coalescing the burst
+// into a single read.
+
+export const C4_STATE_READ_DEBOUNCE_MS = 750;
+
+const c4StateReadTimers = new Map();
+
+/**
+ * Schedule a debounced read of the load on/off + level state for a device.
+ *
+ * Each call resets the per-device timer; the read fires once the device has
+ * been quiet for C4_STATE_READ_DEBOUNCE_MS. Pure keypads have no load, so
+ * they are skipped. Read failures are logged and swallowed (never thrown).
+ *
+ * @param {object} device - herdsman device (needs ieeeAddr + getEndpoint)
+ * @param {string} [deviceType] - c4_device_type from meta.state, if known
+ */
+export function scheduleC4StateRead(device, deviceType) {
+    if (!device) return;
+
+    // Pure keypads drive no load, so there is nothing to read. When the
+    // device type is unknown we attempt the read anyway (guarded below).
+    if (deviceType === 'keypad') return;
+
+    const key = device.ieeeAddr;
+    const existing = c4StateReadTimers.get(key);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(async () => {
+        c4StateReadTimers.delete(key);
+        let ep1;
+        try {
+            ep1 = device.getEndpoint(1);
+        } catch (err) {
+            console.error(`[C4 STATE] getEndpoint(1) failed: ${err.message}`);
+            return;
+        }
+        if (!ep1) return;
+
+        try {
+            await ep1.read('genOnOff', ['onOff']);
+        } catch (err) {
+            console.error(`[C4 STATE] genOnOff read failed: ${err.message}`);
+        }
+        try {
+            await ep1.read('genLevelCtrl', ['currentLevel']);
+        } catch (err) {
+            console.error(`[C4 STATE] genLevelCtrl read failed: ${err.message}`);
+        }
+    }, C4_STATE_READ_DEBOUNCE_MS);
+
+    c4StateReadTimers.set(key, timer);
+}
+
 // ─── fromZigbee: Capture C4 Text Protocol Responses ─────────────────
 //
 // C4 devices send responses and telemetry as raw ASCII on endpoint 197
@@ -954,6 +1024,13 @@ const fzControl4Response = {
                         }
                     }
                 }
+
+                // Sync Z2M's load state after any button event. Manual paddle
+                // presses never report their state (no ZCL reporting), and the
+                // smart-behavior genOnOff command above ALSO does not update Z2M
+                // state on its own, so this debounced read covers both paths.
+                scheduleC4StateRead(msg.device, meta.state?.c4_device_type);
+
                 return result;
             }
 

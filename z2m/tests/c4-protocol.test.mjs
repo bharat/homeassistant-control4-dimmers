@@ -27,6 +27,9 @@ import {
     // Button event parsing
     parseButtonEvent,
 
+    // Load status telemetry parsing
+    parseLoadStatus,
+
     // Device detection
     classifyDeviceType, getButtonsForDeviceType, buildLedColorState,
 
@@ -525,6 +528,41 @@ describe('parseButtonEvent', () => {
 
     it('returns null for non-C4 text', () => {
         expect(parseButtonEvent('hello world')).toBeNull();
+    });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Load Status Telemetry Parsing
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('parseLoadStatus', () => {
+    it('parses a ramp-up frame (04 hex) to level 4', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.ls 00 00 04 0078 0000 0000')).toEqual({level: 4});
+    });
+
+    it('parses a mid-level frame (59 hex) to level 89', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.ls 00 00 59 0078 0000')).toEqual({level: 89});
+    });
+
+    it('parses an off frame (00 hex) to level 0', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.ls 00 00 00 0078')).toEqual({level: 0});
+    });
+
+    it('parses a full-on frame (64 hex) to level 100', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.ls 00 00 64 0078')).toEqual({level: 100});
+    });
+
+    it('returns null for an out-of-range level (above 0x64)', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.ls 00 00 ff 0078')).toBeNull();
+    });
+
+    it('returns null for non-ls telemetry (button press)', () => {
+        expect(parseLoadStatus('0t0001 sa c4.dmx.bp 01')).toBeNull();
+    });
+
+    it('returns null for garbage text', () => {
+        expect(parseLoadStatus('hello world')).toBeNull();
     });
 });
 

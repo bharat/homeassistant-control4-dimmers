@@ -266,6 +266,31 @@ export function parseButtonEvent(text) {
     return null;
 }
 
+// ─── Load Status Telemetry Parsing ──────────────────────────────────
+//
+// Control4 devices broadcast unsolicited load-status telemetry on every
+// load change, as C4 text frames on EP 197:
+//
+//   0t<seq> sa c4.dmx.ls 00 00 <level> 0078 0000 0000 ...
+//
+// The THIRD data field after "c4.dmx.ls" is the current load level as a
+// hex percent (0x00..0x64). This is how a manual paddle press reports its
+// new level without any ZCL reporting (GitHub issue #101).
+
+export function parseLoadStatus(text) {
+    const match = text.match(/^0t\w+ sa c4\.dmx\.ls (\w+) (\w+) (\w+)/);
+    if (!match) return null;
+
+    const level = parseInt(match[3], 16);
+    if (Number.isNaN(level) || level > 0x64) {
+        // Out of the valid 0..100 percent range: treat as unparsed.
+        console.error(`[C4 LS] Ignoring out-of-range load level: ${text}`);
+        return null;
+    }
+
+    return {level};
+}
+
 // ─── Device Type Detection Logic ─────────────────────────────────────
 
 export const DIM_TYPE_MAP = {
@@ -917,12 +942,71 @@ export const C4_STATE_READ_DEBOUNCE_MS = 750;
 
 const c4StateReadTimers = new Map();
 
+// ─── Debounced Load State Publish (unsolicited ls telemetry) ─────────
+//
+// The primary path for GitHub issue #101: Control4 devices push their new
+// load level as c4.dmx.ls telemetry on every load change, so we do not
+// need a ZCL read at all in the common case. A dim ramp emits many ls
+// frames per second, so we coalesce the burst with a trailing-edge
+// debounce per device and publish the FINAL settled level exactly once.
+//
+// Publishing uses the standard light() fields (state + brightness) that
+// the light() extend already exposes, so HA updates without any new
+// entities or MQTT contract changes.
+
+export const C4_LOAD_STATE_DEBOUNCE_MS = 500;
+
+const c4LoadStateTimers = new Map();
+
+// Per-device timestamp (ms) of the most recent ls frame seen. Used to
+// demote the #102 ZCL read to a fallback: if ls telemetry already arrived,
+// the scheduled read is redundant and gets skipped.
+const c4LastLsSeen = new Map();
+
+/**
+ * Schedule a trailing-edge debounced publish of load state for a device.
+ *
+ * Each ls frame stores the latest level and resets the per-device timer;
+ * once the device goes quiet for C4_LOAD_STATE_DEBOUNCE_MS, we publish the
+ * final level once as {state, brightness}. Also records the ls-seen
+ * timestamp so scheduleC4StateRead can skip its fallback read.
+ *
+ * @param {object} device - herdsman device (needs ieeeAddr)
+ * @param {number} level - load level as a percent (0..100)
+ * @param {function} publish - the fz publish callback
+ */
+export function scheduleC4LoadStatePublish(device, level, publish) {
+    if (!device) return;
+
+    const key = device.ieeeAddr;
+    c4LastLsSeen.set(key, Date.now());
+
+    const existing = c4LoadStateTimers.get(key);
+    if (existing) clearTimeout(existing.timer);
+
+    const entry = {level, timer: null};
+    entry.timer = setTimeout(() => {
+        c4LoadStateTimers.delete(key);
+        const lvl = entry.level;
+        publish({
+            state: lvl > 0 ? 'ON' : 'OFF',
+            brightness: Math.round(lvl * 255 / 100),
+        });
+    }, C4_LOAD_STATE_DEBOUNCE_MS);
+
+    c4LoadStateTimers.set(key, entry);
+}
+
 /**
  * Schedule a debounced read of the load on/off + level state for a device.
  *
  * Each call resets the per-device timer; the read fires once the device has
  * been quiet for C4_STATE_READ_DEBOUNCE_MS. Pure keypads have no load, so
  * they are skipped. Read failures are logged and swallowed (never thrown).
+ *
+ * This is now a FALLBACK behind the ls-telemetry path: if an ls frame
+ * arrived after the read was scheduled, the debounced load-state publish
+ * already refreshed HA, so the read is skipped.
  *
  * @param {object} device - herdsman device (needs ieeeAddr + getEndpoint)
  * @param {string} [deviceType] - c4_device_type from meta.state, if known
@@ -935,11 +1019,21 @@ export function scheduleC4StateRead(device, deviceType) {
     if (deviceType === 'keypad') return;
 
     const key = device.ieeeAddr;
+    const scheduledAt = Date.now();
     const existing = c4StateReadTimers.get(key);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(async () => {
         c4StateReadTimers.delete(key);
+
+        // Fallback demotion: if an ls frame arrived after this read was
+        // scheduled, the debounced load-state publish already updated HA.
+        const lastLs = c4LastLsSeen.get(key);
+        if (lastLs !== undefined && lastLs > scheduledAt) {
+            console.error(`[C4 STATE] Skipping ZCL read for ${key}; ls telemetry already refreshed state`);
+            return;
+        }
+
         let ep1;
         try {
             ep1 = device.getEndpoint(1);
@@ -1031,6 +1125,17 @@ const fzControl4Response = {
                 // state on its own, so this debounced read covers both paths.
                 scheduleC4StateRead(msg.device, meta.state?.c4_device_type);
 
+                return result;
+            }
+
+            // ── Parse unsolicited load-status telemetry (issue #101) ──
+            //
+            // Devices push their new load level on every change. Coalesce
+            // the dim-ramp burst and publish the settled state/brightness.
+            const loadStatus = parseLoadStatus(text);
+            if (loadStatus) {
+                console.error(`[C4 LS] Load level ${loadStatus.level}%`);
+                scheduleC4LoadStatePublish(msg.device, loadStatus.level, publish);
                 return result;
             }
 

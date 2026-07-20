@@ -312,6 +312,37 @@ export function classifyDeviceType(dimResponseText) {
     }
 }
 
+/**
+ * True when a c4.dmx.dim response is an explicit "no load" answer rather than
+ * a dim code. A true keypad ANSWERS the dim probe instead of staying silent:
+ * prod (issue #123) observed the negative "0r<seq> n01", and the generic
+ * error form is "0r<seq> v<NN>" (e.g. v01). Either arrives as a real response
+ * that carries no dim code, which proves the device is reachable and drives
+ * no load. Pure logic.
+ */
+export function isC4DimNegativeResponse(rawText) {
+    if (!rawText) return false;
+    return /\bn01\b/.test(rawText) || /^0r\w+\s+v\d{2}\b/.test(rawText);
+}
+
+/**
+ * Classify a c4.dmx.dim probe outcome from its raw response text. Pure logic.
+ *
+ *   {kind: 'heal', dimCode}  a dim code answer proves a load type
+ *   {kind: 'negative'}       an explicit no-load answer (n01 / v01 error form)
+ *   {kind: 'silent'}         no response at all (a timeout)
+ *
+ * The distinction matters for self-heal: a negative answer confirms a keypad
+ * immediately, while silence only counts toward the silent-probe budget.
+ */
+export function classifyDimProbeResponse(rawText) {
+    if (rawText == null) return {kind: 'silent'};
+    const dimCode = parseDimResponse(rawText);
+    if (dimCode) return {kind: 'heal', dimCode};
+    if (isC4DimNegativeResponse(rawText)) return {kind: 'negative'};
+    return {kind: 'silent'};
+}
+
 // ─── Self-Heal Confidence Model (GitHub issue #115) ─────────────────
 //
 // A c4.dmx.dim probe that times out was historically read as "no load =
@@ -1244,10 +1275,19 @@ export function applyC4Heal(device, currentType, evidence, publish) {
     return state;
 }
 
-/** Upgrade an assumed keypad to a confirmed keypad after enough silence. */
-function markConfirmedC4Keypad(device, publish) {
+/**
+ * Upgrade an assumed keypad to a confirmed keypad. Called both after enough
+ * silence and, per issue #123, immediately on an explicit negative dim answer;
+ * the evidence/logReason override lets each path record its own proof.
+ */
+function markConfirmedC4Keypad(device, publish, opts = {}) {
+    const evidence = opts.evidence ??
+        `${C4_MAX_SILENT_PROBES} consecutive silent c4.dmx.dim probes`;
+    const logReason = opts.logReason ??
+        `keypad confirmed after ${C4_MAX_SILENT_PROBES} silent c4.dmx.dim probes`;
+
     persistC4Meta(device, {confidence: C4_CONFIDENCE_CONFIRMED});
-    console.error(`[C4 HEAL] ${device.ieeeAddr}: keypad confirmed after ${C4_MAX_SILENT_PROBES} silent c4.dmx.dim probes`);
+    console.error(`[C4 HEAL] ${device.ieeeAddr}: ${logReason}`);
 
     if (typeof publish === 'function') {
         publish({
@@ -1259,7 +1299,7 @@ function markConfirmedC4Keypad(device, publish) {
                 model: MODEL_NAMES.keypad,
                 description: MODEL_DESCRIPTIONS.keypad,
                 healed: false,
-                evidence: `${C4_MAX_SILENT_PROBES} consecutive silent c4.dmx.dim probes`,
+                evidence,
             },
         });
     }
@@ -1277,6 +1317,18 @@ function markConfirmedC4Keypad(device, publish) {
  * @param {function} [publish] - fz publish callback (for confirm/heal state)
  * @param {object} [opts] - test seams: probeFn, random, initialMaxMs, backoffMs
  */
+/**
+ * Normalize a probeFn return value into a {kind, dimCode?} outcome. The
+ * default probeFn returns a classifyDimProbeResponse object, but the legacy
+ * test seam contract is a bare dim code string (heal) or null (silent), so
+ * both shapes are accepted.
+ */
+function normalizeProbeOutcome(result) {
+    if (result == null) return {kind: 'silent'};
+    if (typeof result === 'object') return result;
+    return {kind: 'heal', dimCode: result};
+}
+
 export function scheduleC4ProbeCampaign(device, deviceType, publish, opts = {}) {
     if (!device) return;
     if (deviceType !== 'keypad') return;                           // never probe a load-bearing device
@@ -1284,7 +1336,7 @@ export function scheduleC4ProbeCampaign(device, deviceType, publish, opts = {}) 
     if (c4ProbeCampaigns.has(device.ieeeAddr)) return;             // one campaign per process lifetime
 
     const probeFn = opts.probeFn ?? (async (dev) =>
-        parseDimResponse(await queryC4WithResponse(dev, 'c4.dmx.dim', 3000)));
+        classifyDimProbeResponse(await queryC4WithResponse(dev, 'c4.dmx.dim', 3000)));
     const random = opts.random ?? Math.random;
     const initialMaxMs = opts.initialMaxMs ?? C4_PROBE_INITIAL_MAX_MS;
     const backoffMs = opts.backoffMs ?? C4_PROBE_BACKOFF_MS;
@@ -1295,19 +1347,32 @@ export function scheduleC4ProbeCampaign(device, deviceType, publish, opts = {}) 
     const runProbe = async () => {
         campaign.timer = null;
 
-        let dimCode = null;
+        let outcome;
         try {
-            dimCode = await probeFn(device);
+            outcome = normalizeProbeOutcome(await probeFn(device));
         } catch (err) {
             console.error(`[C4 HEAL] Probe failed for ${device.ieeeAddr}: ${err.message}`);
-            dimCode = null;
+            outcome = {kind: 'silent'};
         }
 
-        if (dimCode) {
+        if (outcome.kind === 'heal') {
             // The dim response also flows through fzControl4Response, which
             // heals and publishes; applyC4Heal here is idempotent (no-op if
             // already healed) so the injected-probe test path still heals.
-            applyC4Heal(device, deviceType, {dimCode}, publish);
+            applyC4Heal(device, deviceType, {dimCode: outcome.dimCode}, publish);
+            c4ProbeCampaigns.delete(device.ieeeAddr);
+            return;
+        }
+
+        if (outcome.kind === 'negative') {
+            // A true keypad answers the dim probe with an explicit no-load
+            // response rather than timing out. That is proof, not silence, so
+            // confirm immediately instead of burning the silent-probe budget
+            // and its exponential backoff (issue #123).
+            markConfirmedC4Keypad(device, publish, {
+                logReason: 'keypad confirmed by explicit n01 answer',
+                evidence: 'explicit n01 answer',
+            });
             c4ProbeCampaigns.delete(device.ieeeAddr);
             return;
         }
@@ -1325,6 +1390,51 @@ export function scheduleC4ProbeCampaign(device, deviceType, publish, opts = {}) 
     };
 
     campaign.timer = setTimeout(runProbe, Math.floor(random() * initialMaxMs));
+}
+
+// ─── Startup Arming of the Probe Campaign (issue #123) ──────────────
+//
+// scheduleC4ProbeCampaign was originally only kicked off from
+// fzControl4Response, so a device had to emit C4 text traffic before its
+// campaign armed. Quiet keypads never did, so in prod 6 of 8 devices sat
+// unprobed for 25 minutes. We now arm every assumed-keypad device at z2m
+// startup via the definition's onEvent 'start' hook. A device whose stored
+// classification is a load type (dimmer / keypaddim) or a confirmed keypad is
+// skipped by scheduleC4ProbeCampaign; an absent classification is treated as
+// an assumed keypad so a never-detected device still gets probed. The
+// per-device jitter inside the campaign keeps a fleet from probing at once,
+// and the fz-side arming stays as an idempotent supplement.
+
+/**
+ * onEvent handler for the definition. Arms the self-heal probe campaign for
+ * assumed-keypad (or unclassified) devices when z2m starts.
+ *
+ * @param {string} type - z2m event type; only 'start' arms.
+ * @param {object} data - z2m event data (unused).
+ * @param {object} device - herdsman device.
+ * @param {object} options - device options (unused).
+ * @param {object} [state] - last published device state, if any.
+ * @param {object} [opts] - test seam forwarded to scheduleC4ProbeCampaign
+ *                          (probeFn, random, initialMaxMs, backoffMs, publish).
+ *                          z2m never passes this; only tests do.
+ */
+export async function c4OnEvent(type, data, device, options, state, opts = {}) {
+    if (type !== 'start' || !device) return;
+
+    const currentType = state?.c4_device_type ?? device.meta?.c4_device_type ?? 'keypad';
+    scheduleC4ProbeCampaign(device, currentType, opts.publish, opts);
+}
+
+/**
+ * Short device identity for log attribution (issue #118 item 4, extended to
+ * the [C4 BUTTON] and [C4 LS] prefixes in issue #123). Uses the ieeeAddr, plus
+ * the friendly name when the device object carries one cheaply.
+ */
+function c4DeviceLabel(device) {
+    if (!device) return '?';
+    const ieee = device.ieeeAddr ?? '?';
+    const name = device.friendlyName ?? device.meta?.friendlyName;
+    return name ? `${ieee} (${name})` : ieee;
 }
 
 // ─── fromZigbee: Capture C4 Text Protocol Responses ─────────────────
@@ -1380,7 +1490,7 @@ const fzControl4Response = {
             const event = parseButtonEvent(text);
             if (event) {
                 result.action = event.action;
-                console.error(`[C4 BUTTON] ${event.type}: ${event.action}`);
+                console.error(`[C4 BUTTON] ${c4DeviceLabel(msg.device)} ${event.type}: ${event.action}`);
 
                 // Smart behavior on press: if button has load-control behavior,
                 // send the genOnOff command to EP1 immediately.
@@ -1395,12 +1505,12 @@ const fzControl4Response = {
                                           : behavior === 'load_off'   ? 'off'
                                           : null;
                                 if (cmd) {
-                                    console.error(`[C4 BUTTON] Smart behavior: genOnOff.${cmd}`);
+                                    console.error(`[C4 BUTTON] ${c4DeviceLabel(msg.device)} Smart behavior: genOnOff.${cmd}`);
                                     await ep1.command('genOnOff', cmd, {});
                                 }
                             }
                         } catch (err) {
-                            console.error(`[C4 BUTTON] Smart behavior failed: ${err.message}`);
+                            console.error(`[C4 BUTTON] ${c4DeviceLabel(msg.device)} Smart behavior failed: ${err.message}`);
                         }
                     }
                 }
@@ -1420,7 +1530,7 @@ const fzControl4Response = {
             // the dim-ramp burst and publish the settled state/brightness.
             const loadStatus = parseLoadStatus(text);
             if (loadStatus) {
-                console.error(`[C4 LS] Load level ${loadStatus.level}%`);
+                console.error(`[C4 LS] ${c4DeviceLabel(msg.device)} Load level ${loadStatus.level}%`);
 
                 // Passive self-heal: unsolicited ls telemetry proves the device
                 // drives a load, so an assumed keypad becomes keypaddim (issue #115).
@@ -1485,6 +1595,12 @@ const definition = {
         tzControl4ZclRead, tzControl4Probe, tzControl4Identify,
         tzControl4Detect,
     ],
+    // Arm the self-heal probe campaign for quiet assumed-keypads at startup
+    // (issue #123). The light() extend adds no onEvent, so a definition-level
+    // onEvent composes cleanly. Only the trailing opts is dropped here; z2m's
+    // extra meta arg is intentionally ignored.
+    onEvent: async (type, data, device, options, state) =>
+        c4OnEvent(type, data, device, options, state),
     meta: {disableDefaultResponse: true},
     configure: async (device, coordinatorEndpoint, definition) => {
         const endpoint = device.getEndpoint(1);

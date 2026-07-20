@@ -72,6 +72,22 @@ describe('healTypeFromEvidence (pure classification)', () => {
         expect(healTypeFromEvidence('dimmer', {ls: true})).toBeNull();
     });
 
+    it('paddle telemetry upgrades a keypad to keypaddim (issue #117)', () => {
+        expect(healTypeFromEvidence('keypad', {paddle: true})).toBe('keypaddim');
+    });
+
+    it('paddle telemetry upgrades an unclassified device to keypaddim', () => {
+        expect(healTypeFromEvidence(undefined, {paddle: true})).toBe('keypaddim');
+    });
+
+    it('paddle telemetry never downgrades an existing dimmer', () => {
+        expect(healTypeFromEvidence('dimmer', {paddle: true})).toBeNull();
+    });
+
+    it('paddle telemetry is a no-op on an existing keypaddim', () => {
+        expect(healTypeFromEvidence('keypaddim', {paddle: true})).toBeNull();
+    });
+
     it('a dim answer matching the current type is a no-op', () => {
         expect(healTypeFromEvidence('dimmer', {dimCode: '01'})).toBeNull();
     });
@@ -167,6 +183,40 @@ describe('applyC4Heal (passive self-heal, issue #115)', () => {
         const state = applyC4Heal(device, 'keypaddim', {ls: true}, publish);
 
         expect(state).toBeNull();
+        expect(publish).not.toHaveBeenCalled();
+    });
+
+    // (f) a paddle event proves a local load, healing an assumed keypad to
+    // keypaddim with the paddle-telemetry evidence recorded (issue #117).
+    it('heals an assumed keypad to keypaddim on paddle telemetry', () => {
+        const device = makeDevice('0x0A07', {
+            c4_device_type: 'keypad',
+            c4_type_confidence: C4_CONFIDENCE_ASSUMED,
+        });
+        const publish = vi.fn();
+
+        const state = applyC4Heal(device, 'keypad', {paddle: true}, publish);
+
+        expect(state.c4_device_type).toBe('keypaddim');
+        expect(device.meta.c4_device_type).toBe('keypaddim');
+        expect(device.meta.c4_type_confidence).toBe(C4_CONFIDENCE_CONFIRMED);
+        expect(state.c4_detect_result.evidence).toContain('paddle');
+        expect(publish).toHaveBeenCalledWith(
+            expect.objectContaining({c4_device_type: 'keypaddim'}),
+        );
+    });
+
+    it('paddle telemetry does not downgrade an existing dimmer', () => {
+        const device = makeDevice('0x0A08', {
+            c4_device_type: 'dimmer',
+            c4_type_confidence: C4_CONFIDENCE_CONFIRMED,
+        });
+        const publish = vi.fn();
+
+        const state = applyC4Heal(device, 'dimmer', {paddle: true}, publish);
+
+        expect(state).toBeNull();
+        expect(device.meta.c4_device_type).toBe('dimmer');
         expect(publish).not.toHaveBeenCalled();
     });
 });

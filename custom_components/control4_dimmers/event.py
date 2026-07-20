@@ -15,7 +15,15 @@ from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
-from .const import BUTTON_EVENT_TYPES, DEVICE_TYPE_SLOTS, DOMAIN, LOGGER
+from .const import (
+    BUTTON_EVENT_TYPES,
+    DEVICE_TYPE_SLOTS,
+    DOMAIN,
+    LOAD_BEARING_TYPES,
+    LOGGER,
+    PADDLE_IDS,
+    PADDLE_NAMES,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,7 +50,7 @@ async def async_setup_entry(
     known: set[str] = set()  # tracks "ieee_slot" keys already created
 
     def _check_new_devices() -> None:
-        new_entities: list[Control4ButtonEvent] = []
+        new_entities: list[EventEntity] = []
         for ieee, state in manager.devices.items():
             config = manager.store.get_device(ieee)
             device_type = config.effective_type if config else state.device_type
@@ -63,6 +71,23 @@ async def async_setup_entry(
                         slot_id=slot_id,
                     )
                 )
+            # Load-bearing devices also expose their physical load paddle
+            # halves (issue #117). Pure keypads have no load, so no paddle.
+            if device_type in LOAD_BEARING_TYPES:
+                for paddle_id in PADDLE_IDS:
+                    key = f"{ieee}_{paddle_id}"
+                    if key in known:
+                        continue
+                    known.add(key)
+                    new_entities.append(
+                        Control4PaddleEvent(
+                            manager=manager,
+                            ieee_address=ieee,
+                            friendly_name=state.friendly_name,
+                            model_id=state.model_id,
+                            paddle_id=paddle_id,
+                        )
+                    )
         if new_entities:
             async_add_entities(new_entities)
             LOGGER.debug("Added %d button event entities", len(new_entities))
@@ -246,5 +271,60 @@ class Control4ButtonEvent(EventEntity):
 
     def _on_button_event(self, event_type: str) -> None:
         """Handle a button event dispatched by the manager."""
+        self._trigger_event(event_type)
+        self.async_write_ha_state()
+
+
+class Control4PaddleEvent(EventEntity):
+    """Event entity for a local load paddle half on a load-bearing device."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = EventDeviceClass.BUTTON
+    _attr_event_types = BUTTON_EVENT_TYPES
+
+    def __init__(
+        self,
+        manager: Control4Manager,
+        ieee_address: str,
+        friendly_name: str,
+        model_id: str,
+        paddle_id: str,
+    ) -> None:
+        """Initialize the paddle event entity."""
+        self._manager = manager
+        self._ieee = ieee_address
+        self._paddle_id = paddle_id
+        self._unsub_event: Callable[[], None] | None = None
+        self._attr_name = PADDLE_NAMES[paddle_id]
+        self._attr_unique_id = f"{ieee_address}_event_{paddle_id}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, ieee_address)},
+            "name": friendly_name,
+            "manufacturer": "Control4",
+            "model": model_id or None,
+        }
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the paddle identity for automations."""
+        return {
+            "ieee_address": self._ieee,
+            "paddle": self._paddle_id,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Register with the manager for paddle events."""
+        self._unsub_event = self._manager.register_event_callback(
+            self._ieee, self._paddle_id, self._on_paddle_event
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister from the manager."""
+        if self._unsub_event:
+            self._unsub_event()
+            self._unsub_event = None
+
+    def _on_paddle_event(self, event_type: str) -> None:
+        """Handle a paddle event dispatched by the manager."""
         self._trigger_event(event_type)
         self.async_write_ha_state()

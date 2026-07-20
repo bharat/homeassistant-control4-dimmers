@@ -58,7 +58,7 @@ describe('scheduleC4LoadStatePublish (ls telemetry sync)', () => {
         expect(publish).toHaveBeenCalledWith({state: 'ON', brightness: 48});
     });
 
-    it('publishes OFF with brightness 0 for level 0', async () => {
+    it('publishes OFF for level 0', async () => {
         const {device} = makeDevice('0x0102');
         const publish = vi.fn();
 
@@ -66,7 +66,20 @@ describe('scheduleC4LoadStatePublish (ls telemetry sync)', () => {
         await vi.advanceTimersByTimeAsync(C4_LOAD_STATE_DEBOUNCE_MS);
 
         expect(publish).toHaveBeenCalledTimes(1);
-        expect(publish).toHaveBeenCalledWith({state: 'OFF', brightness: 0});
+        expect(publish).toHaveBeenCalledWith({state: 'OFF'});
+    });
+
+    it('publishes OFF without any brightness key (preserves HA last-on level)', async () => {
+        const {device} = makeDevice('0x0102B');
+        const publish = vi.fn();
+
+        scheduleC4LoadStatePublish(device, 0, publish);
+        await vi.advanceTimersByTimeAsync(C4_LOAD_STATE_DEBOUNCE_MS);
+
+        expect(publish).toHaveBeenCalledTimes(1);
+        const payload = publish.mock.calls[0][0];
+        expect(payload).toEqual({state: 'OFF'});
+        expect(payload).not.toHaveProperty('brightness');
     });
 
     it('coalesces a dim-ramp burst into one publish with the final level', async () => {
@@ -86,7 +99,28 @@ describe('scheduleC4LoadStatePublish (ls telemetry sync)', () => {
         await vi.advanceTimersByTimeAsync(C4_LOAD_STATE_DEBOUNCE_MS);
 
         expect(publish).toHaveBeenCalledTimes(1);
-        expect(publish).toHaveBeenCalledWith({state: 'OFF', brightness: 0});
+        expect(publish).toHaveBeenCalledWith({state: 'OFF'});
+    });
+
+    it('publishes once per quiet window at real ls ramp cadence (last carries the final level)', async () => {
+        const {device} = makeDevice('0x0104');
+        const publish = vi.fn();
+
+        // Field data (issue #118): real ls inter-frame gaps during a ramp are
+        // 500 to 1500 ms, so each 900 ms gap exceeds the 500 ms quiet window
+        // and the ramp yields MULTIPLE publishes (one per frame), not one.
+        const levels = [21, 54, 89, 100];
+        for (const lvl of levels) {
+            scheduleC4LoadStatePublish(device, lvl, publish);
+            await vi.advanceTimersByTimeAsync(900);
+        }
+
+        expect(publish).toHaveBeenCalledTimes(levels.length);
+        expect(publish).toHaveBeenNthCalledWith(1, {state: 'ON', brightness: Math.round(21 * 255 / 100)});
+        expect(publish).toHaveBeenNthCalledWith(2, {state: 'ON', brightness: Math.round(54 * 255 / 100)});
+        expect(publish).toHaveBeenNthCalledWith(3, {state: 'ON', brightness: Math.round(89 * 255 / 100)});
+        // The final settled level is always published as the last call.
+        expect(publish).toHaveBeenLastCalledWith({state: 'ON', brightness: 255});
     });
 
     it('debounces and publishes two devices independently', async () => {

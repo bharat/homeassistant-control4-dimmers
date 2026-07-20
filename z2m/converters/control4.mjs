@@ -312,6 +312,68 @@ export function classifyDeviceType(dimResponseText) {
     }
 }
 
+// ─── Self-Heal Confidence Model (GitHub issue #115) ─────────────────
+//
+// A c4.dmx.dim probe that times out was historically read as "no load =
+// pure keypad" and persisted forever, so a single transient Zigbee timeout
+// at detection time became a permanent wrong classification. We now attach
+// a confidence marker to every keypad verdict:
+//
+//   confirmed: proven by a dim answer, or by N consecutive silent probes
+//   assumed:   a single no-answer probe; may be a timeout artifact
+//
+// Load types (dimmer / keypaddim) are always confirmed: the device answered
+// the dim query, which proves it drives a load. Only "keypad" can be
+// assumed. Legacy stored keypad state that predates this marker is treated
+// as assumed by construction, because prod has proven such verdicts can be
+// timeout artifacts.
+
+export const C4_CONFIDENCE_CONFIRMED = 'confirmed';
+export const C4_CONFIDENCE_ASSUMED  = 'assumed';
+
+// Consecutive silent dim probes required to upgrade an assumed keypad to a
+// confirmed keypad (and stop probing it).
+export const C4_MAX_SILENT_PROBES = 3;
+
+/**
+ * Derive the effective confidence of a device's current classification from
+ * its herdsman meta. Backward compatible: any keypad verdict without an
+ * explicit "confirmed" marker (including legacy stored state) is assumed.
+ *
+ * @param {object} [meta] - device.meta
+ */
+export function effectiveConfidence(meta) {
+    if (meta && meta.c4_type_confidence === C4_CONFIDENCE_CONFIRMED) {
+        return C4_CONFIDENCE_CONFIRMED;
+    }
+    return C4_CONFIDENCE_ASSUMED;
+}
+
+/**
+ * Given the current classification and a piece of load evidence, decide the
+ * corrected device type, or null if no correction is warranted. Pure logic.
+ *
+ *   dim answer is authoritative: 01 -> dimmer, any other code -> keypaddim.
+ *   ls telemetry: only proves the device drives a load, not which kind, so
+ *                  it upgrades an (assumed) keypad or unclassified device to
+ *                  keypaddim as the safe default, but never downgrades an
+ *                  existing dimmer / keypaddim.
+ *
+ * @param {string|undefined|null} currentType
+ * @param {{dimCode?: string, ls?: boolean}} evidence
+ */
+export function healTypeFromEvidence(currentType, evidence) {
+    if (evidence && evidence.dimCode != null) {
+        const healed = DIM_TYPE_MAP[evidence.dimCode] ?? 'keypaddim';
+        return healed !== currentType ? healed : null;
+    }
+    if (evidence && evidence.ls) {
+        if (currentType === 'keypad' || currentType == null) return 'keypaddim';
+        return null;
+    }
+    return null;
+}
+
 /** Get button list for a device type */
 export function getButtonsForDeviceType(deviceType) {
     if (deviceType === 'dimmer') {
@@ -459,9 +521,16 @@ async function detectDeviceType(device) {
     const dimResp = await queryC4WithResponse(device, 'c4.dmx.dim', 3000);
     console.error(`[C4 DETECT] c4.dmx.dim response: ${dimResp || '(timeout)'}`);
 
+    const dimCode = parseDimResponse(dimResp);
     const deviceType = classifyDeviceType(dimResp);
-    console.error(`[C4 DETECT] Device type: ${deviceType}`);
-    return deviceType;
+
+    // A dim answer proves the load type (confirmed). A no-answer keypad
+    // verdict is low confidence by construction: it may be a transient
+    // Zigbee timeout rather than a true keypad (GitHub issue #115), so the
+    // self-heal machinery is allowed to revisit it later.
+    const confidence = dimCode ? C4_CONFIDENCE_CONFIRMED : C4_CONFIDENCE_ASSUMED;
+    console.error(`[C4 DETECT] Device type: ${deviceType} (confidence: ${confidence})`);
+    return {deviceType, dimCode, confidence};
 }
 
 // ─── Read Stored LED Colors ─────────────────────────────────────────
@@ -885,7 +954,7 @@ const tzControl4Detect = {
         const device = meta.device;
 
         // Step 1: Detect device type
-        const deviceType = await detectDeviceType(device);
+        const {deviceType, dimCode, confidence} = await detectDeviceType(device);
 
         // Step 2: Read stored LED colors from firmware
         const colorState = await readStoredColors(device, deviceType);
@@ -901,14 +970,21 @@ const tzControl4Detect = {
         device.powerSource = 'Mains (single phase)';
         device.interviewCompleted = true;
 
-        // Store device type in device.meta for use by other converters
+        // Store device type + confidence in device.meta for use by other
+        // converters and the self-heal machinery (issue #115). A manual
+        // c4_detect that times out yields an assumed keypad, which the active
+        // probe campaign may later confirm or heal.
         if (!device.meta) device.meta = {};
         device.meta.c4_device_type = deviceType;
+        device.meta.c4_type_confidence = confidence;
+        device.meta.c4_dim_code = dimCode ?? null;
         device.save();
 
         state.c4_detect_result = {
             ieee_address: device.ieeeAddr,
             device_type: deviceType,
+            confidence,
+            dim_code: dimCode ?? null,
             model: MODEL_NAMES[deviceType] ?? 'unknown',
             description: MODEL_DESCRIPTIONS[deviceType] ?? 'Unknown Control4 device',
             colors_read: Object.keys(colorState).length,
@@ -1058,6 +1134,199 @@ export function scheduleC4StateRead(device, deviceType) {
     c4StateReadTimers.set(key, timer);
 }
 
+// ─── Self-Heal: Reclassification + Active Probe Campaign (issue #115) ─
+//
+// Two mechanisms correct a device mis-classified as keypad by a silent
+// dim-probe timeout, without ever requiring a manual c4_detect:
+//
+//   PASSIVE: any load evidence that arrives on its own (an ls broadcast or
+//   a c4.dmx.dim answer) proves the device drives a load, so we reclassify
+//   immediately in fzControl4Response via applyC4Heal.
+//
+//   ACTIVE: for a keypad that is still only "assumed", we re-run the dim
+//   probe a few times (jittered start, exponential backoff) until either it
+//   answers (heal) or it stays silent C4_MAX_SILENT_PROBES times in a row
+//   (upgrade to a confirmed keypad and stop). Confirmed keypads are never
+//   probed again in this process, and the confirmed marker is persisted so a
+//   Z2M restart does not restart the campaign from zero.
+
+// Jitter window for the first probe of a device, spreading radio traffic so
+// a fleet of keypads does not all probe at once on startup.
+export const C4_PROBE_INITIAL_MAX_MS = 60000;
+
+// Base gap between silent probes; doubled after each additional silence.
+export const C4_PROBE_BACKOFF_MS = 30000;
+
+const c4ProbeCampaigns = new Map();
+
+/** Persist self-heal fields onto device.meta and flush via device.save(). */
+function persistC4Meta(device, fields) {
+    if (!device.meta) device.meta = {};
+    if (fields.type !== undefined) device.meta.c4_device_type = fields.type;
+    if (fields.confidence !== undefined) device.meta.c4_type_confidence = fields.confidence;
+    if (fields.dimCode !== undefined) device.meta.c4_dim_code = fields.dimCode;
+    if (fields.silentProbes !== undefined) device.meta.c4_silent_probes = fields.silentProbes;
+    if (typeof device.save === 'function') device.save();
+}
+
+/** Tear down any in-flight probe campaign for a device. */
+function stopC4ProbeCampaign(device) {
+    if (!device) return;
+    const campaign = c4ProbeCampaigns.get(device.ieeeAddr);
+    if (campaign && campaign.timer) clearTimeout(campaign.timer);
+    c4ProbeCampaigns.delete(device.ieeeAddr);
+}
+
+/** Reset all in-memory self-heal campaign state (for testing). */
+export function resetC4HealState() {
+    for (const campaign of c4ProbeCampaigns.values()) {
+        if (campaign.timer) clearTimeout(campaign.timer);
+    }
+    c4ProbeCampaigns.clear();
+}
+
+/**
+ * Reclassify a device from load evidence and persist the correction. Returns
+ * the state fragment to publish (containing the frozen-contract
+ * c4_device_type plus an extended c4_detect_result), or null when no
+ * correction is warranted. Idempotent: once a device is confirmed at the
+ * target type, repeat evidence is a no-op so the probe path and the response
+ * path can both observe the same answer without double publishing.
+ *
+ * @param {object} device - herdsman device (needs ieeeAddr, meta, save)
+ * @param {string|undefined|null} currentType - c4_device_type before healing
+ * @param {{dimCode?: string, ls?: boolean}} evidence
+ * @param {function} [publish] - optional fz publish callback
+ */
+export function applyC4Heal(device, currentType, evidence, publish) {
+    if (!device) return null;
+
+    const newType = healTypeFromEvidence(currentType, evidence);
+    if (!newType) return null;
+
+    const already = device.meta &&
+        device.meta.c4_device_type === newType &&
+        device.meta.c4_type_confidence === C4_CONFIDENCE_CONFIRMED;
+    if (already) return null;
+
+    const dimCode = evidence.dimCode != null ? evidence.dimCode : (device.meta?.c4_dim_code ?? null);
+    const evidenceDesc = evidence.dimCode != null
+        ? `c4.dmx.dim answer ${evidence.dimCode}`
+        : 'c4.dmx.ls load telemetry';
+
+    console.error(`[C4 HEAL] ${device.ieeeAddr}: ${currentType ?? '(none)'} -> ${newType} (evidence: ${evidenceDesc})`);
+
+    // Reclassification changes c4_device_type at runtime. We mirror the
+    // c4_detect flow exactly: update device.meta + device.save() and publish
+    // the new c4_device_type. Z2M computes exposes/slot layout at definition
+    // load, so a Z2M restart may be required for the exposes to fully refresh;
+    // the stored meta and published c4_device_type are correct immediately.
+    persistC4Meta(device, {type: newType, confidence: C4_CONFIDENCE_CONFIRMED, dimCode});
+
+    // Load is proven, so any active probe campaign is done.
+    stopC4ProbeCampaign(device);
+
+    const state = {
+        c4_device_type: newType,
+        c4_detect_result: {
+            ieee_address: device.ieeeAddr,
+            device_type: newType,
+            confidence: C4_CONFIDENCE_CONFIRMED,
+            dim_code: dimCode,
+            model: MODEL_NAMES[newType] ?? 'unknown',
+            description: MODEL_DESCRIPTIONS[newType] ?? 'Unknown Control4 device',
+            healed: true,
+            evidence: evidenceDesc,
+        },
+    };
+
+    if (typeof publish === 'function') publish(state);
+    return state;
+}
+
+/** Upgrade an assumed keypad to a confirmed keypad after enough silence. */
+function markConfirmedC4Keypad(device, publish) {
+    persistC4Meta(device, {confidence: C4_CONFIDENCE_CONFIRMED});
+    console.error(`[C4 HEAL] ${device.ieeeAddr}: keypad confirmed after ${C4_MAX_SILENT_PROBES} silent c4.dmx.dim probes`);
+
+    if (typeof publish === 'function') {
+        publish({
+            c4_detect_result: {
+                ieee_address: device.ieeeAddr,
+                device_type: 'keypad',
+                confidence: C4_CONFIDENCE_CONFIRMED,
+                dim_code: null,
+                model: MODEL_NAMES.keypad,
+                description: MODEL_DESCRIPTIONS.keypad,
+                healed: false,
+                evidence: `${C4_MAX_SILENT_PROBES} consecutive silent c4.dmx.dim probes`,
+            },
+        });
+    }
+}
+
+/**
+ * Start (once per process) an active dim-probe campaign for an assumed
+ * keypad. No-op for non-keypads and for already-confirmed keypads. The first
+ * probe is jittered across C4_PROBE_INITIAL_MAX_MS; subsequent silent probes
+ * back off exponentially. A dim answer heals via the response path; three
+ * silences confirm the keypad and stop the campaign.
+ *
+ * @param {object} device - herdsman device
+ * @param {string|undefined|null} deviceType - current c4_device_type
+ * @param {function} [publish] - fz publish callback (for confirm/heal state)
+ * @param {object} [opts] - test seams: probeFn, random, initialMaxMs, backoffMs
+ */
+export function scheduleC4ProbeCampaign(device, deviceType, publish, opts = {}) {
+    if (!device) return;
+    if (deviceType !== 'keypad') return;                           // never probe a load-bearing device
+    if (effectiveConfidence(device.meta) === C4_CONFIDENCE_CONFIRMED) return; // never re-probe a confirmed keypad
+    if (c4ProbeCampaigns.has(device.ieeeAddr)) return;             // one campaign per process lifetime
+
+    const probeFn = opts.probeFn ?? (async (dev) =>
+        parseDimResponse(await queryC4WithResponse(dev, 'c4.dmx.dim', 3000)));
+    const random = opts.random ?? Math.random;
+    const initialMaxMs = opts.initialMaxMs ?? C4_PROBE_INITIAL_MAX_MS;
+    const backoffMs = opts.backoffMs ?? C4_PROBE_BACKOFF_MS;
+
+    const campaign = {silentCount: device.meta?.c4_silent_probes ?? 0, timer: null};
+    c4ProbeCampaigns.set(device.ieeeAddr, campaign);
+
+    const runProbe = async () => {
+        campaign.timer = null;
+
+        let dimCode = null;
+        try {
+            dimCode = await probeFn(device);
+        } catch (err) {
+            console.error(`[C4 HEAL] Probe failed for ${device.ieeeAddr}: ${err.message}`);
+            dimCode = null;
+        }
+
+        if (dimCode) {
+            // The dim response also flows through fzControl4Response, which
+            // heals and publishes; applyC4Heal here is idempotent (no-op if
+            // already healed) so the injected-probe test path still heals.
+            applyC4Heal(device, deviceType, {dimCode}, publish);
+            c4ProbeCampaigns.delete(device.ieeeAddr);
+            return;
+        }
+
+        campaign.silentCount += 1;
+        persistC4Meta(device, {silentProbes: campaign.silentCount});
+
+        if (campaign.silentCount >= C4_MAX_SILENT_PROBES) {
+            markConfirmedC4Keypad(device, publish);
+            c4ProbeCampaigns.delete(device.ieeeAddr);
+            return;
+        }
+
+        campaign.timer = setTimeout(runProbe, backoffMs * Math.pow(2, campaign.silentCount - 1));
+    };
+
+    campaign.timer = setTimeout(runProbe, Math.floor(random() * initialMaxMs));
+}
+
 // ─── fromZigbee: Capture C4 Text Protocol Responses ─────────────────
 //
 // C4 devices send responses and telemetry as raw ASCII on endpoint 197
@@ -1089,6 +1358,23 @@ const fzControl4Response = {
             }
 
             const result = {c4_response: text, c4_response_ep: epId};
+
+            const currentType = meta.state?.c4_device_type ?? msg.device?.meta?.c4_device_type;
+
+            // Kick off the active self-heal campaign for an assumed keypad on
+            // the first message seen from this device (idempotent thereafter).
+            // No-op for load-bearing devices and confirmed keypads (issue #115).
+            scheduleC4ProbeCampaign(msg.device, currentType, publish);
+
+            // ── Passive self-heal: a c4.dmx.dim answer proves a load ──
+            //
+            // Any dim answer (solicited by a probe or otherwise) is authoritative
+            // load evidence, so reclassify keypad/none immediately (issue #115).
+            const dimAnswerCode = parseDimResponse(text);
+            if (dimAnswerCode) {
+                const healState = applyC4Heal(msg.device, currentType, {dimCode: dimAnswerCode});
+                if (healState) Object.assign(result, healState);
+            }
 
             // ── Parse button/event messages ──
             const event = parseButtonEvent(text);
@@ -1135,6 +1421,12 @@ const fzControl4Response = {
             const loadStatus = parseLoadStatus(text);
             if (loadStatus) {
                 console.error(`[C4 LS] Load level ${loadStatus.level}%`);
+
+                // Passive self-heal: unsolicited ls telemetry proves the device
+                // drives a load, so an assumed keypad becomes keypaddim (issue #115).
+                const healState = applyC4Heal(msg.device, currentType, {ls: true});
+                if (healState) Object.assign(result, healState);
+
                 scheduleC4LoadStatePublish(msg.device, loadStatus.level, publish);
                 return result;
             }
@@ -1253,11 +1545,13 @@ const definition = {
         // is active and detection works. Either way, c4_detect can be run
         // manually later if needed.
         try {
-            const deviceType = await detectDeviceType(device);
+            const {deviceType, dimCode, confidence} = await detectDeviceType(device);
             if (!device.meta) device.meta = {};
             device.meta.c4_device_type = deviceType;
+            device.meta.c4_type_confidence = confidence;
+            device.meta.c4_dim_code = dimCode ?? null;
             device.save();
-            console.error(`[C4 CONFIG] Auto-detected device type: ${deviceType} (${MODEL_NAMES[deviceType] ?? 'unknown'})`);
+            console.error(`[C4 CONFIG] Auto-detected device type: ${deviceType} (${MODEL_NAMES[deviceType] ?? 'unknown'}, confidence: ${confidence})`);
         } catch (e) {
             console.error(`[C4 CONFIG] Auto-detection failed (expected on first pairing before Z2M restart): ${e.message}`);
             console.error(`[C4 CONFIG] Run {"c4_detect": true} after restarting Z2M to detect device type and read LED colors.`);

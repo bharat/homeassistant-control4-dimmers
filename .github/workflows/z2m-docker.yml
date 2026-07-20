@@ -10,13 +10,20 @@ on:
     paths:
       - 'z2m/converters/**'
       - 'z2m/Dockerfile'
+      - 'z2m/entrypoint.sh'
       - '.github/workflows/z2m-docker.yml'
   pull_request:
     paths:
       - 'z2m/converters/**'
       - 'z2m/Dockerfile'
+      - 'z2m/entrypoint.sh'
   release:
     types: [published]
+  # Weekly rebuild so the published image tracks the upstream z2m base
+  # instead of pinning whatever koenkk/zigbee2mqtt:latest was at the last
+  # converter commit (issue #104: prod sat on a February base for months).
+  schedule:
+    - cron: '26 5 * * 2'
   workflow_dispatch:
 
 env:

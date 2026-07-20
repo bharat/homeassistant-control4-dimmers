@@ -296,3 +296,61 @@ describe('log attribution for [C4 BUTTON] and [C4 LS] (issue #123)', () => {
         );
     });
 });
+
+describe('c4_response muting for unsolicited ls telemetry (issue #118)', () => {
+    const convert = definition.fromZigbee[0].convert;
+
+    function makeMsg(text, ieeeAddr) {
+        return {
+            data: Buffer.from(text, 'ascii'),
+            endpoint: {ID: 197},
+            device: makeDevice(ieeeAddr, {}),
+        };
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        resetC4HealState();
+        vi.runOnlyPendingTimers();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('does not include c4_response for an unsolicited ls frame', async () => {
+        const msg = makeMsg('0t0001 sa c4.dmx.ls 00 00 42 0078 0000 0000', '0x0D01');
+        const meta = {state: {c4_device_type: 'keypaddim'}};
+
+        const result = await convert(definition, msg, vi.fn(), {}, meta);
+
+        // The debounced load-state publish carries the level instead, so the
+        // raw echo is muted to avoid doubling MQTT volume during a ramp.
+        expect(result).not.toHaveProperty('c4_response');
+        expect(result).not.toHaveProperty('c4_response_ep');
+    });
+
+    it('still includes c4_response for a query response (0r<seq> form)', async () => {
+        const msg = makeMsg('0r0001 000 c4.dmx.led ff0000', '0x0D02');
+        const meta = {state: {c4_device_type: 'keypaddim'}};
+
+        const result = await convert(definition, msg, vi.fn(), {}, meta);
+
+        // Query responses are part of the frozen HA contract and keep publishing.
+        expect(result).toHaveProperty('c4_response', '0r0001 000 c4.dmx.led ff0000');
+        expect(result).toHaveProperty('c4_response_ep', 197);
+    });
+
+    it('still includes c4_response for a button telemetry frame', async () => {
+        const msg = makeMsg('0t0001 sa c4.dmx.bp 01', '0x0D03');
+        const meta = {state: {c4_device_type: 'dimmer'}};
+
+        const result = await convert(definition, msg, vi.fn(), {}, meta);
+
+        expect(result).toHaveProperty('c4_response', '0t0001 sa c4.dmx.bp 01');
+        expect(result).toHaveProperty('c4_response_ep', 197);
+        expect(result).toHaveProperty('action', 'button_2_press');
+    });
+});

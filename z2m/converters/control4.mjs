@@ -1127,17 +1127,33 @@ export const C4_STATE_READ_DEBOUNCE_MS = 750;
 
 const c4StateReadTimers = new Map();
 
-// ─── Debounced Load State Publish (unsolicited ls telemetry) ─────────
+// ─── Throttled Load State Publish (unsolicited ls telemetry) ─────────
 //
 // The primary path for GitHub issue #101: Control4 devices push their new
 // load level as c4.dmx.ls telemetry on every load change, so we do not
-// need a ZCL read at all in the common case. A dim ramp emits many ls
-// frames per second, so we coalesce the burst with a trailing-edge
-// debounce per device and publish the FINAL settled level exactly once.
+// need a ZCL read at all in the common case.
+//
+// This is a THROTTLE, not a coalesce-to-one. Each ls frame stores the
+// latest level and resets a per-device trailing-edge timer; we publish
+// once the device has been quiet for C4_LOAD_STATE_DEBOUNCE_MS. The
+// contract is: at most one publish per 500 ms quiet window, and the final
+// settled level is ALWAYS published.
+//
+// What that means in practice depends on ls cadence:
+//   - A tight burst (frames under 500 ms apart, e.g. a fast dim ramp)
+//     coalesces into a single publish carrying the final level.
+//   - A real ls ramp on live hardware has 500 to 1500 ms inter-frame gaps
+//     (field data, issue #118), so the quiet window fires mid-ramp and the
+//     ramp produces SEVERAL publishes (one per gap that exceeds 500 ms).
+//     This is intended: HA tracks the ramp live as throttled updates, and
+//     the last publish is guaranteed to carry the settled level.
 //
 // Publishing uses the standard light() fields (state + brightness) that
 // the light() extend already exposes, so HA updates without any new
-// entities or MQTT contract changes.
+// entities or MQTT contract changes. At level 0 we publish {state: 'OFF'}
+// with NO brightness key: the device resumes at its previous level via
+// on_level, so wiping HA's last-on brightness would only degrade the
+// slider. Nonzero levels publish both state and brightness.
 
 export const C4_LOAD_STATE_DEBOUNCE_MS = 500;
 
@@ -1153,8 +1169,11 @@ const c4LastLsSeen = new Map();
  *
  * Each ls frame stores the latest level and resets the per-device timer;
  * once the device goes quiet for C4_LOAD_STATE_DEBOUNCE_MS, we publish the
- * final level once as {state, brightness}. Also records the ls-seen
- * timestamp so scheduleC4StateRead can skip its fallback read.
+ * latest level for that window (see the header comment: on live hardware a
+ * single ramp yields several such windows). At level 0 we publish only
+ * {state: 'OFF'} with no brightness key; nonzero levels publish both. Also
+ * records the ls-seen timestamp so scheduleC4StateRead can skip its
+ * fallback read.
  *
  * @param {object} device - herdsman device (needs ieeeAddr)
  * @param {number} level - load level as a percent (0..100)
@@ -1173,10 +1192,9 @@ export function scheduleC4LoadStatePublish(device, level, publish) {
     entry.timer = setTimeout(() => {
         c4LoadStateTimers.delete(key);
         const lvl = entry.level;
-        publish({
-            state: lvl > 0 ? 'ON' : 'OFF',
-            brightness: Math.round(lvl * 255 / 100),
-        });
+        publish(lvl > 0
+            ? {state: 'ON', brightness: Math.round(lvl * 255 / 100)}
+            : {state: 'OFF'});
     }, C4_LOAD_STATE_DEBOUNCE_MS);
 
     c4LoadStateTimers.set(key, entry);
@@ -1628,6 +1646,15 @@ const fzControl4Response = {
                 // drives a load, so an assumed keypad becomes keypaddim (issue #115).
                 const healState = applyC4Heal(msg.device, currentType, {ls: true});
                 if (healState) Object.assign(result, healState);
+
+                // Mute the raw c4_response for unsolicited ls telemetry: the
+                // debounced scheduleC4LoadStatePublish below already carries the
+                // level to HA, so echoing c4_response here would double MQTT
+                // volume during a ramp (issue #118). Query responses (the 0r<seq>
+                // form) are NOT ls telemetry and keep publishing c4_response via
+                // the fall-through return below; only this telemetry case is muted.
+                delete result.c4_response;
+                delete result.c4_response_ep;
 
                 scheduleC4LoadStatePublish(msg.device, loadStatus.level, publish);
                 return result;

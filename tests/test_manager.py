@@ -203,6 +203,42 @@ class TestManagerEventCallbacks:
         manager._dispatch_button_action(dimmer_state, "")
         cb.assert_not_called()
 
+    def test_paddle_up_press_dispatch(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_up", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_up_press")
+        cb.assert_called_once_with("pressed")
+
+    def test_paddle_down_scene_dispatch(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_down", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_down_scene")
+        cb.assert_called_once_with("pressed")
+
+    def test_paddle_click_dispatch(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_up", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_up_click_2")
+        cb.assert_called_once_with("double_tap")
+
+    def test_paddle_does_not_fire_button_slot(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        slot_cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, slot_cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_up_press")
+        slot_cb.assert_not_called()
+
 
 # ── Manager: bridge device handling ──────────────────────────────────
 

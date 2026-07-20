@@ -78,15 +78,46 @@ export const LED_MODES = {
     off: '04', // Color shown when the dimmer load is OFF
 };
 
-// Action values for button events
-export const ACTION_VALUES = BUTTONS.flatMap(btn => [
-    `button_${btn.idx}_press`,
-    `button_${btn.idx}_scene`,
-    `button_${btn.idx}_click_1`,
-    `button_${btn.idx}_click_2`,
-    `button_${btn.idx}_click_3`,
-    `button_${btn.idx}_click_4`,
-]);
+// ─── Local Load Paddle (GitHub issue #117) ──────────────────────────
+//
+// Load-bearing devices (APD120 dimmers, KD keypad-dimmers) expose the two
+// halves of the physical load paddle on a SEPARATE wire-id space from the
+// six configurable button-array slots. The prod log tally (2026-07-19)
+// proved two distinct spaces:
+//   bp/cc/sc 00-05 = the configurable button-array slots (button_1..6)
+//   bp/cc/sc 07    = top/up paddle half   (observed with an up-ramp)
+//   bp/cc/sc 08    = bottom/down paddle half (observed with a down-ramp)
+// The two spaces coexist: one APD120 emitted both. Paddle halves are
+// surfaced as their own paddle_up / paddle_down actions rather than
+// extending the button_N enum (which would produce out-of-enum names the
+// HA integration drops).
+
+export const PADDLE_WIRE_IDS = {
+    0x07: 'paddle_up',
+    0x08: 'paddle_down',
+};
+
+export const PADDLE_TARGETS = ['paddle_up', 'paddle_down'];
+
+// The action variants shared by buttons and paddles: a bare press, a scene
+// change, and click counts 1..4. Buttons and paddles use the same grammar,
+// differing only in the prefix (button_N vs paddle_up / paddle_down).
+function actionVariants(prefix) {
+    return [
+        `${prefix}_press`,
+        `${prefix}_scene`,
+        `${prefix}_click_1`,
+        `${prefix}_click_2`,
+        `${prefix}_click_3`,
+        `${prefix}_click_4`,
+    ];
+}
+
+// Action values for button and paddle events (the frozen MQTT enum contract).
+export const ACTION_VALUES = [
+    ...BUTTONS.flatMap(btn => actionVariants(`button_${btn.idx}`)),
+    ...PADDLE_TARGETS.flatMap(actionVariants),
+];
 
 // ─── Color Conversion Utilities ─────────────────────────────────────
 //
@@ -237,30 +268,73 @@ export function parseResponseSeq(text) {
 
 // ─── Button Event Parsing ───────────────────────────────────────────
 
+const loggedUnknownWireIds = new Set();
+
+/** Reset the once-per-wire-id unknown-id log guard (for testing). */
+export function resetC4ButtonLogState() {
+    loggedUnknownWireIds.clear();
+}
+
+/**
+ * Resolve a hex wire id from a c4.dmx.bp/cc/sc frame to an action target.
+ * Pure logic (apart from a once-per-id diagnostic log).
+ *
+ *   0x00-0x05 -> button_1..button_6 (the configurable button-array slots)
+ *   0x07/0x08 -> paddle_up / paddle_down (the local load paddle halves)
+ *
+ * Any other id (0x06, or 0x09+) is outside every known space: we keep the
+ * historical button_(N+1) mapping so nothing that used to flow stops, but
+ * log it once under [C4 BUTTON] as an unknown wire id. Returns null only
+ * when the hex is unparseable.
+ */
+export function resolveButtonTarget(wireIdHex) {
+    const wireId = parseInt(wireIdHex, 16);
+    if (Number.isNaN(wireId)) return null;
+
+    const paddle = PADDLE_WIRE_IDS[wireId];
+    if (paddle) return {prefix: paddle, paddle};
+
+    if (wireId < 0x00 || wireId > 0x05) {
+        if (!loggedUnknownWireIds.has(wireId)) {
+            loggedUnknownWireIds.add(wireId);
+            console.error(
+                `[C4 BUTTON] Unknown wire id 0x${wireId.toString(16).padStart(2, '0')}: ` +
+                'not a button slot (0x00-0x05) or paddle half (0x07/0x08)',
+            );
+        }
+    }
+    return {prefix: `button_${wireId + 1}`, buttonId: wireId + 1};
+}
+
+/** Attach the identity field (buttonId or paddle) for a resolved target. */
+function targetIdentity(target) {
+    return target.paddle ? {paddle: target.paddle} : {buttonId: target.buttonId};
+}
+
 export function parseButtonEvent(text) {
     // Button press: 0t<seq> sa c4.dmx.bp <btn>
     const bpMatch = text.match(/^0t\w+ sa c4\.dmx\.bp (\w+)/);
     if (bpMatch) {
-        const wireId = parseInt(bpMatch[1], 16);
-        const btnIdx = wireId + 1;
-        return {action: `button_${btnIdx}_press`, buttonId: btnIdx, type: 'press'};
+        const target = resolveButtonTarget(bpMatch[1]);
+        if (!target) return null;
+        return {action: `${target.prefix}_press`, ...targetIdentity(target), type: 'press'};
     }
 
     // Click count: 0t<seq> sa c4.dmx.cc <btn> <count>
     const ccMatch = text.match(/^0t\w+ sa c4\.dmx\.cc (\w+) (\w+)/);
     if (ccMatch) {
-        const wireId = parseInt(ccMatch[1], 16);
-        const btnIdx = wireId + 1;
+        const target = resolveButtonTarget(ccMatch[1]);
+        if (!target) return null;
         const count = parseInt(ccMatch[2], 16);
-        return {action: `button_${btnIdx}_click_${count}`, buttonId: btnIdx, clickCount: count, type: 'click'};
+        return {action: `${target.prefix}_click_${count}`, ...targetIdentity(target), clickCount: count, type: 'click'};
     }
 
     // Scene change: 0t<seq> sa c4.dmx.sc <btn>
     const scMatch = text.match(/^0t\w+ sa c4\.dmx\.sc (\w+)/);
     if (scMatch) {
-        const wireId = parseInt(scMatch[1], 16);
-        const btnIdx = wireId + 1;
-        return {action: `button_${btnIdx}_scene`, buttonId: btnIdx, type: 'scene'};
+        const target = resolveButtonTarget(scMatch[1]);
+        if (!target) return null;
+        return {action: `${target.prefix}_scene`, ...targetIdentity(target), type: 'scene'};
     }
 
     return null;
@@ -389,16 +463,20 @@ export function effectiveConfidence(meta) {
  *                  it upgrades an (assumed) keypad or unclassified device to
  *                  keypaddim as the safe default, but never downgrades an
  *                  existing dimmer / keypaddim.
+ *   paddle telemetry: a local load paddle half (bp 07/08) only exists on a
+ *                  load-bearing device, so it is load proof identical to ls
+ *                  (issue #117): upgrades an assumed keypad / unclassified
+ *                  device to keypaddim, never downgrades.
  *
  * @param {string|undefined|null} currentType
- * @param {{dimCode?: string, ls?: boolean}} evidence
+ * @param {{dimCode?: string, ls?: boolean, paddle?: boolean}} evidence
  */
 export function healTypeFromEvidence(currentType, evidence) {
     if (evidence && evidence.dimCode != null) {
         const healed = DIM_TYPE_MAP[evidence.dimCode] ?? 'keypaddim';
         return healed !== currentType ? healed : null;
     }
-    if (evidence && evidence.ls) {
+    if (evidence && (evidence.ls || evidence.paddle)) {
         if (currentType === 'keypad' || currentType == null) return 'keypaddim';
         return null;
     }
@@ -1241,9 +1319,14 @@ export function applyC4Heal(device, currentType, evidence, publish) {
     if (already) return null;
 
     const dimCode = evidence.dimCode != null ? evidence.dimCode : (device.meta?.c4_dim_code ?? null);
-    const evidenceDesc = evidence.dimCode != null
-        ? `c4.dmx.dim answer ${evidence.dimCode}`
-        : 'c4.dmx.ls load telemetry';
+    let evidenceDesc;
+    if (evidence.dimCode != null) {
+        evidenceDesc = `c4.dmx.dim answer ${evidence.dimCode}`;
+    } else if (evidence.paddle) {
+        evidenceDesc = 'c4.dmx.bp local load paddle telemetry';
+    } else {
+        evidenceDesc = 'c4.dmx.ls load telemetry';
+    }
 
     console.error(`[C4 HEAL] ${device.ieeeAddr}: ${currentType ?? '(none)'} -> ${newType} (evidence: ${evidenceDesc})`);
 
@@ -1491,6 +1574,15 @@ const fzControl4Response = {
             if (event) {
                 result.action = event.action;
                 console.error(`[C4 BUTTON] ${c4DeviceLabel(msg.device)} ${event.type}: ${event.action}`);
+
+                // Passive self-heal (issue #117): a local load paddle half only
+                // exists on load-bearing hardware, so a paddle event proves the
+                // device drives a load. Upgrade an assumed keypad / unclassified
+                // device to keypaddim (never downgrades an existing load type).
+                if (event.paddle) {
+                    const healState = applyC4Heal(msg.device, currentType, {paddle: true});
+                    if (healState) Object.assign(result, healState);
+                }
 
                 // Smart behavior on press: if button has load-control behavior,
                 // send the genOnOff command to EP1 immediately.

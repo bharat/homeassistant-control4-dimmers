@@ -5,7 +5,7 @@
  * parsing, device detection) without any Z2M or zigbee-herdsman dependencies.
  */
 
-import {describe, it, expect, beforeEach} from 'vitest';
+import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
 import {
     // Constants
     C4_MIB_PROFILE, C4_CLUSTER,
@@ -25,7 +25,7 @@ import {
     parseLedColorResponse, parseDimResponse, parseResponseSeq,
 
     // Button event parsing
-    parseButtonEvent,
+    parseButtonEvent, resetC4ButtonLogState,
 
     // Load status telemetry parsing
     parseLoadStatus,
@@ -70,10 +70,21 @@ describe('Constants', () => {
         expect(LED_MODES.off).toBe('04');
     });
 
-    it('ACTION_VALUES has 36 entries (6 buttons × 6 action types)', () => {
-        expect(ACTION_VALUES).toHaveLength(36);
+    it('ACTION_VALUES has 48 entries (6 buttons + 2 paddles × 6 action types)', () => {
+        expect(ACTION_VALUES).toHaveLength(48);
         expect(ACTION_VALUES).toContain('button_1_press');
         expect(ACTION_VALUES).toContain('button_6_click_4');
+    });
+
+    it('ACTION_VALUES contains every paddle variant (issue #117 contract)', () => {
+        for (const paddle of ['paddle_up', 'paddle_down']) {
+            expect(ACTION_VALUES).toContain(`${paddle}_press`);
+            expect(ACTION_VALUES).toContain(`${paddle}_scene`);
+            expect(ACTION_VALUES).toContain(`${paddle}_click_1`);
+            expect(ACTION_VALUES).toContain(`${paddle}_click_2`);
+            expect(ACTION_VALUES).toContain(`${paddle}_click_3`);
+            expect(ACTION_VALUES).toContain(`${paddle}_click_4`);
+        }
     });
 
     it('DIM_TYPE_MAP maps dim codes to device types', () => {
@@ -528,6 +539,79 @@ describe('parseButtonEvent', () => {
 
     it('returns null for non-C4 text', () => {
         expect(parseButtonEvent('hello world')).toBeNull();
+    });
+});
+
+describe('parseButtonEvent: local load paddle (issue #117)', () => {
+    beforeEach(() => {
+        resetC4ButtonLogState();
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('maps wire 07 press to paddle_up_press', () => {
+        expect(parseButtonEvent('0t0001 sa c4.dmx.bp 07')).toEqual({
+            action: 'paddle_up_press',
+            paddle: 'paddle_up',
+            type: 'press',
+        });
+    });
+
+    it('maps wire 08 press to paddle_down_press', () => {
+        expect(parseButtonEvent('0t0001 sa c4.dmx.bp 08')).toEqual({
+            action: 'paddle_down_press',
+            paddle: 'paddle_down',
+            type: 'press',
+        });
+    });
+
+    it('maps wire 07 scene to paddle_up_scene', () => {
+        expect(parseButtonEvent('0t0001 sa c4.dmx.sc 07')).toEqual({
+            action: 'paddle_up_scene',
+            paddle: 'paddle_up',
+            type: 'scene',
+        });
+    });
+
+    it('maps wire 08 click count to paddle_down_click_2', () => {
+        expect(parseButtonEvent('0t0001 sa c4.dmx.cc 08 02')).toEqual({
+            action: 'paddle_down_click_2',
+            paddle: 'paddle_down',
+            clickCount: 2,
+            type: 'click',
+        });
+    });
+
+    it('button wire ids are unchanged and carry no paddle field', () => {
+        const event = parseButtonEvent('0t0001 sa c4.dmx.bp 01');
+        expect(event).toEqual({action: 'button_2_press', buttonId: 2, type: 'press'});
+        expect(event.paddle).toBeUndefined();
+    });
+
+    it('logs an unknown wire id once and does not crash', () => {
+        // 0x06 is a gap between the button space (00-05) and the paddle space.
+        const first = parseButtonEvent('0t0001 sa c4.dmx.bp 06');
+        const second = parseButtonEvent('0t0002 sa c4.dmx.bp 06');
+        // Historical button_(N+1) mapping is preserved for compatibility.
+        expect(first).toEqual({action: 'button_7_press', buttonId: 7, type: 'press'});
+        expect(second).toEqual({action: 'button_7_press', buttonId: 7, type: 'press'});
+        // Logged exactly once, under [C4 BUTTON] attribution.
+        const unknownLogs = console.error.mock.calls.filter(
+            (args) => String(args[0]).includes('[C4 BUTTON]') &&
+                String(args[0]).includes('Unknown wire id'),
+        );
+        expect(unknownLogs).toHaveLength(1);
+    });
+
+    it('logs a high unknown wire id (0x09) as unknown', () => {
+        const event = parseButtonEvent('0t0001 sa c4.dmx.bp 09');
+        expect(event).toEqual({action: 'button_10_press', buttonId: 10, type: 'press'});
+        expect(console.error).toHaveBeenCalledWith(
+            expect.stringContaining('[C4 BUTTON]'),
+        );
     });
 });
 

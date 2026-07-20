@@ -63,8 +63,8 @@ class Control4Manager:
         self._pending_states: dict[str, dict] = {}  # buffered state payloads
         self._detect_sent: set[str] = set()  # IEEEs we've already sent c4_detect to
         self._event_callbacks: dict[
-            tuple[str, int], Callable[[str], None]
-        ] = {}  # (ieee, slot_id) -> callback(event_type)
+            tuple[str, int | str], Callable[[str], None]
+        ] = {}  # (ieee, slot_id | paddle_id) -> callback(event_type)
         self._light_track_unsubs: list[Callable[[], None]] = []  # state listeners
         self._led_cooldowns: dict[
             tuple[str, int], float
@@ -99,22 +99,52 @@ class Control4Manager:
     def register_event_callback(
         self,
         ieee_address: str,
-        slot_id: int,
+        slot_id: int | str,
         callback: Callable[[str], None],
     ) -> Callable[[], None]:
         """
-        Register a callback for button events on a specific slot.
+        Register a callback for button events on a specific slot or paddle.
 
-        The callback receives the event_type string (e.g. "press",
-        "double_press").  Returns an unsubscribe callable.
+        slot_id is an int (1..6) for a button-array slot, or a paddle id
+        string ("paddle_up" / "paddle_down") for a local load paddle half.
+        The callback receives the event_type string (e.g. "pressed",
+        "double_tap").  Returns an unsubscribe callable.
         """
         key = (ieee_address, slot_id)
         self._event_callbacks[key] = callback
         return lambda: self._event_callbacks.pop(key, None)
 
+    def _dispatch_paddle_action(self, device: DeviceState, action_str: str) -> bool:
+        """
+        Dispatch a local load paddle action (issue #117).
+
+        paddle_up / paddle_down share the button grammar. Firmware drives the
+        load directly, so we only surface the event for automations; there is
+        no software action to run. Returns True if the action was a paddle.
+        """
+        paddle_match = re.match(
+            r"(paddle_up|paddle_down)_(?:(press|scene|release)|click_(\d+))$",
+            action_str,
+        )
+        if not paddle_match:
+            return False
+        paddle_id = paddle_match.group(1)
+        verb = paddle_match.group(2)
+        if verb == "release":
+            event_type = "released"
+        elif verb in ("press", "scene"):
+            event_type = "pressed"
+        else:  # click_N
+            event_type = _click_count_to_event_type(int(paddle_match.group(3)))
+        self.fire_button_event(device.ieee_address, paddle_id, event_type)
+        return True
+
     def _dispatch_button_action(self, device: DeviceState, action_str: str) -> None:
         """Parse an action string from Z2M and dispatch to event entities."""
         if not action_str:
+            return
+
+        if self._dispatch_paddle_action(device, action_str):
             return
 
         # Press or scene: button_N_press (c4.dmx.bp), button_N_scene (c4.dmx.sc)
@@ -178,12 +208,12 @@ class Control4Manager:
                 )
             return
 
-    def fire_button_event(self, ieee: str, slot_id: int, event_type: str) -> None:
-        """Fire a button event on the event entity for a slot."""
+    def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
+        """Fire a button/paddle event on the event entity for a slot."""
         cb = self._event_callbacks.get((ieee, slot_id))
         if cb is not None:
             cb(event_type)
-            LOGGER.debug("Button event: %s slot %d -> %s", ieee, slot_id, event_type)
+            LOGGER.debug("Button event: %s slot %s -> %s", ieee, slot_id, event_type)
 
     async def async_start(self) -> None:
         """Start MQTT subscriptions for device discovery and state."""

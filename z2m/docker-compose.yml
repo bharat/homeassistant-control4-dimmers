@@ -5,6 +5,13 @@
 #   docker compose -f z2m/docker-compose.yml up -d
 #
 # This is a drop-in replacement for the stock Z2M docker-compose.
+#
+# NOTE: this file uses build: for local development. Production consumes
+# the published image instead (ghcr.io/bharat/zigbee2mqtt-control4:latest);
+# there, a plain `docker compose pull && up -d` delivers z2m, the herdsman
+# profile patch, and the converter together (the entrypoint wrapper installs
+# the converter into the data dir at boot, surviving the bind mount).
+# On z2m >= 2.11 pin `enable_external_js: true` in configuration.yaml.
 
 services:
   zigbee2mqtt:

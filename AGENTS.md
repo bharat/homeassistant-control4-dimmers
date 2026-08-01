@@ -1,28 +1,31 @@
-# AGENTS.md — Control4 Dimmers HA Integration
+# AGENTS.md -- Control4 Dimmers HA Integration
 
 This is the canonical agent guide for `bharat/homeassistant-control4-dimmers`. New Claude/Codex/Cursor sessions should read this before making changes. Pair it with `ARCHITECTURE.md`, `PLAN.md`, and `RESEARCH.md` for deeper context.
 
 ## What this is
 
-A Home Assistant custom integration for **Control4 Zigbee dimmers / keypads** (C4-APD120 phase dimmer, C4-KD120 keypad-dimmer, C4-KC120277 configurable keypad). It exists because Control4's hardware speaks two Zigbee profiles on endpoint 1 — the standard HA profile (`0x0104`, clusters `genOnOff` / `genLevelCtrl`) for on/off + dimming, and a proprietary text profile (`0xC25C`, manufacturer ID `0xABCD`) for LED color, button events, and device identification. To handle both, the project bundles three independent layers:
+A Home Assistant custom integration for **Control4 Zigbee dimmers / keypads** (C4-APD120 phase dimmer, C4-KD120 keypad-dimmer, C4-KC120277 configurable keypad). The hardware speaks two Zigbee profiles: the standard HA profile (`0x0104`, clusters `genOnOff` / `genLevelCtrl`) for on/off + dimming, and a proprietary text profile (`0xC25C`, manufacturer ID `0xABCD`) for LED color, button events, and device identification.
 
-1. **Z2M external converter** (`z2m/converters/control4.mjs`) — parses the C4 text protocol, exposes color/event entities to MQTT.
-2. **`zigbee-herdsman` patch** (`z2m/herdsman-c4-profile.patch`, applied at Docker build time) — whitelists profile `0xC25C` in the EZSP adapter so button events aren't silently dropped by EFR32/CC2652 coordinators.
-3. **HA custom component** (`custom_components/control4_dimmers/`) — discovers devices from `zigbee2mqtt/bridge/devices`, creates sensor / event / light entities, and ships a custom Lovelace card (`control4-dimmer-card`) for the visual 6-slot configuration UI.
+The stack has two halves:
+
+1. **The Zigbee side** (separate repos): the [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4) Docker image, built from a `zigbee-herdsman` fork (profile whitelist, `Endpoint.sendRaw`, C4 interview quirk) and a `zigbee-herdsman-converters` fork (`src/devices/control4.ts`, the in-tree device definition with runtime type detection and self-heal). C4 devices are natively supported there; there is no external converter and no herdsman patch anymore.
+2. **This repo** -- the HA custom component (`custom_components/control4_dimmers/`): discovers devices from `zigbee2mqtt/bridge/devices`, creates sensor / event / light entities, and ships a custom Lovelace card (`control4-dimmer-card`) for the visual 6-slot configuration UI.
+
+The two halves communicate ONLY over MQTT, via a frozen contract (see below). Nothing in this repo knows what hex bytes a C4 command uses beyond composing `c4.dmx.*` command strings for the `/set` topic.
 
 ## Layout
 
 ```
 .
 ├── ARCHITECTURE.md             # System-level data flow + protocol reference (read first)
-├── PLAN.md                     # Roadmap (7 phases) + completion status
+├── PLAN.md                     # Roadmap + completion status
 ├── RESEARCH.md                 # How the C4 protocol was reverse-engineered (narrative)
 ├── CONTRIBUTING.md             # Standard fork/PR flow
 ├── README.md                   # User-facing install + setup
 │
 ├── custom_components/control4_dimmers/
 │   ├── __init__.py             # async_setup_entry, services, WebSocket API
-│   ├── manifest.json           # version is "0.0.0" sentinel — see Releases section
+│   ├── manifest.json           # version is "0.0.0" sentinel -- see Releases section
 │   ├── config_flow.py          # Single-step user flow (asks for MQTT base topic)
 │   ├── const.py                # DOMAIN, DEVICE_TYPES, DEVICE_TYPE_SLOTS, BUTTON_EVENT_TYPES
 │   ├── manager.py              # Brain: MQTT subs, device discovery, state, service routing
@@ -31,31 +34,22 @@ A Home Assistant custom integration for **Control4 Zigbee dimmers / keypads** (C
 │   ├── sensor.py               # Device anchor + ambient light (lux) sensors
 │   ├── light.py                # Brightness 0-255 (proxies Z2M's standard light entity)
 │   ├── event.py                # One Control4ButtonEvent entity per button slot
+│   ├── brand/                  # HACS brand icons (ship in-repo since HA 2026.3.0)
 │   ├── frontend/
 │   │   ├── __init__.py         # Serves the Lovelace card as a JS module
 │   │   └── control4-dimmer-card.js  # LitElement; dashboard + chassis editor (~1500 LOC)
-│   └── services.yaml           # set_device_config, set_slot, push_config, set_led, set_slot_led, press_button, send_raw_command, set_device_type
-│
-├── z2m/
-│   ├── converters/control4.mjs # Self-contained converter: protocol + Z2M glue
-│   ├── tests/                  # 104 vitest tests of the pure-protocol functions
-│   ├── Dockerfile              # FROM koenkk/zigbee2mqtt:latest + converter + herdsman patch
-│   ├── docker-compose.yml      # Drop-in replacement for stock Z2M
-│   ├── Makefile                # build / build-amd64 / push (multi-arch) / deploy / test
-│   ├── herdsman-c4-profile.patch  # Source patch (applied via sed at image build time)
-│   └── package.json            # vitest scripts
+│   └── services.yaml           # set_device_config, set_slot, push_config, set_led, set_slot_led, press_button, send_raw_command, set_device_type, snapshot/restore
 │
 ├── tests/                      # HA component tests (pytest + pytest-homeassistant-custom-component)
 │   ├── conftest.py             # mock_hass / mock_entry / mock_store / mock_manager fixtures
-│   └── test_*.py               # 7 test modules
+│   └── test_*.py               # test modules
 │
 ├── scripts/
 │   ├── setup                   # Container post-create: pip + pre-commit + claude CLI + act
 │   ├── develop                 # Mosquitto + HA + (optional) device simulator via concurrently
 │   ├── lint                    # ruff check --fix && ruff format --check
-│   ├── simulate_devices.py     # Fake Z2M devices for ./scripts/develop --sim
-│   ├── *.json                  # 14 LED probe payloads (manual debugging — NOT used at runtime)
-│   └── c4mqtt                  # Stray binary, excluded from ruff (purpose unknown — investigate before touching)
+│   ├── simulate_devices.py     # Fake Z2M devices for ./scripts/develop --sim (the in-repo stand-in for the Zigbee side)
+│   └── led-*.json              # 14 LED probe payloads (protocol reverse-engineering archive -- NOT used at runtime)
 │
 ├── .ruff.toml                  # `select = ["ALL"]` with ~10 disabled; max-complexity 25
 ├── .pre-commit-config.yaml     # ruff + EOF/whitespace + check-yaml + local pytest hook (15s timeout/test)
@@ -80,43 +74,43 @@ pre-commit install                                  # If not already done
 # Tests
 python -m pytest tests/                             # HA component tests
 python -m pytest -k test_device_discovery -v        # Pattern match
-cd z2m && npm test                                  # Z2M converter tests (104 vitest)
-cd z2m && npm run test:watch
 
 # Lint
 ./scripts/lint                                      # ruff check --fix + format --check
 pre-commit run --all-files                          # Same hooks CI runs
-
-# Z2M Docker image (when changing converters/ or herdsman patch)
-cd z2m && make build                                # Local build
-cd z2m && make deploy DEPLOY_HOST=<server>          # SSH-based prod deploy
-cd z2m && make push                                 # Push multi-arch to ghcr.io
 ```
+
+Zigbee-side changes (device definition, protocol library, Docker image) are made in the fork repos and delivered by [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)'s CI, not from here.
+
+## The frozen MQTT contract
+
+This integration and the Zigbee-side definition are separate codebases coupled only by these MQTT names. Do NOT rename them on either side (the ZHC fork carries a contract test asserting the same list):
+
+- **Inbound (device state)**: `c4_device_type` (`dimmer`/`keypaddim`/`keypad`), `c4_led_{1..6}_{on,off}` (flat hex), `action` with the 48-value grammar `button_{1..6}_{press,scene,click_{1..4}}` + `paddle_{up,down}_{press,scene,click_{1..4}}`, `state`/`brightness`, `c4_detect_result`, `c4_response`/`c4_response_ep`, `button_N_behavior`/`button_N_led_mode`.
+- **Outbound (`<topic>/<name>/set`)**: `c4_cmd`, `c4_detect`, `c4_led`, `c4_query`, `state`/`brightness`, plus `button_N_behavior`/`button_N_led_mode` state writes.
 
 ## Conventions and gotchas
 
-- **Three-layer architecture is non-negotiable.** Protocol logic stays in `z2m/converters/control4.mjs`; nothing in `custom_components/` should know what hex bytes a C4 command uses. Likewise, HA-specific entity logic stays in the component; the converter must remain testable in isolation (the 104 vitest tests rely on this).
-- **Manifest version is `"0.0.0"` on purpose.** HACS reads the version from git tags, not `manifest.json`. Don't bump it manually — Releases section explains.
-- **`PLATFORMS = [Platform.EVENT, Platform.SENSOR]` only** — the integration deliberately doesn't register a `light` platform; it reuses Z2M's native light entity via MQTT. Don't add `light.py` to `PLATFORMS`.
-- **LED color uses gamma-corrected RGB.** C4 LEDs have a non-linear response curve; pure colors only use `0x00` / `0xFF` byte values. `C4_LED_GAMMA = 2.0` in the converter — don't strip it "to simplify."
-- **Profile `0xC25C` is whitelisted via `sed` against compiled JS** in the Z2M Dockerfile. When upstream `zigbee-herdsman` adds proper extensibility (or merges the patch), swap the `sed` for a normal `npm install`. Don't `npm install` the patched fork at build time today — the Docker layer cache won't catch it.
-- **`scripts/c4mqtt` is a stray binary** (excluded from ruff). Purpose is unclear — don't delete or invoke it without investigating. Ask bharat first.
+- **The MQTT boundary is non-negotiable.** Protocol logic lives on the Zigbee side; nothing in `custom_components/` should know what hex bytes a C4 command uses (composing `c4.dmx.*` ASCII command strings is the ceiling).
+- **Manifest version is `"0.0.0"` on purpose.** HACS reads the version from git tags, not `manifest.json`. Don't bump it manually -- Releases section explains.
+- **`PLATFORMS = [Platform.EVENT, Platform.SENSOR]` only** -- the integration deliberately doesn't register a `light` platform; it reuses Z2M's native light entity via MQTT. Don't add `light.py` to `PLATFORMS`.
 - **Per-device persistent state lives in `.storage/control4_dimmers_devices.<entry_id>`.** Schema changes require bumping `STORAGE_VERSION` in `const.py` and writing a migration in `store.py`.
 - **Pre-commit runs pytest with a 15s/test timeout.** Long-running tests should be marked `@pytest.mark.slow` or split.
+- **`scripts/led-*.json`** are hand-crafted protocol reverse-engineering artifacts, kept as the lab notebook behind RESEARCH.md. Not test data; don't run in CI.
 
 ## Existing docs
 
-- `ARCHITECTURE.md` — system data flow, protocol layer split, entity model, button-numbering scheme. Read this before changing the manager or any entity platform.
-- `PLAN.md` — roadmap divided into 7 phases (converter / herdsman patch / Docker / device support / HA component / frontend / upstream). Update when shipping a phase.
-- `RESEARCH.md` — narrative of how the protocol was decoded from the 2014 SmartThings thread, 2013 HC-800 debug log, and FCC filings. Useful for understanding why constants are what they are.
-- `CONTRIBUTING.md` — standard fork/PR contribution flow.
-- `README.md` — user-facing install (HACS + manual), setup walkthrough, troubleshooting.
+- `ARCHITECTURE.md` -- system data flow, protocol reference, entity model, button-numbering scheme. Read this before changing the manager or any entity platform.
+- `PLAN.md` -- roadmap + completion status. Update when shipping a phase.
+- `RESEARCH.md` -- narrative of how the protocol was decoded from the 2014 SmartThings thread, 2013 HC-800 debug log, and FCC filings. Useful for understanding why constants are what they are.
+- `CONTRIBUTING.md` -- standard fork/PR contribution flow.
+- `README.md` -- user-facing install (HACS + manual), setup walkthrough, troubleshooting.
 
 ## Releases
 
-Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Dimmers v<YYYY>.<M>.<DD>` (e.g. `Control4 Dimmers v2026.5.13`). Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape). No releases have been cut for this repo yet, so the first one establishes the on-disk history under the CalVer convention.
+Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Dimmers v<YYYY>.<M>.<DD>`. Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape).
 
-The release workflow (`.github/workflows/release.yml`) auto-creates the GitHub release on `v*` tag push. HACS reads the version from the git tag, not `manifest.json` — so do not bump `manifest.json`'s `"0.0.0"`.
+The release workflow (`.github/workflows/release.yml`) auto-creates the GitHub release on `v*` tag push. HACS reads the version from the git tag, not `manifest.json` -- so do not bump `manifest.json`'s `"0.0.0"`.
 
 Build the GitHub release body in three parts:
 
@@ -130,8 +124,7 @@ Reference example (sister project): https://github.com/bharat/homeassistant-lock
 
 ## What NOT to touch
 
-- `z2m/herdsman-c4-profile.patch` — the canonical source for the profile whitelist. Edits here change the Docker build behavior.
-- `manifest.json`'s `"version"` field — sentinel. HACS uses git tags.
-- `scripts/c4mqtt` — stray binary, purpose unknown. Don't run, delete, or move without context.
-- `scripts/*.json` — LED probe payloads. They're hand-crafted manual-debugging artifacts, not test data.
-- `.cursor/rules/` — IDE rules; harmless but not part of the runtime.
+- `manifest.json`'s `"version"` field -- sentinel. HACS uses git tags.
+- `scripts/led-*.json` -- LED probe payloads. Hand-crafted manual-debugging artifacts, not test data.
+- The frozen MQTT contract names (above) -- the Zigbee-side fork and every deployed automation depend on them.
+- `.cursor/rules/` -- IDE rules; harmless but not part of the runtime.

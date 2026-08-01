@@ -2,5 +2,3 @@
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
-[tool.ruff]
-exclude = ["scripts/c4mqtt"]

@@ -52,6 +52,20 @@ RUN LEGACY_FILE=$(find /app -name "ezspAdapter.js" -path "*/ezsp/adapter/*" -typ
         echo "Legacy EZSP already patched or not found"; \
     fi
 
+# ── Verify the patches actually landed ───────────────────────────────
+# sed exits 0 even when its pattern matches nothing, so the steps above
+# print success unconditionally. If upstream herdsman reformats the
+# whitelist expression, the sed becomes a no-op and, without this check,
+# the build stays green while the image silently drops every C4 frame.
+# Failing the build here turns that into a loud error instead.
+RUN EZSP_FILE=$(find /app -name "ezsp.js" -path "*/ember/ezsp/*" -type f | head -1) && \
+    LEGACY_FILE=$(find /app -name "ezspAdapter.js" -path "*/ezsp/adapter/*" -type f | head -1) && \
+    { [ -n "$EZSP_FILE" ] || { echo "FATAL: ember ezsp.js not found"; exit 1; }; } && \
+    { [ -n "$LEGACY_FILE" ] || { echo "FATAL: legacy ezspAdapter.js not found"; exit 1; }; } && \
+    { grep -q "0xC25C\|0xc25c" "$EZSP_FILE" || { echo "FATAL: C4 profile patch missing from $EZSP_FILE"; exit 1; }; } && \
+    { grep -q "0xC25C\|0xc25c" "$LEGACY_FILE" || { echo "FATAL: C4 profile patch missing from $LEGACY_FILE"; exit 1; }; } && \
+    echo "Verified C4 profile whitelist in both EZSP adapters"
+
 # ── Entrypoint wrapper: install converter into the data dir at boot ──
 # The base image's ENTRYPOINT is ["docker-entrypoint.sh"] with
 # CMD ["/sbin/tini", "--", "node", "index.js"]. Overriding ENTRYPOINT

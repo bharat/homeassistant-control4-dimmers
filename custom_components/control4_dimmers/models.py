@@ -134,7 +134,7 @@ class DeviceState:
             self.device_type = payload["c4_device_type"]
 
         for btn in range(1, 7):
-            # Flat hex LED attributes from slim Z2M converter
+            # Flat hex LED attributes from the Z2M device state (c4_led_N_on/off)
             led_on_key = f"c4_led_{btn}_on"
             led_off_key = f"c4_led_{btn}_off"
             if led_on_key in payload:

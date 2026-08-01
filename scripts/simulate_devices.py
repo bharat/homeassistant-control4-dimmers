@@ -34,7 +34,7 @@ log = logging.getLogger("c4-simulator")
 # ─── Simulated devices ───
 
 # Simulated devices match the real Z2M bridge/devices format:
-#  - No model_id (C4 devices don't report genBasic)
+#  - model_id "C4-Zigbee" (set by the herdsman interview quirk at pair time)
 #  - definition.vendor (not definition.manufacturer — Z2M doesn't use that)
 #  - definition.model is "C4-Zigbee" (the converter's unified model string)
 #  - "type" here is our internal device type, not part of Z2M's schema
@@ -125,6 +125,7 @@ def build_bridge_devices(devices: list[dict]) -> list[dict]:
             "ieee_address": dev["ieee_address"],
             "friendly_name": dev["friendly_name"],
             "manufacturer": "Control4",
+            "model_id": "C4-Zigbee",
             "type": "Router",
             "network_address": random.randint(1000, 65000),  # noqa: S311
             "supported": True,
@@ -135,7 +136,7 @@ def build_bridge_devices(devices: list[dict]) -> list[dict]:
             "power_source": "Mains (single phase)",
             "definition": {
                 **dev["definition"],
-                "source": "external",
+                "source": "native",
                 "supports_ota": False,
             },
             "endpoints": {

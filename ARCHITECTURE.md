@@ -26,11 +26,11 @@ through to the Lovelace card.
 ```
 ┌─────────────┐     raw ASCII      ┌──────────────┐     MQTT/JSON      ┌──────────────┐
 │  C4 Device  │ ◄──────────────── │   Zigbee2MQTT │ ──────────────── │ Home Assistant │
-│  (Zigbee)   │  profile 0xC25C   │  + converter  │  zigbee2mqtt/*   │  integration   │
+│  (Zigbee)   │  profile 0xC25C   │  + C4 forks   │  zigbee2mqtt/*   │  integration   │
 └─────────────┘     cluster 1      └──────────────┘                   └──────────────┘
                                          │                                   │
-                                   c4-protocol.mjs                     manager.py
-                                   control4.mjs                        sensor.py
+                                   (zigbee-herdsman-converters fork)   manager.py
+                                   src/devices/control4.ts             sensor.py
                                                                        light.py
                                                                        event.py
                                                                        store.py
@@ -56,10 +56,14 @@ Key commands:
 - `c4.dmx.dim` — Query dimmer type (response identifies device model)
 - `c4.dmx.amb <sensor>` — Query ambient light sensor
 
-### Layer 2: Z2M Converter
+### Layer 2: Zigbee-side device definition
 
-The converter (`z2m/converters/control4.mjs`) translates between the C4 wire
-protocol and Z2M's MQTT state model.
+The device definition (`src/devices/control4.ts` in the
+[zigbee-herdsman-converters fork](https://github.com/bharat/zigbee-herdsman-converters/tree/control4),
+shipped by the [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)
+image) translates between the C4 wire protocol and Z2M's MQTT state model.
+Transmit uses the herdsman fork's `Endpoint.sendRaw`, since C4 payloads are
+bare ASCII with no ZCL framing.
 
 **Entities exposed by Z2M:**
 
@@ -241,7 +245,7 @@ data:
 | `05` | 6 | Sixth button |
 
 The translation from 0-based wire IDs to 1-based happens once, in the Z2M
-converter's `parseButtonEvent()` function: `wireId = parseInt(hex, 16) + 1`.
+device definition's `parseButtonEvent()` (in the zigbee-herdsman-converters fork): `wireId = parseInt(hex, 16) + 1`.
 
 ## Entity Count
 

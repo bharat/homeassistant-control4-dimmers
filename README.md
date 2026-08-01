@@ -3,7 +3,6 @@
 [![Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml)
 [![Validate](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml)
 [![Lint](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml)
-[![Z2M Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/z2m-test.yml)
 
 > **Background:** Control4 ships solid Zigbee dimmers and keypads. This
 > project bridges them into Home Assistant alongside other Zigbee devices,
@@ -11,9 +10,10 @@
 > story of how the integration was reverse-engineered from publicly
 > available information, see **[RESEARCH.md](RESEARCH.md)**.
 
-A Zigbee2MQTT converter and Home Assistant integration for Control4 Zigbee
-dimmers and keypads: on/off, dimming, per-button LED color control, and
-keypad button events.
+A Home Assistant integration for Control4 Zigbee dimmers and keypads:
+on/off, dimming, per-button LED color control, and keypad button events.
+Pairs with a Zigbee2MQTT stack that speaks the Control4 protocol natively
+(see [Prerequisites](#prerequisites)).
 
 ## What you can do
 
@@ -24,7 +24,6 @@ keypad button events.
 - Auto-detect device type (dimmer, keypad dimmer, or pure keypad) at pairing time.
 - Read stored LED colors from device firmware so dimmers retain their existing C4 colors.
 - Send raw C4 text protocol commands for experimentation and debugging.
-- Build and deploy a custom Z2M Docker image that bundles everything you need.
 
 ## Supported Devices
 
@@ -40,38 +39,22 @@ factory reset sequence: press top 13x, bottom 4x, top 13x.
 
 ## Prerequisites
 
-- Home Assistant with [Zigbee2MQTT](https://www.zigbee2mqtt.io/) installed
+- Home Assistant with [Zigbee2MQTT](https://www.zigbee2mqtt.io/) installed,
+  running a stack that speaks the Control4 protocol. Use the
+  [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)
+  Docker image (a drop-in replacement for `koenkk/zigbee2mqtt`, built from
+  zigbee-herdsman / zigbee-herdsman-converters forks that add native C4
+  support):
+
+  ```bash
+  docker pull ghcr.io/bharat/zigbee2mqtt-control4:latest
+  ```
+
 - A supported Zigbee coordinator (SONOFF ZBDongle-E, SLZB-06, or any
   EFR32/CC2652-based stick)
 - Physical access to each Control4 device for the factory reset sequence
 
 ## Installation
-
-### Docker (recommended)
-
-The easiest path is a custom Z2M Docker image that bundles the converter and
-the required zigbee-herdsman patch.
-
-```bash
-cd z2m
-cp .env.example .env     # edit with your Z2M data dir, coordinator, etc.
-docker build -t z2m-control4 .
-docker compose up -d
-```
-
-The resulting image is a drop-in replacement for the stock
-`koenkk/zigbee2mqtt` image.
-
-### Manual (without Docker)
-
-1. Copy `z2m/converters/control4.mjs` into your Zigbee2MQTT
-   `external_converters/` directory. This is a single self-contained file
-   (the protocol logic is bundled in). Do **not** copy any other `.mjs`
-   files — Z2M auto-loads every `.mjs` in that directory as a converter
-   and will reject helper modules.
-2. Patch zigbee-herdsman to accept the C4 profile:
-   apply `z2m/herdsman-c4-profile.patch` to the source.
-3. Restart Zigbee2MQTT.
 
 ### HA Custom Component
 
@@ -101,16 +84,20 @@ full reset.) The LEDs will flash to confirm.
 
 ### Step 2: Pair with Zigbee2MQTT
 
-1. Open the Z2M web UI and enable **Permit Join** (Settings → Permit Join).
-2. The device should appear within 30 seconds.
-3. **The interview will fail** — this is normal and expected. C4 devices
-   don't support standard Zigbee genBasic reads, so Z2M can't read
-   model/manufacturer via the usual interview. The device will show
-   **Interview state: failed** with a warning icon — this does not
-   affect functionality. The converter handles everything the interview
-   can't.
-4. Despite the failed interview, Z2M will show the device as
-   **Supported: external** with model **C4-Zigbee**.
+1. In the Z2M web UI, enable **Permit Join scoped to a strong Zigbee
+   router physically near the device** (a mains smart plug next to the
+   dimmer works well: use the Permit Join dropdown to pick it). Do NOT
+   use unscoped permit-join or a distant router; in practice both fail:
+   the device attempts to associate, flashes its orange retry pattern for
+   a while, and gives up back to unpaired (solid double-green).
+2. The device should appear within 30 seconds of the reset taps.
+3. **The interview completes successfully.** C4 devices fail standard
+   genBasic reads, but the herdsman fork identifies them from the node
+   descriptor and finishes the interview: the device gets model
+   **C4-Zigbee**, manufacturer **Control4**, and mains power set
+   automatically.
+4. Z2M shows the device as **natively supported** with model
+   **C4-Zigbee**.
 
 ### Step 3: Auto-detection (automatic)
 
@@ -126,8 +113,11 @@ You can verify detection in the Z2M logs:
 [C4 DETECT] Device type: keypad        (C4-KC120277, 6 buttons, no load)
 ```
 
-If detection didn't work (rare — e.g., EP 197 wasn't registered on
-the very first pairing), you can trigger it manually:
+A detection probe that times out (for example while mesh routes are still
+converging right after the join) classifies the device as an assumed
+keypad; the self-heal machinery then corrects it automatically from the
+device's own load telemetry or a later probe answer, usually within a
+minute. You can also trigger detection manually at any time:
 
 ```bash
 mosquitto_pub -t 'zigbee2mqtt/DEVICE_NAME/set' -m '{"c4_detect": true}'
@@ -207,17 +197,27 @@ appropriate contrast.
 
 ### Troubleshooting
 
-- **Device shows as "Unsupported"**: The external converter isn't loaded.
-  Verify `control4.mjs` is in Z2M's `external_converters/` directory and
-  restart Z2M. Only copy `control4.mjs` — do not copy other `.mjs` files.
+- **Device shows as "Unsupported"**: You are not running the
+  [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)
+  image (or another stack with the C4-aware forks). Stock Zigbee2MQTT
+  does not know these devices. Also check for a stale `control4.mjs` in
+  Z2M's `external_converters/` directory: the legacy external converter
+  is obsolete and overrides the native definition (the image's entrypoint
+  disables it automatically).
 
 - **Device not appearing in HA card**: The HA integration discovers
   devices from `zigbee2mqtt/bridge/devices`. Verify the device shows
-  as "Supported: external" in Z2M, then reload the integration.
+  as natively supported (model C4-Zigbee) in Z2M, then reload the
+  integration.
 
-- **Detection shows "unknown"**: Run `{"c4_detect": true}` manually.
-  On first pairing, the coordinator's EP 197 may not be registered yet —
-  restart Z2M once and try again.
+- **Detection shows "unknown" or wrong type**: Usually self-heals within
+  a minute from the device's own telemetry. To force it, run
+  `{"c4_detect": true}` manually, or override with the
+  `set_device_type` service.
+
+- **Pairing fails (orange flashing, then back to unpaired)**: Scope
+  permit-join to a strong Zigbee router physically near the device.
+  Unscoped permit-join and distant routers both reliably fail.
 
 - **LED colors not changing**: Make sure you clicked **Save** in the card
   editor. Colors are pushed to the device firmware via `c4.dmx.led`
@@ -456,20 +456,23 @@ endpoint 1. The standard HA profile carries on/off and dimming via
 colors, button events, and device identification ride on a separate
 Control4-specific text protocol on profile `0xC25C` with ASCII payloads.
 
-This project has three layers:
+The stack has two halves:
 
-1. **Z2M External Converter** -- translates between the C4 text protocol and
-   Zigbee2MQTT entities (lights, actions, selects).
-2. **zigbee-herdsman Patch** -- adds profile `0xC25C` to the EZSP adapter's
-   incoming message whitelist so C4 responses and button events aren't silently
-   dropped.
-3. **HA Custom Component** -- Lovelace card with a visual chassis editor,
-   event entities for button automations, and light entities for dimmers.
+1. **The Zigbee side** (the
+   [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)
+   image): a zigbee-herdsman fork whitelists profile `0xC25C`, adds a
+   raw-APS send path for the ASCII protocol, and completes the interview
+   for C4 hardware; a zigbee-herdsman-converters fork carries the in-tree
+   `control4.ts` device definition (lights, actions, LED control, device
+   detection with self-heal).
+2. **HA Custom Component** (this repo) -- Lovelace card with a visual
+   chassis editor, event entities for button automations, and light
+   entities for dimmers. Talks to the Zigbee side purely over MQTT.
 
 ### Runtime device detection
 
 All newer C4 devices share identical endpoint structures (1, 196, 197) and
-the same manufacturer ID. The converter uses a single
+the same manufacturer ID. The device definition uses a single
 `c4.dmx.dim` query to differentiate:
 
 | Response | Device | Type |
@@ -486,29 +489,23 @@ scripts/develop
 
 # Run Python tests for the custom component
 python -m pytest tests/
-
-# Run the Z2M converter test suite (104 tests)
-cd z2m && npm test
-
-# Build the Docker image
-cd z2m && make build
-
-# Deploy to production server via SSH
-cd z2m && make deploy DEPLOY_HOST=your-server
-
-# Push image to GitHub Container Registry
-cd z2m && make push
 ```
+
+The Zigbee-side code (device definition, protocol library, Docker image)
+lives in its own repos: see
+[zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)
+and the fork branches it builds from.
 
 ## Roadmap
 
 See [PLAN.md](PLAN.md) for the full project arc.
 
-- [x] Clean converter with test framework (104 tests)
-- [x] Herdsman C4 profile patch
-- [x] Docker build pipeline + GitHub Actions CI/CD
 - [x] HA custom component with event entities and light entities
 - [x] Keypad configuration frontend (visual 6-slot chassis editor)
+- [x] Zigbee side moved to in-tree native support (fork image; see
+      [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4))
+- [ ] Upstream the Zigbee-side changes (herdsman whitelist + interview
+      quirk, converters device definition)
 - [ ] Complete device support (telemetry sensors, dimming tables)
 
 ## Credits

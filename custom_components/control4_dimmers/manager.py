@@ -640,6 +640,15 @@ class Control4Manager:
         At most one verify per (ieee, slot) runs at a time. A second schedule
         while one is in flight coalesces (logs and returns) rather than
         starting a racing pass that could orphan the first's pending future.
+
+        Coalescing is only safe because the slot handed to the in-flight
+        verify is a live reference into the store (store.get_device returns
+        the stored object; set_slot_led mutates it in place before pushing).
+        A write that coalesces is therefore still verified: the pending
+        verify compares the device read against the slot's current values
+        and its retry re-pushes them on mismatch. If get_device is ever
+        changed to return a copy, coalescing would silently skip verifying
+        the later write; revisit this guard before making that refactor.
         """
         slot = self._find_slot(config, slot_id)
         if slot is None:

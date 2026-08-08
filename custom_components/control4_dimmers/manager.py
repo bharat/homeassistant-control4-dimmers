@@ -32,6 +32,12 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
+# Minimum interval (seconds) between consecutive MQTT sends to the same
+# device. C4 config pushes are bursts of ~25 raw c4_cmd messages; sent
+# back to back they overrun the Zigbee mesh and some are silently dropped
+# (issue #144). Pacing sends this far apart makes delivery reliable.
+MIN_SEND_INTERVAL = 0.05
+
 # Z2M model strings that identify C4 devices
 C4_MODEL_IDS = {
     "C4-APD120",
@@ -69,6 +75,15 @@ class Control4Manager:
         self._led_cooldowns: dict[
             tuple[str, int], float
         ] = {}  # (ieee, slot) -> timestamp
+        # Per-device send pacing/serialization (issue #144). _send_locks
+        # serializes individual publishes to one device and, together with
+        # _next_send_at, spaces them >= MIN_SEND_INTERVAL apart. _push_locks
+        # serializes whole config pushes so a second push cannot interleave
+        # with one already in flight. Both are keyed by IEEE and created
+        # lazily, so sends to different devices stay independent.
+        self._send_locks: dict[str, asyncio.Lock] = {}
+        self._push_locks: dict[str, asyncio.Lock] = {}
+        self._next_send_at: dict[str, float] = {}  # ieee -> monotonic deadline
 
     @property
     def mqtt_topic(self) -> str:
@@ -503,82 +518,119 @@ class Control4Manager:
         "push_release": (0x00, 0x02, None),
     }
 
+    @staticmethod
+    def _device_lock(locks: dict[str, asyncio.Lock], ieee_address: str) -> asyncio.Lock:
+        """Return the per-device lock for an IEEE, creating it on first use."""
+        lock = locks.get(ieee_address)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[ieee_address] = lock
+        return lock
+
     async def _push_slot_config(self, state: DeviceState, config: DeviceConfig) -> None:
-        """Push slot LED colors and button config to the device via MQTT."""
+        """Push every slot's LED colors and button config to the device."""
         LOGGER.debug(
             "Pushing config for %d slots to %s",
             len(config.slots),
             state.friendly_name,
         )
-        for slot in config.slots:
-            wire_id = slot.slot_id - 1
-            # Set firmware button behavior via c4.dmx.btn.
-            fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 3)
+        # Hold the per-device push lock for the whole push so a second push
+        # to the same device cannot interleave its commands with this one
+        # (issue #144). async_send_mqtt takes a separate, finer send lock,
+        # so there is no self-deadlock.
+        async with self._device_lock(self._push_locks, state.ieee_address):
+            for slot in config.slots:
+                await self._send_slot_commands(state, slot)
+
+    async def _push_single_slot(
+        self, state: DeviceState, config: DeviceConfig, slot_id: int
+    ) -> bool:
+        """
+        Push only one slot's commands, for a single-slot change (issue #144).
+
+        Avoids re-publishing the whole device when just one slot changed.
+        Returns False if the slot is not in the config.
+        """
+        slot = self._find_slot(config, slot_id)
+        if slot is None:
+            return False
+        LOGGER.debug(
+            "Pushing config for slot %d to %s",
+            slot_id,
+            state.friendly_name,
+        )
+        async with self._device_lock(self._push_locks, state.ieee_address):
+            await self._send_slot_commands(state, slot)
+        return True
+
+    async def _send_slot_commands(self, state: DeviceState, slot: SlotConfig) -> None:
+        """Emit the firmware command sequence for a single slot."""
+        wire_id = slot.slot_id - 1
+        # Set firmware button behavior via c4.dmx.btn.
+        fw_behavior = self._BEHAVIOR_TO_FIRMWARE.get(slot.behavior, 3)
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
+        )
+        # Select the LED behavior mode via the param 00 / 01 / 02
+        # selector trio. Param 00 is the wire whose press triggers
+        # the behavior; for push_release this must be the slot's
+        # own wire (otherwise the LED ends up reacting to a
+        # different button's press, which is what produced the
+        # original cross-flash bug). Param 02 is only written for
+        # follow_load (the load/connection ID slot).
+        param_00, param_01, param_02 = self._LED_MODE_TO_FIRMWARE.get(
+            slot.led_mode, (0x00, 0x00, None)
+        )
+        if slot.led_mode == "push_release":
+            param_00 = wire_id
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 00 {param_00:02x}"},
+        )
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {param_01:02x}"},
+        )
+        if param_02 is not None:
             await self.async_send_mqtt(
                 state.ieee_address,
-                {"c4_cmd": f"c4.dmx.btn {wire_id:02x} 01 {fw_behavior:02x}"},
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 02 {param_02:02x}"},
             )
-            # Select the LED behavior mode via the param 00 / 01 / 02
-            # selector trio. Param 00 is the wire whose press triggers
-            # the behavior; for push_release this must be the slot's
-            # own wire (otherwise the LED ends up reacting to a
-            # different button's press, which is what produced the
-            # original cross-flash bug). Param 02 is only written for
-            # follow_load (the load/connection ID slot).
-            param_00, param_01, param_02 = self._LED_MODE_TO_FIRMWARE.get(
-                slot.led_mode, (0x00, 0x00, None)
-            )
-            if slot.led_mode == "push_release":
-                param_00 = wire_id
+        # Mode-03 / mode-04 RGB color slots. Active LED behavior
+        # decides their meaning:
+        #   - follow_load: load-on color / load-off color
+        #   - push_release: press color / release color
+        #   - fixed (Programmed): mode 03 / mode 04 alone don't light
+        #     the LED; the mode-05 override below is what drives it.
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
+        )
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
+        )
+        # Programmed-mode display. Without a Composer programming
+        # engine driving the firmware's internal "state", neither
+        # mode 03 nor mode 04 lights the LED in Programmed mode.
+        # Mode 05 is the explicit override that does. The chassis
+        # editor's single "Color" picker for fixed mode binds to
+        # led_off_color, so the user's picked color lives there.
+        if slot.led_mode == "fixed":
             await self.async_send_mqtt(
                 state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 00 {param_00:02x}"},
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {slot.led_off_color}"},
             )
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 01 {param_01:02x}"},
-            )
-            if param_02 is not None:
-                await self.async_send_mqtt(
-                    state.ieee_address,
-                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 02 {param_02:02x}"},
-                )
-            # Mode-03 / mode-04 RGB color slots. Active LED behavior
-            # decides their meaning:
-            #   - follow_load: load-on color / load-off color
-            #   - push_release: press color / release color
-            #   - fixed (Programmed): mode 03 / mode 04 alone don't light
-            #     the LED; the mode-05 override below is what drives it.
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
-            )
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
-            )
-            # Programmed-mode display. Without a Composer programming
-            # engine driving the firmware's internal "state", neither
-            # mode 03 nor mode 04 lights the LED in Programmed mode.
-            # Mode 05 is the explicit override that does. The chassis
-            # editor's single "Color" picker for fixed mode binds to
-            # led_off_color, so the user's picked color lives there.
-            if slot.led_mode == "fixed":
-                await self.async_send_mqtt(
-                    state.ieee_address,
-                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {slot.led_off_color}"},
-                )
-            # Store behavior and LED mode in Z2M state for frontend.
-            firmware_led_mode = (
-                "programmed" if slot.led_mode == "fixed" else slot.led_mode
-            )
-            await self.async_send_mqtt(
-                state.ieee_address,
-                {
-                    f"button_{slot.slot_id}_behavior": slot.behavior,
-                    f"button_{slot.slot_id}_led_mode": firmware_led_mode,
-                },
-            )
+        # Store behavior and LED mode in Z2M state for frontend.
+        firmware_led_mode = "programmed" if slot.led_mode == "fixed" else slot.led_mode
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {
+                f"button_{slot.slot_id}_behavior": slot.behavior,
+                f"button_{slot.slot_id}_led_mode": firmware_led_mode,
+            },
+        )
 
     @staticmethod
     def _find_slot(config: DeviceConfig, slot_id: int) -> SlotConfig | None:
@@ -804,14 +856,33 @@ class Control4Manager:
         await self.async_send_mqtt(ieee_address, {"c4_detect": True})
 
     async def async_send_mqtt(self, ieee_address: str, payload: dict[str, Any]) -> None:
-        """Send an arbitrary MQTT set command to a device."""
+        """
+        Send an MQTT set command to a device, paced and serialized per device.
+
+        Sends to the same device are serialized and spaced at least
+        MIN_SEND_INTERVAL apart, so a burst of config commands does not
+        overrun the Zigbee mesh and get silently dropped (issue #144).
+        Ordering is FIFO per device, which keeps c4_cmd commands and the
+        button_N_* state writes that describe them in the order they were
+        issued. Sends to different devices use different locks and may
+        overlap. A publish that raises propagates to the caller unchanged.
+        """
         state = self._devices.get(ieee_address)
         if state is None:
             return
         topic = f"{self.mqtt_topic}/{state.friendly_name}/set"
-        if "c4_cmd" in payload:
-            LOGGER.info("MQTT -> %s: %s", state.friendly_name, payload["c4_cmd"])
-        await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
+        async with self._device_lock(self._send_locks, ieee_address):
+            wait = self._next_send_at.get(ieee_address, 0.0) - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            if "c4_cmd" in payload:
+                LOGGER.info("MQTT -> %s: %s", state.friendly_name, payload["c4_cmd"])
+            try:
+                await mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1)
+            finally:
+                # Schedule the next allowed send even if this one raised, so
+                # a transient publish error does not let a later retry burst.
+                self._next_send_at[ieee_address] = time.monotonic() + MIN_SEND_INTERVAL
 
     def get_default_slots(self, device_type: str) -> list[SlotConfig]:
         """Generate default slot configuration for a device type."""

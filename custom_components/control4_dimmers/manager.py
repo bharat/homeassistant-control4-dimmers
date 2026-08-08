@@ -110,9 +110,13 @@ class Control4Manager:
         # resolved when a device-state payload carries the matching
         # c4_verified_slot marker. _verify_results holds the last verify
         # outcome per (ieee, slot) so the event entity can surface in_sync /
-        # observed values.
+        # observed values. _verifying is the in-flight guard: a (ieee, slot) is
+        # present for the entire verify lifecycle (settle delay plus every
+        # retry), so a second schedule for the same slot coalesces instead of
+        # racing and overwriting the pending future.
         self._pending_verifies: dict[tuple[str, int], asyncio.Future[None]] = {}
         self._verify_results: dict[tuple[str, int], dict[str, Any]] = {}
+        self._verifying: set[tuple[str, int]] = set()
 
     @property
     def mqtt_topic(self) -> str:
@@ -352,12 +356,15 @@ class Control4Manager:
             self._send_locks.pop(ieee, None)
             self._push_locks.pop(ieee, None)
             self._next_send_at.pop(ieee, None)
-            # Drop any verify results for the removed device so the map does
-            # not grow unbounded (issue #145). Pending verify futures are
-            # left to time out on their own so we never cancel a coroutine
-            # that is mid-await.
+            # Drop any verify results and in-flight guards for the removed
+            # device so the maps do not grow unbounded (issue #145). Pending
+            # verify futures are left in place; the verify pass aborts on its
+            # own when it wakes to find the device gone (see _verify_once), so
+            # we never cancel a coroutine that is mid-await.
             for key in [k for k in self._verify_results if k[0] == ieee]:
                 del self._verify_results[key]
+            for key in [k for k in self._verifying if k[0] == ieee]:
+                self._verifying.discard(key)
 
         # Apply any state payloads that arrived before discovery.
         if self._pending_states:
@@ -629,10 +636,26 @@ class Control4Manager:
         Fire-and-forget: the caller's service returns immediately and a
         failed or timed-out verify cannot wedge it. Called after a
         single-slot push has landed.
+
+        At most one verify per (ieee, slot) runs at a time. A second schedule
+        while one is in flight coalesces (logs and returns) rather than
+        starting a racing pass that could orphan the first's pending future.
         """
         slot = self._find_slot(config, slot_id)
         if slot is None:
             return
+        key = (state.ieee_address, slot_id)
+        if key in self._verifying:
+            LOGGER.debug(
+                "verify already in flight for %s slot %d, coalescing",
+                state.friendly_name,
+                slot_id,
+            )
+            return
+        # Mark in flight synchronously (before the task actually runs) so a
+        # second schedule in the same tick sees the guard. The slot object is
+        # passed through so _verify_slot / _verify_once do not look it up again.
+        self._verifying.add(key)
         self._hass.async_create_task(
             self._verify_slot(state, config, slot),
             f"c4_verify_{state.ieee_address}_{slot_id}",
@@ -651,6 +674,7 @@ class Control4Manager:
         stops the pass without retrying forever.
         """
         slot_id = slot.slot_id
+        key = (state.ieee_address, slot_id)
         settle = VERIFY_SETTLE_MS / 1000
         attempt = 0
         try:
@@ -658,7 +682,8 @@ class Control4Manager:
                 await asyncio.sleep(settle)
                 result = await self._verify_once(state, slot)
                 if result is None:
-                    # Read timed out; already logged. Do not retry forever.
+                    # Read timed out or the device was removed mid-flight;
+                    # already logged. Do not retry forever.
                     return
                 if result:
                     # Observed matches desired; recorded verified in _verify_once.
@@ -675,12 +700,20 @@ class Control4Manager:
                 attempt += 1
                 # Re-push the slot, then read again after a longer settle. The
                 # re-push does not schedule its own verify (this loop owns it).
+                # The re-lookup inside _push_single_slot is intentional: it is
+                # the shared push path and needs its own slot resolution.
                 await self._push_single_slot(state, config, slot_id)
                 settle = VERIFY_RETRY_SETTLE_MS / 1000
         except Exception:  # noqa: BLE001
             LOGGER.exception(
                 "Verify pass errored for %s slot %d", state.friendly_name, slot_id
             )
+        finally:
+            # Clear the in-flight guard after the whole lifecycle (settle, every
+            # retry, and any exit path: success, mismatch, timeout, abort, or
+            # error). This is what guarantees at most one in-flight verify per
+            # (ieee, slot), so _pending_verifies[key] can never be overwritten.
+            self._verifying.discard(key)
 
     async def _verify_once(self, state: DeviceState, slot: SlotConfig) -> bool | None:
         """
@@ -710,11 +743,23 @@ class Control4Manager:
                 )
                 return None
         finally:
+            # With per-slot coalescing there is at most one in-flight verify,
+            # so this pop can never drop a different pass's future. A response
+            # that arrives in the narrow window between wait_for raising
+            # TimeoutError and this pop is harmless: _resolve_verify only acts
+            # on a future that is not done, and nothing awaits the result once
+            # the timeout has fired.
             self._pending_verifies.pop(key, None)
 
         device = self._devices.get(ieee)
-        observed_led = device.led_colors.get(slot_id, {}) if device else {}
-        observed_btn = device.button_configs.get(slot_id, {}) if device else {}
+        if device is None:
+            # The device was removed while we awaited the read. Observed values
+            # would all be absent, which _compare_slot would read as "in sync"
+            # for a device that is gone. Abort the pass; record nothing.
+            LOGGER.debug("device %s removed during verify, aborting", ieee)
+            return None
+        observed_led = device.led_colors.get(slot_id, {})
+        observed_btn = device.button_configs.get(slot_id, {})
         mismatches = self._compare_slot(slot, observed_led, observed_btn)
         for field_name, expected, actual in mismatches:
             LOGGER.warning(

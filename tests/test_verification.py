@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -250,3 +251,85 @@ async def test_settle_delay_awaited_before_publish(mock_hass: MagicMock) -> None
     assert events[0] == ("sleep", 0.25)
     assert ("publish", SLOT_ID) in events
     assert events.index(("sleep", 0.25)) < events.index(("publish", SLOT_ID))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_verify_coalesced(
+    mock_hass: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two verifies for the same slot back to back: the second coalesces."""
+    mgr, config = _build(mock_hass)
+    state = mgr.devices[IEEE]
+    events: list[tuple[str, Any]] = []
+    # Only one response is queued; a second verify would find it empty and
+    # time out, so the assertions below prove the second never ran.
+    responses = [_response()]
+
+    tasks: list[asyncio.Task[None]] = []
+
+    def _create_task(coro: Any, _name: str | None = None) -> asyncio.Task[None]:
+        task = asyncio.ensure_future(coro)
+        tasks.append(task)
+        return task
+
+    mgr._hass.async_create_task = _create_task
+
+    with (
+        patch("custom_components.control4_dimmers.manager.VERIFY_SETTLE_MS", 0),
+        patch.object(
+            mgr, "async_send_mqtt", new=_make_fake_send(mgr, responses, events=events)
+        ),
+        caplog.at_level(logging.DEBUG, logger="custom_components.control4_dimmers"),
+    ):
+        # Schedule twice in the same tick; the guard is set synchronously.
+        mgr.schedule_slot_verify(state, config, SLOT_ID)
+        mgr.schedule_slot_verify(state, config, SLOT_ID)
+        await asyncio.gather(*tasks)
+
+    # Only one task was ever scheduled; the second schedule coalesced.
+    assert len(tasks) == 1
+    assert "coalescing" in caplog.text
+    # Exactly one verify publish and one recorded result.
+    publishes = [e for e in events if e[0] == "publish"]
+    assert len(publishes) == 1
+    result = mgr.get_verify_result(IEEE, SLOT_ID)
+    assert result is not None
+    assert result["in_sync"] is True
+    # No spurious timeout from an orphaned second future.
+    assert "timed out" not in caplog.text
+    # Guard and pending future are both cleared.
+    assert (IEEE, SLOT_ID) not in mgr._verifying
+    assert mgr._pending_verifies == {}
+
+
+@pytest.mark.asyncio
+async def test_device_removed_mid_verify_aborts(
+    mock_hass: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A device removed while the read is in flight aborts without recording."""
+    mgr, config = _build(mock_hass)
+    state = mgr.devices[IEEE]
+
+    async def fake_send(_ieee: str, payload: dict[str, Any]) -> None:
+        if "c4_verify_slot" not in payload:
+            return
+        # The device vanishes while the verify awaits its read-back, then the
+        # correlated future resolves so the pass wakes to find it gone.
+        mgr._devices.pop(IEEE, None)
+        future = mgr._pending_verifies.get((IEEE, SLOT_ID))
+        if future is not None and not future.done():
+            future.set_result(None)
+
+    with (
+        patch("custom_components.control4_dimmers.manager.VERIFY_SETTLE_MS", 0),
+        patch.object(mgr, "async_send_mqtt", new=fake_send),
+        caplog.at_level(logging.DEBUG, logger="custom_components.control4_dimmers"),
+    ):
+        await mgr._verify_slot(state, config, config.slots[0])
+
+    # Aborted: no in_sync result recorded for the removed device.
+    assert mgr.get_verify_result(IEEE, SLOT_ID) is None
+    assert "removed during verify" in caplog.text
+    # No leaked future or in-flight guard entry.
+    assert mgr._pending_verifies == {}
+    assert (IEEE, SLOT_ID) not in mgr._verifying

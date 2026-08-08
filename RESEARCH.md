@@ -435,6 +435,15 @@ The `v01` response was the breakthrough — it meant the three-argument
 format was correct, but value `00` was invalid for parameter `00`. We'd
 found the syntax: `c4.dmx.btn <button_index> <param_id> <value>`.
 
+Later read-back probing (issue #145) corrected an earlier assumption that
+button behavior was write-only. Re-probing confirmed the two-argument form
+`c4.dmx.btn <wire> 01` answers a GET and returns the raw firmware behavior
+code (00 load-on, 01 load-off, 02 toggle, 03 programmable, 04 momentary,
+05 disabled), the same values the three-argument SET writes. Behavior is
+therefore readable, consistent with the corrected LED-mode selector table
+below; this is what lets the read-after-write verify compare the observed
+behavior against the desired one.
+
 We mapped the parameter space by trying every combination. Only parameter
 `01` accepted values:
 

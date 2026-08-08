@@ -211,6 +211,10 @@ class Control4ButtonEvent(EventEntity):
         # whether the last verify pass found them in sync. A None observed
         # value means the field has not been read yet or the firmware could
         # not read it.
+        # observed_* reflect the most recent device state (updated by any
+        # device read, including a c4_detect), while in_sync / last_verified
+        # reflect only the last verify pass, so the two groups update
+        # independently and can momentarily disagree.
         btn_cfg = device.button_configs.get(self._slot_id, {}) if device else {}
         attrs["observed_on_color"] = (
             f"#{led_colors['on']}" if "on" in led_colors else None

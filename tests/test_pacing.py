@@ -250,3 +250,100 @@ class TestSingleSlotPush:
         ]
         # One state write per slot, for all six slots.
         assert len(state_writes) == 6
+
+
+# ── (d) A publish that raises still records the next-send deadline ────
+
+
+class TestPublishErrorStillPaces:
+    """A raising publish must not swallow the error nor skip the pacing update."""
+
+    @pytest.mark.asyncio
+    async def test_raising_publish_still_sets_deadline(
+        self, mock_hass: MagicMock
+    ) -> None:
+        mgr, _ = _manager_with_device(mock_hass, ieee=IEEE_A, friendly_name="Theater")
+
+        boom_msg = "broker down"
+
+        async def _boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError(boom_msg)
+
+        before = time.monotonic()
+        with (
+            patch(
+                "custom_components.control4_dimmers.manager.mqtt.async_publish",
+                new=_boom,
+            ),
+            pytest.raises(RuntimeError, match="broker down"),
+        ):
+            await mgr.async_send_mqtt(IEEE_A, {"c4_cmd": "c4.dmx.led 00 05 ffffff"})
+
+        # finally ran: a deadline was recorded despite the publish raising, so a
+        # later caller is still paced.
+        deadline = mgr._next_send_at.get(IEEE_A)
+        assert deadline is not None
+        assert deadline >= before + MIN_SEND_INTERVAL
+
+
+# ── (e) FIFO ordering under contention ───────────────────────────────
+
+
+class TestFifoOrdering:
+    """Concurrent sends to one device must complete in submission order."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sends_preserve_submission_order(
+        self, mock_hass: MagicMock
+    ) -> None:
+        mgr, _ = _manager_with_device(mock_hass, ieee=IEEE_A, friendly_name="Theater")
+        rec = _PublishRecorder(hold=0.002)
+
+        async def _send(index: int) -> None:
+            await mgr.async_send_mqtt(
+                IEEE_A, {"c4_cmd": f"c4.dmx.led 00 05 {index:06d}"}
+            )
+
+        with patch(
+            "custom_components.control4_dimmers.manager.mqtt.async_publish",
+            new=rec.publish,
+        ):
+            # Submit in a known order; gather starts them in that order.
+            await asyncio.gather(*(_send(i) for i in range(6)))
+
+        colors = [payload["c4_cmd"].split()[-1] for _topic, payload, _t in rec.calls]
+        assert colors == [f"{i:06d}" for i in range(6)]
+
+
+# ── (f) Pruning per-device pacing state on removal ───────────────────
+
+
+class TestPruneOnRemoval:
+    """Device removal must drop the per-device lock and deadline entries."""
+
+    @pytest.mark.asyncio
+    async def test_removal_prunes_pacing_maps(self, mock_hass: MagicMock) -> None:
+        mgr, _ = _manager_with_device(mock_hass, ieee=IEEE_A, friendly_name="Theater")
+        rec = _PublishRecorder(hold=0.0)
+        with patch(
+            "custom_components.control4_dimmers.manager.mqtt.async_publish",
+            new=rec.publish,
+        ):
+            await mgr.async_send_mqtt(IEEE_A, {"c4_cmd": "c4.dmx.led 00 05 ffffff"})
+
+        # Sending created the send lock and deadline; touch the push lock too.
+        mgr._device_lock(mgr._push_locks, IEEE_A)
+        assert IEEE_A in mgr._send_locks
+        assert IEEE_A in mgr._push_locks
+        assert IEEE_A in mgr._next_send_at
+
+        # bridge/devices with an empty list means the device is gone.
+        msg = MagicMock()
+        msg.topic = "zigbee2mqtt/bridge/devices"
+        msg.payload = json.dumps([])
+        await mgr._handle_bridge_devices(msg)
+
+        assert IEEE_A not in mgr._devices
+        assert IEEE_A not in mgr._send_locks
+        assert IEEE_A not in mgr._push_locks
+        assert IEEE_A not in mgr._next_send_at

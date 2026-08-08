@@ -606,6 +606,11 @@ async def _svc_set_slot(
     if not replaced:
         new_slots.append(merged)
 
+    # Full whole-device push is intentional here (unlike set_slot_led's
+    # single-slot push). set_slot can change behavior, led_mode, and
+    # led_track_entity_id, which interact across slots (load-ID references
+    # for follow_load, press-wire wiring for push_release), so every slot
+    # may need re-sending; this is not a missed single-slot optimization.
     await manager.async_configure_device(ieee_address=ieee, slots=new_slots)
 
     config = manager.store.get_device(ieee)

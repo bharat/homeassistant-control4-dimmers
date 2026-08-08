@@ -318,6 +318,11 @@ class Control4Manager:
         for ieee in removed:
             LOGGER.info("Control4 device removed: %s", ieee)
             del self._devices[ieee]
+            # Drop the per-device pacing state so the lock/deadline maps do
+            # not grow unbounded as devices come and go (issue #144).
+            self._send_locks.pop(ieee, None)
+            self._push_locks.pop(ieee, None)
+            self._next_send_at.pop(ieee, None)
 
         # Apply any state payloads that arrived before discovery.
         if self._pending_states:
@@ -553,6 +558,11 @@ class Control4Manager:
         """
         slot = self._find_slot(config, slot_id)
         if slot is None:
+            LOGGER.warning(
+                "Cannot push unknown slot %d for %s; nothing sent",
+                slot_id,
+                state.friendly_name,
+            )
             return False
         LOGGER.debug(
             "Pushing config for slot %d to %s",

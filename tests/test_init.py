@@ -216,7 +216,7 @@ class TestSetSlotLedService:
             led_off_color="0000ff",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_slot_config", new_callable=AsyncMock) as push:
+        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push:
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",
@@ -227,7 +227,9 @@ class TestSetSlotLedService:
         # Colors are untouched when not provided.
         assert config.slots[0].led_on_color == "ff0000"
         assert config.slots[0].led_off_color == "0000ff"
+        # Only the changed slot is re-pushed (issue #144).
         push.assert_awaited_once()
+        assert push.await_args.args[2] == 2
 
     @pytest.mark.asyncio
     async def test_updates_colors_only(self, mock_hass: MagicMock) -> None:
@@ -239,7 +241,7 @@ class TestSetSlotLedService:
             led_off_color="0000ff",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_slot_config", new_callable=AsyncMock) as push:
+        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push:
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",
@@ -264,7 +266,7 @@ class TestSetSlotLedService:
             led_off_color="000000",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_slot_config", new_callable=AsyncMock):
+        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock):
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",
@@ -293,7 +295,7 @@ class TestSetSlotLedService:
         entity_state = MagicMock()
         entity_state.attributes = {"ieee_address": "0xAABB", "slot_id": 99}
         mock_hass.states.get.return_value = entity_state
-        with patch.object(mgr, "_push_slot_config", new_callable=AsyncMock) as push:
+        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push:
             call = MagicMock()
             call.data = {"entity_id": "event.test", "led_mode": "fixed"}
             await _svc_set_slot_led(mock_hass, call)

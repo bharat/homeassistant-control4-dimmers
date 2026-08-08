@@ -448,8 +448,9 @@ async def _svc_set_slot_led(hass: HomeAssistant, call: ServiceCall) -> None:
     Handle control4_dimmers.set_slot_led service call.
 
     Updates the LED mode and/or colors for a single slot, then re-
-    publishes the slot's full config so the changes land on the
-    device. Fields not provided keep their stored values.
+    publishes only that slot's config so the changes land on the device
+    without re-flooding the mesh with every other slot's commands
+    (issue #144). Fields not provided keep their stored values.
     """
     entity_id = call.data["entity_id"]
     state = hass.states.get(entity_id)
@@ -487,7 +488,7 @@ async def _svc_set_slot_led(hass: HomeAssistant, call: ServiceCall) -> None:
 
     device_state = manager.devices.get(ieee)
     if device_state is not None:
-        await manager._push_slot_config(device_state, config)  # noqa: SLF001
+        await manager._push_single_slot(device_state, config, slot_id)  # noqa: SLF001
     manager.setup_light_tracking()
     manager.notify_listeners()
 
@@ -605,6 +606,11 @@ async def _svc_set_slot(
     if not replaced:
         new_slots.append(merged)
 
+    # Full whole-device push is intentional here (unlike set_slot_led's
+    # single-slot push). set_slot can change behavior, led_mode, and
+    # led_track_entity_id, which interact across slots (load-ID references
+    # for follow_load, press-wire wiring for push_release), so every slot
+    # may need re-sending; this is not a missed single-slot optimization.
     await manager.async_configure_device(ieee_address=ieee, slots=new_slots)
 
     config = manager.store.get_device(ieee)

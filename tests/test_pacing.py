@@ -125,9 +125,14 @@ class TestSameDevicePacing:
         call_2 = MagicMock()
         call_2.data = {"entity_id": "event.theater_2", "off_color": "ff0000"}
 
-        with patch(
-            "custom_components.control4_dimmers.manager.mqtt.async_publish",
-            new=rec.publish,
+        with (
+            patch(
+                "custom_components.control4_dimmers.manager.mqtt.async_publish",
+                new=rec.publish,
+            ),
+            # The verify pass (issue #145) is exercised in test_verification;
+            # stub it here so this pacing test does not schedule a read-back.
+            patch.object(mgr, "schedule_slot_verify"),
         ):
             await asyncio.gather(
                 _svc_set_slot_led(mock_hass, call_1),

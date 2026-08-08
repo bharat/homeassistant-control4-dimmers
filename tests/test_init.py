@@ -216,7 +216,10 @@ class TestSetSlotLedService:
             led_off_color="0000ff",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push:
+        with (
+            patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push,
+            patch.object(mgr, "schedule_slot_verify"),
+        ):
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",
@@ -241,7 +244,10 @@ class TestSetSlotLedService:
             led_off_color="0000ff",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push:
+        with (
+            patch.object(mgr, "_push_single_slot", new_callable=AsyncMock) as push,
+            patch.object(mgr, "schedule_slot_verify"),
+        ):
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",
@@ -266,7 +272,10 @@ class TestSetSlotLedService:
             led_off_color="000000",
         )
         _, mgr, config = self._setup(mock_hass, initial)
-        with patch.object(mgr, "_push_single_slot", new_callable=AsyncMock):
+        with (
+            patch.object(mgr, "_push_single_slot", new_callable=AsyncMock),
+            patch.object(mgr, "schedule_slot_verify"),
+        ):
             call = MagicMock()
             call.data = {
                 "entity_id": "event.test_button_2",

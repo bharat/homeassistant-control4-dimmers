@@ -365,12 +365,14 @@ tracked the load state. We could set on-color (mode 03) and off-color
 changes. But we couldn't figure out how to switch between LED modes.
 
 We tried `c4.dmx.led` modes 01 and 02. They accepted SET commands
-(`000` success) but returned `e00` on GET — write-only. Setting mode 01
-to a color on button 5 (previously unconfigured) gave it push/release
-behavior — the LED flashed that color on press. Setting mode 01 back to
-`000000` disabled the flash. But the relationship was fragile:
-re-sending a non-black color to mode 01 didn't always restore the
-behavior.
+(`000` success) but appeared to return `e00` on GET, so at the time we
+read them as write-only. (The read-back work later corrected this: the
+low modes are a readable selector trio; see the mode map below.) Setting
+mode 01 to a color on button 5 (previously unconfigured) gave it
+push/release behavior, and the LED flashed that color on press. Setting
+mode 01 back to `000000` disabled the flash. But the relationship was
+fragile: re-sending a non-black color to mode 01 didn't always restore
+the behavior.
 
 ### Systematic Protocol Probing
 
@@ -382,18 +384,29 @@ the physical result at the keypad, and press Enter to continue.
 
 We probed systematically:
 
-**Mode scan** — tried GET on `c4.dmx.led` modes 07 through ff. Every
-one returned `e00`. Only modes 01–06 exist, and mode 06 is invalid. The
-complete LED mode map:
+**Mode scan.** GET on `c4.dmx.led` modes 07 through ff all returned
+`e00`. Valid modes are 00 through 05; mode 06 is invalid. Later read-back
+work (issue #145) corrected our earlier "write-only" reading of the low
+modes: modes 00, 01, and 02 form a readable selector trio, and each answers
+a per-parameter GET with `000` plus a short status code. Modes 03 and 04
+return colors. The complete LED mode map:
 
 | Mode | Function | GET | SET |
 |------|----------|-----|-----|
-| 01 | Push/pressed color | `e00` (write-only) | `000` |
-| 02 | Release color | `e00` (write-only) | `000` |
-| 03 | On-state color | Returns color | `000` |
-| 04 | Off-state color | Returns color | `000` |
+| 00 | Selector: press-trigger wire | `000` + short code | `000` |
+| 01 | Selector: behavior mode (00 Programmed / 01 Follow Load / 02 Push-Release) | `000` + short code | `000` |
+| 02 | Selector: connection / load ID | `000` + short code | `000` |
+| 03 | On-state / press color | Returns color | `000` |
+| 04 | Off-state / release color | Returns color | `000` |
 | 05 | Override (persistent) | `e00` | `000` |
 | 06 | Invalid | `e00` | `e00` |
+
+Per-parameter GET is the only read the firmware offers: every reduced-arity
+form of the query (anything short of the full parameter address) returns
+`e00`, so each parameter has to be read on its own. That is exactly what the
+read-back verification (issue #145) depends on. Note that `c4.dmx.key` is a
+health / wake poll (a status byte, a state counter, and five 32-bit words),
+not a configuration read; see the c4.dmx.key section below.
 
 **Command namespace scan** — probed `c4.dmx.key`, `c4.dmx.btn`,
 `c4.dmx.lm`, `c4.dmx.but`, `c4.dmx.bm`, `c4.sy.ver`, `c4.sy.id`, and
@@ -421,6 +434,15 @@ We tried increasing numbers of arguments on `c4.dmx.btn`. Two args
 The `v01` response was the breakthrough — it meant the three-argument
 format was correct, but value `00` was invalid for parameter `00`. We'd
 found the syntax: `c4.dmx.btn <button_index> <param_id> <value>`.
+
+Later read-back probing (issue #145) corrected an earlier assumption that
+button behavior was write-only. Re-probing confirmed the two-argument form
+`c4.dmx.btn <wire> 01` answers a GET and returns the raw firmware behavior
+code (00 load-on, 01 load-off, 02 toggle, 03 programmable, 04 momentary,
+05 disabled), the same values the three-argument SET writes. Behavior is
+therefore readable, consistent with the corrected LED-mode selector table
+below; this is what lets the read-after-write verify compare the observed
+behavior against the desired one.
 
 We mapped the parameter space by trying every combination. Only parameter
 `01` accepted values:

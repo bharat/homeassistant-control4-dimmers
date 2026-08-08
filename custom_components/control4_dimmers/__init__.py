@@ -489,6 +489,9 @@ async def _svc_set_slot_led(hass: HomeAssistant, call: ServiceCall) -> None:
     device_state = manager.devices.get(ieee)
     if device_state is not None:
         await manager._push_single_slot(device_state, config, slot_id)  # noqa: SLF001
+        # Read the slot back and reconcile desired vs observed (issue #145).
+        # Non-blocking: this schedules a task and returns immediately.
+        manager.schedule_slot_verify(device_state, config, slot_id)
     manager.setup_light_tracking()
     manager.notify_listeners()
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from homeassistant.components import mqtt
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.helpers import device_registry as dr
+from homeassistant.util import dt as dt_util
 
 from .const import (
     C4_MANUFACTURER_NAME,
@@ -37,6 +38,26 @@ if TYPE_CHECKING:
 # back to back they overrun the Zigbee mesh and some are silently dropped
 # (issue #144). Pacing sends this far apart makes delivery reliable.
 MIN_SEND_INTERVAL = 0.05
+
+# Read-after-write verification (issue #145). After a single-slot push we
+# read the slot's written parameters back and compare desired vs observed,
+# so a silently dropped mesh write becomes a loud, visible failure instead
+# of a wrong-colored LED that nobody notices.
+#
+# VERIFY_SETTLE_MS is how long we wait after a push before reading. The
+# measured firmware settle threshold is under 100ms on a quiescent
+# single-device mesh; 250ms is roughly 2.5x margin and is flagged for
+# tuning. A read taken before the device has settled returns the PRIOR
+# value, so reading too early would look like a drop when it is not.
+VERIFY_SETTLE_MS = 250
+# Longer settle used for the single retry, giving a congested mesh more
+# room before we call the write a hard failure.
+VERIFY_RETRY_SETTLE_MS = 750
+# One retry only; verification must never turn into a polling loop.
+VERIFY_MAX_RETRIES = 1
+# How long to wait (ms) for the converter's seq-matched read to come back
+# before giving up on a verify pass.
+VERIFY_TIMEOUT_MS = 5000
 
 # Z2M model strings that identify C4 devices
 C4_MODEL_IDS = {
@@ -84,6 +105,14 @@ class Control4Manager:
         self._send_locks: dict[str, asyncio.Lock] = {}
         self._push_locks: dict[str, asyncio.Lock] = {}
         self._next_send_at: dict[str, float] = {}  # ieee -> monotonic deadline
+        # Read-after-write verification state (issue #145). _pending_verifies
+        # holds one future per (ieee, slot) we are waiting to read back; it is
+        # resolved when a device-state payload carries the matching
+        # c4_verified_slot marker. _verify_results holds the last verify
+        # outcome per (ieee, slot) so the event entity can surface in_sync /
+        # observed values.
+        self._pending_verifies: dict[tuple[str, int], asyncio.Future[None]] = {}
+        self._verify_results: dict[tuple[str, int], dict[str, Any]] = {}
 
     @property
     def mqtt_topic(self) -> str:
@@ -323,6 +352,12 @@ class Control4Manager:
             self._send_locks.pop(ieee, None)
             self._push_locks.pop(ieee, None)
             self._next_send_at.pop(ieee, None)
+            # Drop any verify results for the removed device so the map does
+            # not grow unbounded (issue #145). Pending verify futures are
+            # left to time out on their own so we never cancel a coroutine
+            # that is mid-await.
+            for key in [k for k in self._verify_results if k[0] == ieee]:
+                del self._verify_results[key]
 
         # Apply any state payloads that arrived before discovery.
         if self._pending_states:
@@ -375,6 +410,14 @@ class Control4Manager:
             return
 
         device.update_from_mqtt(payload)
+
+        # Resolve a pending read-back verify (issue #145). The converter
+        # echoes c4_verified_slot alongside the observed values in the same
+        # payload, so by the time we get here DeviceState already holds the
+        # observed values the verify pass will compare against.
+        verified_slot = payload.get("c4_verified_slot")
+        if verified_slot is not None:
+            self._resolve_verify(device.ieee_address, verified_slot)
 
         # Dispatch button action events (press / click) to event entities.
         action = payload.get("action")
@@ -572,6 +615,185 @@ class Control4Manager:
         async with self._device_lock(self._push_locks, state.ieee_address):
             await self._send_slot_commands(state, slot)
         return True
+
+    # Whole-device _push_slot_config / push_config are intentionally NOT
+    # auto-verified: verifying every slot would multiply mesh read traffic.
+    # Whole-device verification is left as an explicit-only follow-up.
+
+    def schedule_slot_verify(
+        self, state: DeviceState, config: DeviceConfig, slot_id: int
+    ) -> None:
+        """
+        Schedule a non-blocking read-back verify for one slot (issue #145).
+
+        Fire-and-forget: the caller's service returns immediately and a
+        failed or timed-out verify cannot wedge it. Called after a
+        single-slot push has landed.
+        """
+        slot = self._find_slot(config, slot_id)
+        if slot is None:
+            return
+        self._hass.async_create_task(
+            self._verify_slot(state, config, slot),
+            f"c4_verify_{state.ieee_address}_{slot_id}",
+        )
+
+    async def _verify_slot(
+        self, state: DeviceState, config: DeviceConfig, slot: SlotConfig
+    ) -> None:
+        """
+        Read a slot back after a push and reconcile desired vs observed.
+
+        Waits for the firmware to settle, reads the slot, compares. On a
+        mismatch it re-pushes the slot once (bounded by VERIFY_MAX_RETRIES)
+        and reads again; a mismatch that survives the retry is logged as an
+        ERROR (the loud, visible failure issue #145 wants). A read timeout
+        stops the pass without retrying forever.
+        """
+        slot_id = slot.slot_id
+        settle = VERIFY_SETTLE_MS / 1000
+        attempt = 0
+        try:
+            while True:
+                await asyncio.sleep(settle)
+                result = await self._verify_once(state, slot)
+                if result is None:
+                    # Read timed out; already logged. Do not retry forever.
+                    return
+                if result:
+                    # Observed matches desired; recorded verified in _verify_once.
+                    return
+                if attempt >= VERIFY_MAX_RETRIES:
+                    LOGGER.error(
+                        "Verify failed for %s slot %d after %d retry attempt(s); "
+                        "slot left out of sync",
+                        state.friendly_name,
+                        slot_id,
+                        attempt,
+                    )
+                    return
+                attempt += 1
+                # Re-push the slot, then read again after a longer settle. The
+                # re-push does not schedule its own verify (this loop owns it).
+                await self._push_single_slot(state, config, slot_id)
+                settle = VERIFY_RETRY_SETTLE_MS / 1000
+        except Exception:  # noqa: BLE001
+            LOGGER.exception(
+                "Verify pass errored for %s slot %d", state.friendly_name, slot_id
+            )
+
+    async def _verify_once(self, state: DeviceState, slot: SlotConfig) -> bool | None:
+        """
+        Run one read-back cycle for a slot.
+
+        Publishes a targeted read, awaits the converter's seq-matched
+        response (correlated by a future keyed on (ieee, slot)), then
+        compares desired vs observed. Returns True on a full match, False on
+        a mismatch, or None if the read timed out. Records the per-slot
+        verify result whenever a read completes so the entity can surface it.
+        """
+        ieee = state.ieee_address
+        slot_id = slot.slot_id
+        key = (ieee, slot_id)
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
+        self._pending_verifies[key] = future
+        try:
+            await self.async_send_mqtt(ieee, {"c4_verify_slot": slot_id})
+            try:
+                await asyncio.wait_for(future, timeout=VERIFY_TIMEOUT_MS / 1000)
+            except TimeoutError:
+                LOGGER.warning(
+                    "Verify read timed out for %s slot %d",
+                    state.friendly_name,
+                    slot_id,
+                )
+                return None
+        finally:
+            self._pending_verifies.pop(key, None)
+
+        device = self._devices.get(ieee)
+        observed_led = device.led_colors.get(slot_id, {}) if device else {}
+        observed_btn = device.button_configs.get(slot_id, {}) if device else {}
+        mismatches = self._compare_slot(slot, observed_led, observed_btn)
+        for field_name, expected, actual in mismatches:
+            LOGGER.warning(
+                "Verify mismatch on %s slot %d: %s expected %s, observed %s",
+                state.friendly_name,
+                slot_id,
+                field_name,
+                expected,
+                actual,
+            )
+        self._record_verify_result(
+            ieee, slot_id, observed_led, observed_btn, in_sync=not mismatches
+        )
+        return not mismatches
+
+    @staticmethod
+    def _compare_slot(
+        slot: SlotConfig,
+        observed_led: dict[str, str],
+        observed_btn: dict[str, str],
+    ) -> list[tuple[str, str, str]]:
+        """
+        Compare a desired slot config against observed device-read values.
+
+        Only fields present in the observed payload are checked; a field the
+        firmware could not read is absent and is skipped (unreadable, not a
+        mismatch). Colors are compared case-insensitively without a leading
+        #. Returns a list of (field, expected, actual) mismatches.
+        """
+        # "fixed" is the integration's name for the firmware "programmed"
+        # LED mode, so map it before comparing against the observed value.
+        firmware_mode = "programmed" if slot.led_mode == "fixed" else slot.led_mode
+        mismatches: list[tuple[str, str, str]] = []
+        if "on" in observed_led and not _color_eq(
+            slot.led_on_color, observed_led["on"]
+        ):
+            mismatches.append(("on_color", slot.led_on_color, observed_led["on"]))
+        if "off" in observed_led and not _color_eq(
+            slot.led_off_color, observed_led["off"]
+        ):
+            mismatches.append(("off_color", slot.led_off_color, observed_led["off"]))
+        if "led_mode" in observed_btn and observed_btn["led_mode"] != firmware_mode:
+            mismatches.append(("led_mode", firmware_mode, observed_btn["led_mode"]))
+        if "behavior" in observed_btn and observed_btn["behavior"] != slot.behavior:
+            mismatches.append(("behavior", slot.behavior, observed_btn["behavior"]))
+        return mismatches
+
+    def _record_verify_result(
+        self,
+        ieee: str,
+        slot_id: int,
+        observed_led: dict[str, str],
+        observed_btn: dict[str, str],
+        *,
+        in_sync: bool,
+    ) -> None:
+        """Store the outcome of a verify read for one slot (issue #145)."""
+        self._verify_results[(ieee, slot_id)] = {
+            "in_sync": in_sync,
+            "last_verified": dt_util.utcnow().isoformat(),
+            "observed_on_color": observed_led.get("on"),
+            "observed_off_color": observed_led.get("off"),
+            "observed_led_mode": observed_btn.get("led_mode"),
+            "observed_behavior": observed_btn.get("behavior"),
+        }
+
+    def get_verify_result(self, ieee: str, slot_id: int) -> dict[str, Any] | None:
+        """Return the last verify outcome for a slot, or None if never run."""
+        return self._verify_results.get((ieee, slot_id))
+
+    def _resolve_verify(self, ieee: str, slot_id: Any) -> None:
+        """Resolve the pending verify future for a slot, if any (issue #145)."""
+        try:
+            key = (ieee, int(slot_id))
+        except (TypeError, ValueError):
+            return
+        future = self._pending_verifies.get(key)
+        if future is not None and not future.done():
+            future.set_result(None)
 
     async def _send_slot_commands(self, state: DeviceState, slot: SlotConfig) -> None:
         """Emit the firmware command sequence for a single slot."""
@@ -943,6 +1165,11 @@ _CLICK_COUNT_MAP: dict[int, str] = {
 def _click_count_to_event_type(count: int) -> str:
     """Map a c4.dmx.cc click count to an event_type string."""
     return _CLICK_COUNT_MAP.get(count, f"click_{count}")
+
+
+def _color_eq(a: str, b: str) -> bool:
+    """Compare two hex colors case-insensitively, ignoring a leading #."""
+    return a.lstrip("#").lower() == b.lstrip("#").lower()
 
 
 def _is_control4_device(device_info: dict) -> bool:

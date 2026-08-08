@@ -205,6 +205,26 @@ class Control4ButtonEvent(EventEntity):
         # Derive behavior for backward compat with existing automations
         attrs["behavior"] = _derive_behavior(slot_cfg, device, self._slot_id)
 
+        # Observed (device-read) values and read-back verification status
+        # (issue #145). The attributes above are DESIRED (intent, from the
+        # store); these are OBSERVED (what the device actually reports) plus
+        # whether the last verify pass found them in sync. A None observed
+        # value means the field has not been read yet or the firmware could
+        # not read it.
+        btn_cfg = device.button_configs.get(self._slot_id, {}) if device else {}
+        attrs["observed_on_color"] = (
+            f"#{led_colors['on']}" if "on" in led_colors else None
+        )
+        attrs["observed_off_color"] = (
+            f"#{led_colors['off']}" if "off" in led_colors else None
+        )
+        attrs["observed_led_mode"] = btn_cfg.get("led_mode")
+        attrs["observed_behavior"] = btn_cfg.get("behavior")
+
+        verify = self._manager.get_verify_result(self._ieee, self._slot_id)
+        attrs["in_sync"] = verify["in_sync"] if verify else None
+        attrs["last_verified"] = verify["last_verified"] if verify else None
+
         return attrs
 
     async def async_added_to_hass(self) -> None:

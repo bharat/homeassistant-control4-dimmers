@@ -263,6 +263,25 @@ appropriate contrast.
 | **Keypad Dimmer** (C4-KD120) | 6 (rocker + 4 keypad) | Yes | Button 1 = Toggle Load, 2-6 = Programmable |
 | **Keypad** (C4-KC120277) | 6 (configurable) | No | All Programmable |
 
+### 3-way auxiliary switches
+
+If a dimmer or keypad dimmer shares its light with a second switch that
+has no Zigbee radio of its own (a 3-way setup, e.g. a Control4
+auxiliary keypad), presses on that auxiliary switch are reported by the
+Control4 device it is wired to. Each load-bearing device gets
+two event entities for this, **Auxiliary Up** and **Auxiliary Down**,
+which fire with the same event types as the buttons. They stay
+`unknown` on devices with no auxiliary switch wired. The device's own
+rocker reports through its button entities, not these. Installs from
+before the rename keep their existing `..._paddle_up` /
+`..._paddle_down` entity IDs.
+
+```yaml
+trigger:
+  platform: state
+  entity_id: event.office_hallway_auxiliary_down
+```
+
 ### Troubleshooting
 
 - **Device shows as "Unsupported"**: You are not running the

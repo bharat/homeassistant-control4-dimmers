@@ -91,29 +91,82 @@ This guide walks through moving a C4 device from an existing Control4
 system onto your Zigbee2MQTT mesh. The device retains its LED colors
 from the C4 Director — no manual reconfiguration needed.
 
-### Step 1: Factory reset the device
+> [!NOTE]
+> The core procedure below is maintainer-tested on the C4-APD120,
+> C4-KD120, and C4-KC120277. Join behavior and LED patterns appear to
+> vary across Control4 models and firmware vintages, so observations
+> contributed from other setups are labeled **community report** with
+> the hardware they were seen on. Read those as "this worked for me and
+> might work for you," not as guaranteed behavior.
 
-Press **top 4x** on the device. (The 13-4-13 sequence is an alternative
-full reset.) The LEDs will flash to confirm.
+> [!IMPORTANT]
+> Before you start, have a strong Zigbee router you can place near the
+> device (a mains smart plug works well). Scoping permit-join to a
+> nearby router is the single biggest success factor.
+>
+> **Community report (C4-SW120277, C4-V-ROSW120):** Control4 switches
+> that have already been migrated route traffic for the rest of the
+> mesh, but new C4 devices did not join *through* them; each new device
+> had to join via the coordinator or a portable router placed nearby.
 
-### Step 2: Pair with Zigbee2MQTT
+### Step 1: Open permit-join in Zigbee2MQTT
 
-1. In the Z2M web UI, enable **Permit Join scoped to a strong Zigbee
-   router physically near the device** (a mains smart plug next to the
-   dimmer works well: use the Permit Join dropdown to pick it). Do NOT
-   use unscoped permit-join or a distant router; in practice both fail:
-   the device attempts to associate, flashes its orange retry pattern for
-   a while, and gives up back to unpaired (solid double-green).
-2. The device should appear within 30 seconds of the reset taps.
-3. **The interview completes successfully.** C4 devices fail standard
+In the Z2M web UI, enable **Permit Join scoped to a strong Zigbee
+router physically near the device** (a mains smart plug next to the
+dimmer works well: use the Permit Join dropdown to pick it). Do NOT
+use unscoped permit-join or a distant router; in practice both fail:
+the device attempts to associate, flashes its orange/yellow retry
+pattern, and gives up back to unpaired (solid green).
+
+Open permit-join **before** resetting the device in Step 2. The device
+only searches for a network for a limited time after the reset taps.
+
+### Step 2: Factory reset the device
+
+Press **top 4x** on the device. This removes it from Control4 and
+starts the search for a new network in one go; no controller-side
+action is needed. (The 13-4-13 sequence is an alternative full reset.)
+The LEDs flash to confirm, then blink orange/yellow while searching.
+
+> [!WARNING]
+> **Community report (C4-SW120277, C4-V-ROSW120): flashing lights.**
+> When the device finished joining, it rebooted and the connected light
+> flashed several times before settling on. The flashing could trigger
+> photosensitive epilepsy, so consider keeping anyone sensitive to
+> flashing lights out of the room (or covering the fixture) while you
+> pair.
+
+### Step 3: Pair with Zigbee2MQTT
+
+1. The device should appear in Z2M within 30 seconds of the reset taps.
+2. **The interview completes successfully.** C4 devices fail standard
    genBasic reads, but the herdsman fork identifies them from the node
    descriptor and finishes the interview: the device gets model
    **C4-Zigbee**, manufacturer **Control4**, and mains power set
    automatically.
-4. Z2M shows the device as **natively supported** with model
+3. Z2M shows the device as **natively supported** with model
    **C4-Zigbee**.
 
-### Step 3: Auto-detection (automatic)
+If the device never appears and the LEDs settle back to solid green,
+the search gave up. Check that permit-join is still open and scoped to
+a router near the device, then press top 4x again.
+
+LED patterns observed so far (community-reported rows noted; your
+hardware may differ):
+
+| LEDs | Meaning | Seen on |
+|------|---------|---------|
+| All solid green | Unpaired, not searching | All models tested so far |
+| Blinking orange/yellow | Searching for a network | All models tested so far |
+| Orange/yellow, then briefly red, then solid green | Search gave up | Community report: C4-SW120277, C4-V-ROSW120 |
+| Fast green blink, then the device reboots | Joined | Community report: C4-SW120277, C4-V-ROSW120 |
+
+After a successful join the LEDs reflect the device's state and stored
+programming (the device keeps its LED configuration from the C4
+Director). For example, a dimmer controlling a load that is off shows
+its off LED color.
+
+### Step 4: Auto-detection (automatic)
 
 Device type detection happens automatically — both at pairing time
 (via Z2M's `configure` step) and when the HA integration starts (for
@@ -139,7 +192,7 @@ mosquitto_pub -t 'zigbee2mqtt/DEVICE_NAME/set' -m '{"c4_detect": true}'
 
 Detection also reads stored LED colors from the device firmware.
 
-### Step 4: Rename in Z2M (do this BEFORE reloading HA)
+### Step 5: Rename in Z2M (do this BEFORE reloading HA)
 
 Give the device a friendly name in Z2M (About tab → click the edit
 icon next to the IEEE address). For example: "Kitchen", "Kitchen
@@ -150,7 +203,7 @@ entities with hex addresses.
 The integration uses Z2M's light entity (MQTT+ approach), so the
 device's Z2M name becomes the light entity name (e.g., `light.kitchen`).
 
-### Step 5: Reload the HA integration
+### Step 6: Reload the HA integration
 
 Go to **Settings → Devices & Services → Control4 Dimmers → ⋮ → Reload**.
 This ensures the integration picks up the new device with its friendly
@@ -161,7 +214,7 @@ dropdown.
 > subsequent devices may require an explicit reload. When in doubt,
 > reload after renaming each new device.
 
-### Step 6: Configure in the card editor
+### Step 7: Configure in the card editor
 
 There are two card types:
 
@@ -229,9 +282,12 @@ appropriate contrast.
   `{"c4_detect": true}` manually, or override with the
   `set_device_type` service.
 
-- **Pairing fails (orange flashing, then back to unpaired)**: Scope
-  permit-join to a strong Zigbee router physically near the device.
-  Unscoped permit-join and distant routers both reliably fail.
+- **Pairing fails (orange/yellow blinking, then back to solid green,
+  unpaired)**: Open permit-join before pressing top 4x, and scope it to
+  a strong Zigbee router physically near the device. Unscoped
+  permit-join and distant routers both reliably fail. See
+  [Step 3](#step-3-pair-with-zigbee2mqtt) for the LED patterns observed
+  so far.
 
 - **LED colors not changing**: Make sure you clicked **Save** in the card
   editor. Colors are pushed to the device firmware via `c4.dmx.led`

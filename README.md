@@ -77,10 +77,27 @@ This guide walks through moving a C4 device from an existing Control4
 system onto your Zigbee2MQTT mesh. The device retains its LED colors
 from the C4 Director — no manual reconfiguration needed.
 
-### Step 1: Factory reset the device
+>[!Important]
+> Before you start make sure you have a portable Zigbee router (such as a mains smart plug or a smart lightbulb on a portable stand). Currently you cannot pair other Zigbee Products using these switches, but you can use them as a bridge for the portable router.
+
+### Step 1: Un-pair the device from Control 4
+
+There are two ways to un-pair the device from Control 4
+
+## Physically
 
 Press **top 4x** on the device. (The 13-4-13 sequence is an alternative
 full reset.) The LEDs will flash to confirm.
+
+## Through the control 4 composer pro app
+
+1. Get the [Control4 Jailbreak](https://github.com/black-ops-drivers/Control4.Jailbreak) app and follow the instructions there
+2. Once you have the composer open and connected to your Control4 system, click Connections > Network > Zigbee network
+3. Click a light switch you want to disconnect then press the disconnect button at the top of the screen and confirm the prompt
+4. Alternately you can press the disconnect all button to disconnect all of the Zigbee devices at the same time
+
+>[!WARNING]
+> Do NOT press disconnect all if you have Control4 devices that are not supported by this integration. Look at the [supported devices list](#supported-devices)
 
 ### Step 2: Pair with Zigbee2MQTT
 

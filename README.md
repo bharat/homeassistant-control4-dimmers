@@ -42,14 +42,14 @@ factory reset sequence: press top 13x, bottom 4x, top 13x.
 
 ### Other Control4 Zigbee Products
 
-| Model | Type | Status | Device type | Potential testers |
-| ------- | ------ | ------- | -------- | -------- |
-| C4-V-ROSW120 | Outlet (on/off) | **Not supported**: It joins, but Z2M reports it as unsupported. Raw `genOnOff` commands on endpoint 1 do switch it | Router | @vemboy200 |
-| C4-SR-260 | TV remote | **Unknown** | End Device | @vemboy200 |
-| C4-SR-250 | TV remote | **Unknown** | End Device | Unknown |
-| C4-THERM | Thermostat | **Unknown** | Mixed | Unknown |
+| Model | Type | Status | Device type |
+| ------- | ------ | ------- | -------- |
+| C4-V-ROSW120 | Outlet (on/off) | **Not supported**: It joins, but Z2M reports it as unsupported. Raw `genOnOff` commands on endpoint 1 do switch it | Router |
+| C4-SR-260 | TV remote | **Unknown** | End Device |
+| C4-SR-250 | TV remote | **Unknown** | End Device |
+| C4-THERM | Thermostat | **Unknown** | Mixed (battery or 24VAC powered) |
 
-These devices are not Control4 dimmers but they all use the zigbee protocol. If you have one of these devices, it is recommended you report your experience with it and help expand the capabilities of this integration.
+These devices are not Control4 dimmers, but they all use Zigbee. If you have one of these devices, it is recommended you report your experience with it and help expand the capabilities of this integration.
 
 ## Prerequisites
 

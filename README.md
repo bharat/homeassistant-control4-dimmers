@@ -27,15 +27,29 @@ Pairs with a Zigbee2MQTT stack that speaks the Control4 protocol natively
 
 ## Supported Devices
 
+### Wall switches
+
 | Model | Type | Dimming | LED Control | Buttons | Status |
 |-------|------|:---:|:---:|:---:|--------|
 | C4-APD120 | Adaptive Phase Dimmer | Yes | Yes | 2 (rocker) | **Confirmed** |
 | C4-KD120 | Keypad Dimmer | Yes | Yes | 6 (rocker + keypad) | **Confirmed** |
 | C4-KC120277 | Configurable Keypad | N/A | Yes | 6 (configurable slots) | **Confirmed** |
+| C4-SW120277 | Switch (on/off) | No | Untested | 2 (rocker) | **Partial**: on/off works, but it is detected as a keypad dimmer, so HA shows a brightness slider that does nothing |
 
 All newer Control4 Zigbee devices with manufacturer ID `43981` (`0xABCD`) are
 expected to work. To move a device to a new Zigbee mesh, use the **13-4-13**
 factory reset sequence: press top 13x, bottom 4x, top 13x.
+
+### Other Control4 Zigbee Products
+
+| Model | Type | Status | Device type |
+| ------- | ------ | ------- | -------- |
+| C4-V-ROSW120 | Outlet (on/off) | **Not supported**: It joins, but Z2M reports it as unsupported. Raw `genOnOff` commands on endpoint 1 do switch it | Router |
+| C4-SR-260 | TV remote | **Unknown** | End Device |
+| C4-SR-250 | TV remote | **Unknown** | End Device |
+| C4-THERM | Thermostat | **Unknown** | Mixed (battery or 24VAC powered) |
+
+These devices are not Control4 dimmers, but they all use Zigbee. If you have one of these devices, it is recommended you report your experience with it and help expand the capabilities of this integration.
 
 ## Prerequisites
 

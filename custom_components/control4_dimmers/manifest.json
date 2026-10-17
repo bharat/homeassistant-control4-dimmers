@@ -1,6 +1,6 @@
 {
   "domain": "control4_dimmers",
-  "name": "Control4 Dimmers",
+  "name": "Control4 Zigbee",
   "codeowners": ["@bharat"],
   "config_flow": true,
   "dependencies": ["mqtt", "http"],

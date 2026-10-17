@@ -1,4 +1,4 @@
-# Control4 Dimmers for Home Assistant
+# Control4 Zigbee for Home Assistant
 
 [![Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml?query=branch%3Amain)
 [![Validate](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml?query=branch%3Amain)
@@ -206,7 +206,7 @@ device's Z2M name becomes the light entity name (e.g., `light.kitchen`).
 
 ### Step 6: Reload the HA integration
 
-Go to **Settings → Devices & Services → Control4 Dimmers → ⋮ → Reload**.
+Go to **Settings → Devices & Services → Control4 Zigbee → ⋮ → Reload**.
 This ensures the integration picks up the new device with its friendly
 name. The device should now appear in the Control4 Dimmers card editor
 dropdown.

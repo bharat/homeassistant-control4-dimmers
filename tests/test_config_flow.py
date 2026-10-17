@@ -37,7 +37,7 @@ async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
         user_input={CONF_MQTT_TOPIC: "zigbee2mqtt"},
     )
     assert result2["type"] is FlowResultType.CREATE_ENTRY
-    assert result2["title"] == "Control4 Dimmers"
+    assert result2["title"] == "Control4 Zigbee"
     assert result2["data"][CONF_MQTT_TOPIC] == "zigbee2mqtt"
 
 

@@ -2,14 +2,14 @@
   "config": {
     "step": {
       "user": {
-        "description": "Configure Control4 Dimmers integration. The MQTT topic should match your Zigbee2MQTT base topic.",
+        "description": "Configure Control4 Zigbee integration. The MQTT topic should match your Zigbee2MQTT base topic.",
         "data": {
           "mqtt_topic": "MQTT Base Topic"
         }
       }
     },
     "abort": {
-      "already_configured": "Control4 Dimmers is already configured."
+      "already_configured": "Control4 Zigbee is already configured."
     }
   }
 }

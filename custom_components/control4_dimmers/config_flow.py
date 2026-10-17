@@ -23,7 +23,7 @@ class Control4DimmersFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(DOMAIN)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title="Control4 Dimmers",
+                title="Control4 Zigbee",
                 data=user_input,
             )
 

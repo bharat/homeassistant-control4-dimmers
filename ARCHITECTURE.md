@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the architecture of the Control4 Dimmers integration
+This document describes the architecture of the Control4 Zigbee integration
 for Home Assistant, covering the full data flow from Zigbee wire protocol
 through to the Lovelace card.
 

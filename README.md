@@ -268,7 +268,8 @@ appropriate contrast.
 If a dimmer or keypad dimmer shares its light with a second switch that
 has no Zigbee radio of its own (a 3-way setup, e.g. a Control4
 auxiliary keypad), presses on that auxiliary switch are reported by the
-Control4 device it is wired to. Each load-bearing device gets
+Control4 device it is wired to. The easiest way to tell an auxiliary
+switch apart is that it has no LEDs. Each load-bearing device gets
 two event entities for this, **Auxiliary Up** and **Auxiliary Down**,
 which fire with the same event types as the buttons. They stay
 `unknown` on devices with no auxiliary switch wired. The device's own

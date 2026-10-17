@@ -104,10 +104,10 @@ from the C4 Director — no manual reconfiguration needed.
 > device (a mains smart plug works well). Scoping permit-join to a
 > nearby router is the single biggest success factor.
 >
-> **Community report (C4-SW120277, C4-V-ROSW120):** Control4 switches
-> that have already been migrated route traffic for the rest of the
-> mesh, but new C4 devices did not join *through* them; each new device
-> had to join via the coordinator or a portable router placed nearby.
+> **Community report (C4-APD120):** Control4 devices that have already
+> been migrated route traffic for the rest of the mesh, but new C4
+> devices did not join *through* them; each new device had to join via
+> the coordinator or a portable router placed nearby.
 
 ### Step 1: Open permit-join in Zigbee2MQTT
 
@@ -129,7 +129,8 @@ action is needed. (The 13-4-13 sequence is an alternative full reset.)
 The LEDs flash to confirm, then blink orange/yellow while searching.
 
 > [!WARNING]
-> **Community report (C4-SW120277, C4-V-ROSW120): flashing lights.**
+> **Community report (C4-APD120, C4-KD120, C4-SW120277, migrated from
+> a Director-programmed system): flashing lights.**
 > When the device finished joining, it rebooted and the connected light
 > flashed several times before settling on. The flashing could trigger
 > photosensitive epilepsy, so consider keeping anyone sensitive to
@@ -158,8 +159,8 @@ hardware may differ):
 |------|---------|---------|
 | All solid green | Unpaired, not searching | All models tested so far |
 | Blinking orange/yellow | Searching for a network | All models tested so far |
-| Orange/yellow, then briefly red, then solid green | Search gave up | Community report: C4-SW120277, C4-V-ROSW120 |
-| Fast green blink, then the device reboots | Joined | Community report: C4-SW120277, C4-V-ROSW120 |
+| Orange/yellow, then briefly red, then solid green | Search gave up | Community report: C4-APD120, C4-KD120, C4-SW120277 (migrated from a Director-programmed system) |
+| Fast green blink, then the device reboots | Joined | Community report: C4-APD120, C4-KD120, C4-SW120277 (migrated from a Director-programmed system) |
 
 After a successful join the LEDs reflect the device's state and stored
 programming (the device keeps its LED configuration from the C4

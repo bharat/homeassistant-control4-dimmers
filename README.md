@@ -101,20 +101,22 @@ full reset.) The LEDs will flash to confirm.
 
 ### Step 2: Pair with Zigbee2MQTT
 
-1. In the Z2M web UI, enable **Permit Join scoped to a strong Zigbee
-   router physically near the device** (a mains smart plug next to the
-   dimmer works well: use the Permit Join dropdown to pick it). Do NOT
-   use unscoped permit-join or a distant router; in practice both fail:
-   the device attempts to associate, flashes its orange retry pattern for
-   a while, and gives up back to unpaired (solid double-green).
-2. The device should appear within 30 seconds of the reset taps.
-3. **The interview completes successfully.** C4 devices fail standard
-   genBasic reads, but the herdsman fork identifies them from the node
-   descriptor and finishes the interview: the device gets model
-   **C4-Zigbee**, manufacturer **Control4**, and mains power set
-   automatically.
-4. Z2M shows the device as **natively supported** with model
-   **C4-Zigbee**.
+> [!WARNING]
+> **Flashing lights.** When the device finishes joining, it reboots and the connected light turns off, flashes a few times, briefly turns on and off again, and then stays on. Z2M sends no on/off commands during this, so it appears to be the device's own firmware. The flashing could trigger photosensitive epilepsy, so keep anyone sensitive to flashing lights out of the room (or cover the fixture) while you pair.
+
+1. Place your portable Zigbee router near the device. In the Z2M web UI, open **Permit Join** and use its dropdown to scope it to that router. Do NOT use unscoped permit-join or a distant router; in practice both fail.
+2. Press **top 4x** on the device. All LEDs blink yellow/orange while it searches for a network. It only searches for a short time, which is why permit-join has to be open first.
+3. When it joins, all LEDs blink green quickly and the device reboots itself (this is when the light flashes). This usually happens within 30 seconds of the taps.
+4. Z2M interviews the device. C4 devices fail standard genBasic reads, but the herdsman fork identifies them from the node descriptor and finishes the interview: the device shows up as **natively supported** with model **C4-Zigbee**, manufacturer **Control4**, and mains power set automatically.
+
+If the LEDs go from yellow/orange to red and then back to solid green, the search gave up without joining. Check that permit-join is still open and the router is close, then press top 4x again.
+
+| LEDs | Meaning |
+|------|---------|
+| All solid green | Unpaired, not searching |
+| All blinking yellow/orange | Searching for a network |
+| Yellow/orange, then red, then solid green | Search gave up |
+| Fast green blink on all, then a reboot | Joined |
 
 ### Step 3: Auto-detection (automatic)
 

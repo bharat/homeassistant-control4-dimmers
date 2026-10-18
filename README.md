@@ -266,15 +266,19 @@ appropriate contrast.
 ### 3-way auxiliary switches
 
 If a dimmer or keypad dimmer shares its light with a second switch that
-has no Zigbee radio of its own (a 3-way setup, e.g. a Control4
-auxiliary keypad), presses on that auxiliary switch are reported by the
-Control4 device it is wired to. The easiest way to tell an auxiliary
-switch apart is that it has no LEDs. Each load-bearing device gets
-two event entities for this, **Auxiliary Up** and **Auxiliary Down**,
-which fire with the same event types as the buttons. They stay
-`unknown` on devices with no auxiliary switch wired. The device's own
-rocker reports through its button entities, not these. Installs from
-before the rename keep their existing `..._paddle_up` /
+has no Zigbee radio of its own (a 3-way setup with a Control4
+[Auxiliary Keypad, C4-KA](https://docs.control4.com/docs/product/auxiliary-keypad/data-sheet/english/latest/auxiliary-keypad-data-sheet-rev-a.pdf)),
+the auxiliary talks to the Control4 device over the 3-way wiring, and
+that device reports the presses. The easiest way to tell an auxiliary
+apart is that it has no LEDs.
+
+Each load-bearing device gets two event entities for this, **Auxiliary
+Up** and **Auxiliary Down**, which fire with the same event types as
+the buttons. They stay `unknown` on devices with no auxiliary wired.
+The device's own rocker reports through its button entities, not
+these. Up to ten auxiliaries can share one device, and they all report
+identically, so there is no way to tell which one was pressed. Installs
+from before the rename keep their existing `..._paddle_up` /
 `..._paddle_down` entity IDs.
 
 ```yaml

@@ -185,6 +185,34 @@ class TestManagerEventCallbacks:
         manager._dispatch_button_action(dimmer_state, "button_3_click_2")
         cb.assert_called_once_with("double_tap")
 
+    def test_dimmer_bottom_button_maps_to_bottom_slot(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        # The dimmer's bottom half reports as button 6; its slot (and LED) is 5.
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        bottom = MagicMock()
+        sixth = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 5, bottom)
+        manager.register_event_callback(IEEE_DIMMER, 6, sixth)
+        manager._dispatch_button_action(dimmer_state, "button_6_press")
+        manager._dispatch_button_action(dimmer_state, "button_6_release")
+        manager._dispatch_button_action(dimmer_state, "button_6_click_2")
+        assert [c.args[0] for c in bottom.call_args_list] == [
+            "pressed",
+            "released",
+            "double_tap",
+        ]
+        sixth.assert_not_called()
+
+    def test_keypad_button_6_not_remapped(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        manager._devices[keypad_state.ieee_address] = keypad_state
+        cb = MagicMock()
+        manager.register_event_callback(keypad_state.ieee_address, 6, cb)
+        manager._dispatch_button_action(keypad_state, "button_6_release")
+        cb.assert_called_once_with("released")
+
     def test_unsubscribe_event_callback(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:

@@ -294,6 +294,33 @@ appropriate contrast.
   editor. Colors are pushed to the device firmware via `c4.dmx.led`
   commands on save — they persist across power cycles.
 
+- **Some button LEDs look dimmer than others at the same color**:
+  Community report (observed across a large migrated fleet of dimmers,
+  switches, and keypads): LED brightness appears to track load state.
+  On dimmers and switches, an LED that is lit while the light is off
+  shows dimmer than the same LED lit while the light is on. On keypads
+  it is similar: buttons tied to an actual light have a brighter LED
+  than buttons that run custom actions, such as a programmable button
+  driven by a Home Assistant automation. In that report, changing the
+  LED mode (fixed, push/release, or follow load) or color did not
+  change the behavior, and there is no known brightness command.
+
+  Before concluding you are seeing this limitation, compare the
+  button's stored on-state and off-state colors (visible in the card
+  editor, or via the `set_led` / `set_slot_led` services): the firmware
+  keeps separate colors per state, and a dim stored off-color looks
+  identical to this symptom but is fixable by setting both states to
+  the same value.
+
+  The LEDs also have no color correction: each color channel runs at
+  the value you set, so mixed colors can look slightly different
+  between two LEDs on the same device, and `ffffff` (white) tends to look
+  greenish rather than white. The dimming described above makes this
+  more noticeable: the same mixed color shown on one LED at the dimmer
+  level and at the brighter level (the same LED with its light off and
+  then on) can look like two slightly different shades. Single-channel
+  colors such as `0000ff` (blue) look the most consistent.
+
 - **Buttons don't control the light**: Verify the button's mode is
   set to **Load Control** (not Programmable). The integration uses
   the Z2M light entity for load control.

@@ -21,7 +21,11 @@ from custom_components.control4_dimmers.models import (
     DeviceState,
     SlotConfig,
 )
-from custom_components.control4_dimmers.sensor import Control4DeviceSensor
+from custom_components.control4_dimmers.sensor import (
+    Control4AmbientLightSensor,
+    Control4AuditSensor,
+    Control4DeviceSensor,
+)
 
 from .conftest import IEEE_DIMMER, IEEE_KEYPAD
 
@@ -368,3 +372,57 @@ class TestControl4DeviceSensor:
         entity.async_write_ha_state = MagicMock()
         entity._on_manager_update()
         entity.async_write_ha_state.assert_called_once()
+
+
+# ── Push-only entities ───────────────────────────────────────────────
+
+
+class TestEntitiesDoNotPoll:
+    """
+    Every entity is push-based and must say so.
+
+    The entity platform arms a scan-interval timer as soon as one added
+    entity reports should_poll, and the audit sensor is added on every
+    entry setup. Leaving the default would make the whole integration
+    poll for nothing and leave that timer behind on unload.
+    """
+
+    def test_sensor_entities_do_not_poll(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        entities = [
+            Control4AuditSensor(manager, "entry1"),
+            Control4DeviceSensor(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+            ),
+            Control4AmbientLightSensor(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+            ),
+        ]
+        assert [entity.should_poll for entity in entities] == [False] * 3
+
+    def test_event_entities_do_not_poll(self, manager: Control4Manager) -> None:
+        entities = [
+            Control4ButtonEvent(
+                manager=manager,
+                ieee_address=IEEE_KEYPAD,
+                friendly_name="Theater",
+                model_id="C4-KC120277",
+                slot_id=1,
+            ),
+            Control4PaddleEvent(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+                paddle_id="paddle_up",
+            ),
+        ]
+        assert [entity.should_poll for entity in entities] == [False] * 2

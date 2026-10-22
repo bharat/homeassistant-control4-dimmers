@@ -80,6 +80,9 @@ async def async_setup_entry(
 class Control4DeviceSensor(SensorEntity):
     """Sensor entity representing a Control4 device (anchor)."""
 
+    # Push-based: the manager listener below writes state. Without this
+    # the entity platform arms a scan-interval timer for nothing.
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_name = None
 
@@ -144,6 +147,7 @@ class Control4DeviceSensor(SensorEntity):
 class Control4AmbientLightSensor(SensorEntity):
     """Sensor entity for the device's ambient light level."""
 
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_name = "Ambient Light"
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
@@ -200,8 +204,14 @@ class Control4AuditSensor(SensorEntity):
     stalest verified device and its age, the out-of-sync slots, and the
     sweep's settings, so coverage holes are visible at a glance instead of
     only on the per-button event entities.
+
+    Push-based: the manager notifies listeners after every audit pass and
+    on every device change, so the entity never needs polling. This sensor
+    is added on every entry setup, so leaving should_poll at its default
+    would arm the sensor platform's scan-interval timer unconditionally.
     """
 
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_name = "Config audit never verified"
     _attr_entity_category = EntityCategory.DIAGNOSTIC

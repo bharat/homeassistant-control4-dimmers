@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -84,7 +85,16 @@ async def test_single_instance_only(hass: HomeAssistant) -> None:
 
 @pytest.mark.asyncio
 async def test_options_flow_sets_audit_settings(hass: HomeAssistant) -> None:
-    """The options flow stores the audit interval and mode on the entry."""
+    """
+    The options flow stores the audit settings and reloads the entry.
+
+    The entry is set up for real because OptionsFlowWithReload schedules a
+    reload on submit, and that reload runs the sensor and event platforms.
+    The skip_mqtt flag (same convention as test_init.py) keeps the manager
+    off the broker, and unloading at the end is what keeps the platforms
+    from leaving timers behind after the test.
+    """
+    hass.data[f"{DOMAIN}_skip_mqtt"] = True
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Control4 Dimmers",
@@ -92,6 +102,9 @@ async def test_options_flow_sets_audit_settings(hass: HomeAssistant) -> None:
         unique_id=DOMAIN,
     )
     entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
@@ -111,3 +124,16 @@ async def test_options_flow_sets_audit_settings(hass: HomeAssistant) -> None:
         CONF_AUDIT_INTERVAL: 30,
         CONF_AUDIT_MODE: AUDIT_MODE_REPORT,
     }
+
+    # Let the scheduled reload finish, then check the new manager sees
+    # the options rather than the original entry data.
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    manager = hass.data[DOMAIN][entry.entry_id]["manager"]
+    assert manager.mqtt_topic == "z2m"
+    assert manager.audit_interval == 30
+    assert manager.audit_mode == AUDIT_MODE_REPORT
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED

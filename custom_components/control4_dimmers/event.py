@@ -132,6 +132,8 @@ def _behavior_from_action(tap_action: dict) -> str:
 class Control4ButtonEvent(EventEntity):
     """Event entity representing a button press on a Control4 device."""
 
+    # Push-based: the manager fires events into this entity directly.
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types = BUTTON_EVENT_TYPES
@@ -307,6 +309,7 @@ class Control4ButtonEvent(EventEntity):
 class Control4PaddleEvent(EventEntity):
     """Event entity for a local load paddle half on a load-bearing device."""
 
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types = BUTTON_EVENT_TYPES

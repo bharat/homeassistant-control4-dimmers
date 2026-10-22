@@ -413,6 +413,25 @@ data:
   ieee_address: "0x000fff0000ccc001"
 ```
 
+### `control4_dimmers.audit_config`
+
+Read every stored slot of a device back right now and compare the
+stored intent against both Zigbee2MQTT's cached button state and the
+device firmware. This is the same pass the periodic audit sweep runs
+(see [Config audit sweep](#config-audit-sweep)). The evidence is
+logged before any re-push. Pass `mode: report` to read without
+re-pushing, which preserves the evidence of a drift so you can inspect
+it before healing with `push_config`. Returns the pass summary,
+including every mismatched field with its store, cache, and firmware
+values and the layer that drifted.
+
+```yaml
+service: control4_dimmers.audit_config
+data:
+  entity_id: sensor.entry_keypad
+  mode: report
+```
+
 ### Snapshot and restore
 
 Four actions let you take a reversible checkpoint of a device's stored
@@ -578,6 +597,59 @@ the same manufacturer ID. The device definition uses a single
 | `01` | C4-APD120 | Forward-phase dimmer (2 buttons) |
 | `02` | C4-KD120 | Reverse-phase keypad dimmer (6 buttons + load) |
 | error/timeout | C4-KC120277 | Pure keypad (6 buttons, no load) |
+
+### Config audit sweep
+
+Writes to a slot are verified by reading the slot back (the
+`in_sync` / `observed_*` / `last_verified` attributes on each button
+event entity). That verification is write-triggered, so a device nothing
+writes to is never checked and can drift unnoticed. The audit sweep
+closes that gap with a rolling schedule: every N minutes the integration
+picks the single device whose stored config has gone the longest without
+verification (never-verified devices first) and reads back every one of
+its slots. Worst-case staleness is bounded by the interval times the
+device count, and the mesh never sees a burst. Reads use the same
+per-device pacing and serialization as config pushes, and a device with
+a config push in flight is skipped until the next tick.
+
+Each slot is compared three ways:
+
+| Layer | What it is |
+|-------|------------|
+| store | The integration's persisted intent (what you configured) |
+| cache | Zigbee2MQTT's cached `button_N_behavior` / `button_N_led_mode` / LED colors, as last published. The converter consults the cached behavior on every press, so a stale cache misbehaves even when the firmware is right |
+| firmware | What the device answers to a read-back query |
+
+A mismatch is logged at WARNING level before anything is re-pushed, one
+line per field, in a greppable form:
+
+```
+Audit mismatch device=Entry ieee=0x000fff0000caa8e7 slot=1 field=behavior store=toggle_load cache=load_off firmware=toggle_load layer=cache mode=heal
+Audit verdict device=Entry ieee=0x000fff0000caa8e7 slot=1 layer=cache fields=behavior mode=heal
+```
+
+`layer` names where the drift lives: `cache` (firmware is right, Z2M's
+cached state is stale), `firmware` (Z2M agrees with the store, the
+device does not), or `both`. A value of `absent` means that layer had
+no reading for the field: for the cache, the integration has not seen
+Zigbee2MQTT publish that key since Home Assistant started (the cache is
+observed as a mirror of Z2M's published state, not queried directly).
+
+In the default **heal** mode a mismatch is re-pushed once and read
+again, exactly like the write-triggered loop; a mismatch that survives
+is logged as an ERROR. In **report** mode nothing is re-pushed. Both the
+interval (default 10 minutes, 0 disables) and the mode are set from the
+integration's **Configure** dialog in Settings > Devices & services.
+
+Coverage is visible at a glance on the diagnostic sensor
+`sensor.config_audit_never_verified`: its state is the number of devices
+that have not had every slot verified since Home Assistant started, and
+its attributes list those devices, the stalest verified device and its
+age in minutes, any slots currently out of sync, and the next device the
+sweep will pick. Each button event entity also reports `verified_by`
+(`write` or `audit`) and `diverged_layer` from its last verification.
+Verification state is in memory only, so after a restart every device
+starts as never verified and the sweep works through them in order.
 
 ## Development
 

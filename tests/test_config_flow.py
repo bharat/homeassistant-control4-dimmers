@@ -8,7 +8,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.control4_dimmers.const import CONF_MQTT_TOPIC, DOMAIN
+from custom_components.control4_dimmers.const import (
+    AUDIT_MODE_REPORT,
+    CONF_AUDIT_INTERVAL,
+    CONF_AUDIT_MODE,
+    CONF_MQTT_TOPIC,
+    DOMAIN,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -74,3 +80,34 @@ async def test_single_instance_only(hass: HomeAssistant) -> None:
     )
     assert result2["type"] is FlowResultType.ABORT
     assert result2["reason"] == "already_configured"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_sets_audit_settings(hass: HomeAssistant) -> None:
+    """The options flow stores the audit interval and mode on the entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Control4 Dimmers",
+        data={CONF_MQTT_TOPIC: "zigbee2mqtt"},
+        unique_id=DOMAIN,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_MQTT_TOPIC: "z2m",
+            CONF_AUDIT_INTERVAL: 30.0,
+            CONF_AUDIT_MODE: AUDIT_MODE_REPORT,
+        },
+    )
+    assert result2["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {
+        CONF_MQTT_TOPIC: "z2m",
+        CONF_AUDIT_INTERVAL: 30,
+        CONF_AUDIT_MODE: AUDIT_MODE_REPORT,
+    }

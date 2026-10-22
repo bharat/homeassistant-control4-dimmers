@@ -228,6 +228,11 @@ class Control4ButtonEvent(EventEntity):
         verify = self._manager.get_verify_result(self._ieee, self._slot_id)
         attrs["in_sync"] = verify["in_sync"] if verify else None
         attrs["last_verified"] = verify["last_verified"] if verify else None
+        # Which loop produced the last verify ("write" or "audit") and, for
+        # an audit mismatch, which layer diverged from the stored intent
+        # (cache / firmware / both) (issue #199).
+        attrs["verified_by"] = verify.get("verified_by") if verify else None
+        attrs["diverged_layer"] = verify.get("diverged_layer") if verify else None
 
         return attrs
 

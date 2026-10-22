@@ -90,7 +90,8 @@ MQTT topics and manages HA entities.
 
 | Module | Responsibility |
 |--------|---------------|
-| `manager.py` | MQTT subscription, device discovery, state tracking, event dispatch |
+| `manager.py` | MQTT subscription, device discovery, state tracking, event dispatch, read-back verification, periodic config audit sweep |
+| `audit.py` | Pure helpers for the audit sweep: three-way drift classification (store / Z2M cache / firmware) and stalest-device ordering |
 | `store.py` | Persistent storage (`.storage/`) for device configs |
 | `models.py` | Data models: `DeviceConfig`, `DeviceState`, `SlotConfig` |
 | `sensor.py` | Sensor anchor entity (device representation) |
@@ -197,6 +198,17 @@ slot (or defaults), then routing the full slot list through
 
 Re-push a device's stored config to firmware and re-run LED tracking
 without mutating the store (`manager.async_push_config`).
+
+### `control4_dimmers.audit_config`
+
+Run the periodic audit sweep's pass on one device now: read every
+stored slot back, compare store vs Z2M cache vs firmware, log the
+evidence, then heal (or only report with `mode: report`). The sweep
+itself runs from `Control4Manager.start_audit_sweep`, picking the
+stalest device every `audit_interval` minutes (entry option, 0 disables)
+and reusing the read-after-write verify machinery, per-device pacing,
+and the single-slot push path. Coverage is exposed on the per-entry
+diagnostic sensor `Control4AuditSensor`.
 
 ### `control4_dimmers.set_led`
 

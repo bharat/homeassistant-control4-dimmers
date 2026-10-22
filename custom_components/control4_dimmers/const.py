@@ -36,6 +36,28 @@ JSMODULES: Final[list[dict[str, str]]] = [
 CONF_MQTT_TOPIC: Final = "mqtt_topic"
 DEFAULT_MQTT_TOPIC: Final = "zigbee2mqtt"
 
+# Periodic config audit sweep (issue #199). Every CONF_AUDIT_INTERVAL
+# minutes the manager picks the device whose stored config has gone the
+# longest without a read-back verify and verifies every one of its slots.
+# 0 disables the sweep. CONF_AUDIT_MODE selects whether a mismatch is
+# re-pushed (heal) or only logged (report).
+CONF_AUDIT_INTERVAL: Final = "audit_interval"
+DEFAULT_AUDIT_INTERVAL: Final = 10
+MAX_AUDIT_INTERVAL: Final = 1440
+CONF_AUDIT_MODE: Final = "audit_mode"
+AUDIT_MODE_HEAL: Final = "heal"
+AUDIT_MODE_REPORT: Final = "report"
+AUDIT_MODES: Final = [AUDIT_MODE_HEAL, AUDIT_MODE_REPORT]
+DEFAULT_AUDIT_MODE: Final = AUDIT_MODE_HEAL
+
+# Which layer an audit found diverged from the stored intent. "cache" is
+# Z2M's cached button_N_* state (what the converter's smart-behavior path
+# consults on a press), "firmware" is the value read back from the device,
+# "both" means both layers disagree with the store.
+DRIFT_LAYER_CACHE: Final = "cache"
+DRIFT_LAYER_FIRMWARE: Final = "firmware"
+DRIFT_LAYER_BOTH: Final = "both"
+
 STORAGE_KEY: Final = "control4_dimmers_devices"
 SNAPSHOT_STORAGE_KEY: Final = "control4_dimmers_snapshots"
 STORAGE_VERSION: Final = 1

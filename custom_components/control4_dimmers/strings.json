@@ -11,5 +11,25 @@
     "abort": {
       "already_configured": "Control4 Dimmers is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Audit sweep: every N minutes the integration reads back the device whose stored config has gone the longest without verification and compares it against the device firmware and Zigbee2MQTT's cached button state. Set the interval to 0 to disable it.",
+        "data": {
+          "mqtt_topic": "MQTT Base Topic",
+          "audit_interval": "Audit sweep interval (minutes, 0 disables)",
+          "audit_mode": "Audit mode"
+        }
+      }
+    }
+  },
+  "selector": {
+    "audit_mode": {
+      "options": {
+        "heal": "Heal: re-push the stored config on mismatch",
+        "report": "Report only: log mismatches, do not re-push"
+      }
+    }
   }
 }

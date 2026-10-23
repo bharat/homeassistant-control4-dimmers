@@ -325,6 +325,29 @@ appropriate contrast.
   set to **Load Control** (not Programmable). The integration uses
   the Z2M light entity for load control.
 
+- **All Control4 devices restart at the same time**: Community report
+  (C4-APD120, C4-KD120 and C4-SW120277 on an Ember coordinator): every
+  device did the LED flash it does after pairing, then came back in its
+  previous on/off state. Nothing left the network, and no command was
+  sent. Each device reported `c4.dmx.warn 00 0000` when it came back.
+
+  It happened during bursts of Zigbee route errors: the Z2M log showed
+  hundreds of `ROUTE_ERROR_MANY_TO_ONE_ROUTE_FAILURE` errors per minute
+  from devices all over the house, meaning they couldn't get messages
+  back to the coordinator. Bursts that lasted a few minutes caused no
+  restarts. In longer bursts, the restarts came about 4 to 20 minutes
+  in. This is the device firmware reacting, so there is nothing to
+  change in the integration.
+
+  In that report, the bursts were caused by 2.4 GHz interference from
+  a single device in the house, and only in one of its operating modes.
+  Changing Wi-Fi channels didn't help. If you see route-error bursts,
+  watch the error rate in the Z2M log while switching off suspect
+  devices one at a time; when the source is switched off, the errors
+  stop within about a minute. See
+  [zigbee2mqtt-control4#3](https://github.com/bharat/zigbee2mqtt-control4/issues/3)
+  for the full investigation.
+
 ## Services
 
 The integration exposes the following service actions you can call

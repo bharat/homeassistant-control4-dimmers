@@ -1,4 +1,4 @@
-# AGENTS.md -- Control4 Dimmers HA Integration
+# AGENTS.md -- Control4 Zigbee HA Integration
 
 This is the canonical agent guide for `bharat/homeassistant-control4-dimmers`. New Claude/Codex/Cursor sessions should read this before making changes. Pair it with `ARCHITECTURE.md`, `PLAN.md`, and `RESEARCH.md` for deeper context.
 
@@ -69,7 +69,7 @@ pre-commit install                                  # If not already done
 
 # HA dashboard: http://localhost:8123
 # Add MQTT integration → broker localhost:1883
-# Add Control4 Dimmers integration → MQTT base topic "zigbee2mqtt"
+# Add Control4 Zigbee integration → MQTT base topic "zigbee2mqtt"
 
 # Tests
 python -m pytest tests/                             # HA component tests
@@ -108,7 +108,7 @@ This integration and the Zigbee-side definition are separate codebases coupled o
 
 ## Releases
 
-Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Dimmers v<YYYY>.<M>.<DD>`. Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape).
+Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Zigbee v<YYYY>.<M>.<DD>`. Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape).
 
 The release workflow (`.github/workflows/release.yml`) auto-creates the GitHub release on `v*` tag push. HACS reads the version from the git tag, not `manifest.json` -- so do not bump `manifest.json`'s `"0.0.0"`.
 

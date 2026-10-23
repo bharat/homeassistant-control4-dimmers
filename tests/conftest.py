@@ -38,7 +38,7 @@ def mock_entry() -> MagicMock:
     """Return a mock ConfigEntry."""
     entry = MagicMock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
-    entry.title = "Control4 Dimmers"
+    entry.title = "Control4 Zigbee"
     entry.data = {"mqtt_topic": "zigbee2mqtt"}
     entry.options = {}
     return entry

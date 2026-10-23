@@ -255,6 +255,13 @@ data:
 | `03` | 4 | Fourth button |
 | `04` | 5 | Bottom rocker (dimmers) / Fifth button |
 | `05` | 6 | Sixth button |
+| `07` | `paddle_up` | 3-way auxiliary switch, top (load-bearing devices only) |
+| `08` | `paddle_down` | 3-way auxiliary switch, bottom (load-bearing devices only) |
+
+`07`/`08` come from a non-Zigbee auxiliary switch wired to the device's
+traveler terminal, not from the device's own rocker, so they only fire on
+devices that have one. HA exposes them as the Auxiliary Up / Auxiliary Down
+event entities.
 
 The translation from 0-based wire IDs to 1-based happens once, in the Z2M
 device definition's `parseButtonEvent()` (in the zigbee-herdsman-converters fork): `wireId = parseInt(hex, 16) + 1`.

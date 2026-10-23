@@ -69,20 +69,24 @@ DEVICE_TYPE_KEYPADDIM: Final = "keypaddim"
 DEVICE_TYPE_KEYPAD: Final = "keypad"
 DEVICE_TYPES: Final = [DEVICE_TYPE_DIMMER, DEVICE_TYPE_KEYPADDIM, DEVICE_TYPE_KEYPAD]
 
-# Device types that drive a local load and therefore have a physical load
-# paddle (issue #117). Pure keypads have no load and get no paddle entities.
+# Device types that drive a local load and can therefore have a 3-way
+# auxiliary switch wired to them (issue #117). Pure keypads have no load and
+# get no auxiliary entities.
 LOAD_BEARING_TYPES: Final = [DEVICE_TYPE_DIMMER, DEVICE_TYPE_KEYPADDIM]
 
 SLOT_COUNT: Final = 6
 
-# Local load paddle halves. These live on a wire-id space (bp 07/08) distinct
-# from the button-array slots and are exposed as paddle_up / paddle_down.
+# Halves of a 3-way auxiliary switch: the non-Zigbee switch wired to the
+# device's traveler terminal so two switches control one load. The device
+# reports its presses on a wire-id space (bp 07/08) distinct from the
+# button-array slots; Z2M exposes them as paddle_up / paddle_down (frozen
+# MQTT contract names). The device's own rocker reports as button slots.
 PADDLE_UP: Final = "paddle_up"
 PADDLE_DOWN: Final = "paddle_down"
 PADDLE_IDS: Final[list[str]] = [PADDLE_UP, PADDLE_DOWN]
 PADDLE_NAMES: Final[dict[str, str]] = {
-    PADDLE_UP: "Paddle Up",
-    PADDLE_DOWN: "Paddle Down",
+    PADDLE_UP: "Auxiliary Up",
+    PADDLE_DOWN: "Auxiliary Down",
 }
 
 DEVICE_TYPE_SLOTS: Final[dict[str, list[int]]] = {

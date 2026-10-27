@@ -25,6 +25,7 @@ from .audit import (
 from .const import (
     AUDIT_MODE_HEAL,
     AUDIT_MODES,
+    BUTTON_EVENT_TYPES,
     C4_MANUFACTURER_NAME,
     CONF_AUDIT_INTERVAL,
     CONF_AUDIT_MODE,
@@ -312,6 +313,17 @@ class Control4Manager:
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""
+        if event_type not in BUTTON_EVENT_TYPES:
+            # Defense in depth (issue #178): an undeclared type makes HA's
+            # EventEntity raise, aborting the MQTT message handler and
+            # dropping the rest of the payload with it.
+            LOGGER.debug(
+                "Dropping undeclared button event type %s for %s slot %s",
+                event_type,
+                ieee,
+                slot_id,
+            )
+            return
         cb = self._event_callbacks.get((ieee, slot_id))
         if cb is not None:
             cb(event_type)
@@ -1716,8 +1728,16 @@ _CLICK_COUNT_MAP: dict[int, str] = {
 
 
 def _click_count_to_event_type(count: int) -> str:
-    """Map a c4.dmx.cc click count to an event_type string."""
-    return _CLICK_COUNT_MAP.get(count, f"click_{count}")
+    """
+    Map a c4.dmx.cc click count to a declared event type.
+
+    The converter passes the firmware's click counter through unclamped, so
+    four or more rapid taps arrive as click_4, click_5, and so on. HA's
+    event entity raises on any type outside BUTTON_EVENT_TYPES, aborting
+    the whole MQTT message handler (issue #178), so clamp to the declared
+    range instead.
+    """
+    return _CLICK_COUNT_MAP[min(max(count, 1), max(_CLICK_COUNT_MAP))]
 
 
 def _color_eq(a: str, b: str) -> bool:

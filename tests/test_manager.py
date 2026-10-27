@@ -87,15 +87,17 @@ class TestClickCountToEventType:
     @pytest.mark.parametrize(
         ("count", "expected"),
         [
+            (0, "single_tap"),
             (1, "single_tap"),
             (2, "double_tap"),
             (3, "triple_tap"),
-            (4, "click_4"),
-            (5, "click_5"),
-            (99, "click_99"),
+            (4, "triple_tap"),
+            (5, "triple_tap"),
+            (99, "triple_tap"),
         ],
     )
     def test_mapping(self, count: int, expected: str) -> None:
+        """Counts outside 1..3 clamp to the declared range (issue #178)."""
         assert _click_count_to_event_type(count) == expected
 
 
@@ -229,6 +231,36 @@ class TestManagerEventCallbacks:
         manager.register_event_callback(IEEE_DIMMER, "paddle_up", cb)
         manager._dispatch_button_action(dimmer_state, "paddle_up_click_2")
         cb.assert_called_once_with("double_tap")
+
+    def test_button_click_4_clamps_to_triple_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Four rapid taps fire triple_tap instead of raising (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager._dispatch_button_action(dimmer_state, "button_1_click_4")
+        cb.assert_called_once_with("triple_tap")
+
+    def test_paddle_click_4_clamps_to_triple_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """The paddle path clamps the same way as buttons (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_down", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_down_click_4")
+        cb.assert_called_once_with("triple_tap")
+
+    def test_fire_button_event_drops_undeclared_type(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """The chokepoint guard drops out-of-grammar types (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager.fire_button_event(IEEE_DIMMER, 1, "click_4")
+        cb.assert_not_called()
 
     def test_paddle_does_not_fire_button_slot(
         self, manager: Control4Manager, dimmer_state: DeviceState

@@ -9,7 +9,7 @@ pyspeex-noise==2.0.1
 PyTurboJPEG==2.5.0
 pip==26.2.1
 ruff==0.17.0
-pre_commit==4.6.2
+pre_commit==4.7.0
 paho-mqtt==2.1.0
 pytest==9.0.3
 pytest-homeassistant-custom-component==0.13.372

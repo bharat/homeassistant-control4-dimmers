@@ -35,6 +35,7 @@ from custom_components.control4_dimmers.const import (
     DRIFT_LAYER_FIRMWARE,
 )
 from custom_components.control4_dimmers.manager import (
+    AUDIT_HEAL_MAX_RETRIES,
     MIN_SEND_INTERVAL,
     Control4Manager,
 )
@@ -672,7 +673,7 @@ class TestAuditPass:
             caplog.at_level(logging.WARNING, logger=LOGGER_NAME),
         ):
             summary = await mgr.async_audit_device(IEEE_A)
-        assert push.call_count == 1
+        assert push.call_count == AUDIT_HEAL_MAX_RETRIES
         assert summary["slots_unhealed"] == 1
         assert any(
             r.levelno == logging.ERROR and "Audit heal failed" in r.getMessage()
@@ -681,6 +682,45 @@ class TestAuditPass:
         res = _result(mgr, IEEE_A, 1)
         assert res["in_sync"] is False
         assert res["diverged_layer"] == DRIFT_LAYER_FIRMWARE
+
+    @pytest.mark.asyncio
+    async def test_dropped_write_heals_on_second_repush_in_same_pass(
+        self, mock_hass: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """
+        A dropped first re-push heals on the second attempt (issue #212).
+
+        The first re-push never reaches firmware (mesh drop); the second
+        one lands. The slot must heal within the same audit pass instead
+        of waiting a full audit interval for the next cycle.
+        """
+        mgr = _build(mock_hass, [IEEE_A], slot_count=1)
+        drifted = _fw_payload(1, behavior="load_off")
+        fake = _FakeDevice(mgr, IEEE_A, {1: drifted})
+        real_push = mgr._push_single_slot
+        calls = 0
+
+        async def flaky_push(state: Any, config: Any, slot_id: int) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return True  # dropped by the mesh: nothing reaches firmware
+            return await real_push(state, config, slot_id)
+
+        with (
+            _fast(),
+            patch.object(mgr, "async_send_mqtt", new=fake.send),
+            patch.object(mgr, "_push_single_slot", new=flaky_push),
+            caplog.at_level(logging.WARNING, logger=LOGGER_NAME),
+        ):
+            summary = await mgr.async_audit_device(IEEE_A)
+        assert calls == 2
+        assert summary["slots_healed"] == 1
+        assert summary["slots_unhealed"] == 0
+        assert not any(r.levelno == logging.ERROR for r in caplog.records)
+        assert any("Audit healed" in r.getMessage() for r in caplog.records)
+        res = _result(mgr, IEEE_A, 1)
+        assert res["in_sync"] is True
 
     @pytest.mark.asyncio
     async def test_unread_slot_counts_and_does_not_record(

@@ -71,6 +71,13 @@ VERIFY_SETTLE_MS = 250
 VERIFY_RETRY_SETTLE_MS = 750
 # One retry only; verification must never turn into a polling loop.
 VERIFY_MAX_RETRIES = 1
+# The audit sweep's heal gets one extra paced re-push (issue #212). The
+# interactive verify path keeps its single retry because the user is
+# waiting on it, but the sweep is a background pass: giving up after one
+# dropped write parks the slot out of sync until the next cycle (up to a
+# full day at MAX_AUDIT_INTERVAL), while a second attempt costs one more
+# VERIFY_RETRY_SETTLE_MS wait. Still strictly bounded.
+AUDIT_HEAL_MAX_RETRIES = 2
 # How long to wait (ms) for the converter's seq-matched read to come back
 # before giving up on a verify pass.
 VERIFY_TIMEOUT_MS = 5000
@@ -1216,10 +1223,11 @@ class Control4Manager:
         if mode != AUDIT_MODE_HEAL:
             return
 
-        # Heal exactly like the read-after-write loop: one bounded re-push,
-        # a longer settle, one more read.
+        # Heal like the read-after-write loop (re-push, longer settle,
+        # read again), but with one extra paced attempt so a single
+        # dropped write does not wait a whole audit cycle for its retry.
         healed = False
-        for _attempt in range(VERIFY_MAX_RETRIES):
+        for _attempt in range(AUDIT_HEAL_MAX_RETRIES):
             await self._push_single_slot(state, config, slot_id)
             await asyncio.sleep(VERIFY_RETRY_SETTLE_MS / 1000)
             async with self._device_lock(self._push_locks, ieee):
@@ -1258,7 +1266,7 @@ class Control4Manager:
                 ieee,
                 slot_id,
                 layer,
-                VERIFY_MAX_RETRIES,
+                AUDIT_HEAL_MAX_RETRIES,
             )
 
     @staticmethod

@@ -116,6 +116,8 @@ const DEVICE_TYPES = {
   dimmer:    { label: "Dimmer",        model: "C4-APD120",   slots: [2, 5],        fixedLayout: true },
   keypaddim: { label: "Keypad Dimmer", model: "C4-KD120",    slots: [1,2,3,4,5,6], fixedLayout: false },
   keypad:    { label: "Keypad",        model: "C4-KC120277", slots: [1,2,3,4,5,6], fixedLayout: false },
+  // Relay-only rocker (issue #189): on/off load, no brightness, bottom half on wire 05.
+  switch:    { label: "Switch",        model: "C4-SW120277", slots: [2, 6],        fixedLayout: true },
 };
 
 const DOMAIN_ICONS = {
@@ -769,11 +771,12 @@ function computeLayout(slotConfigs, deviceType) {
 function defaultSlotsForType(deviceType) {
   const meta = DEVICE_TYPES[deviceType];
   if (!meta) return [];
-  if (deviceType === "dimmer") {
+  if (deviceType === "dimmer" || deviceType === "switch") {
+    const [top, bottom] = meta.slots;
     return [
-      { slot_id: 2, size: 1, name: "Top", behavior: "load_on",
+      { slot_id: top, size: 1, name: "Top", behavior: "load_on",
         led_mode: "follow_load", led_on_color: "ffffff", led_off_color: "000000" },
-      { slot_id: 5, size: 1, name: "Bottom", behavior: "load_off",
+      { slot_id: bottom, size: 1, name: "Bottom", behavior: "load_off",
         led_mode: "follow_load", led_on_color: "000000", led_off_color: "0000ff" },
     ];
   }
@@ -1014,6 +1017,16 @@ class Control4Card extends HTMLElement {
   _findLightEntityId() {
     if (!this._hass || !this._deviceInfo) return null;
     const friendlyName = this._deviceInfo.friendly_name;
+    const ieee = this._deviceInfo.ieee_address;
+    // A relay-only switch owns its load entity (switch.<name>_load); prefer
+    // it over Z2M's light so more-info never shows a brightness slider.
+    if (this._getEffectiveType() === "switch") {
+      for (const [eid, state] of Object.entries(this._hass.states)) {
+        if (eid.startsWith("switch.") && state.attributes?.ieee_address === ieee) {
+          return eid;
+        }
+      }
+    }
     for (const [eid, state] of Object.entries(this._hass.states)) {
       if (eid.startsWith("light.") && state.attributes?.friendly_name === friendlyName) {
         return eid;
@@ -1042,11 +1055,13 @@ class Control4Card extends HTMLElement {
     const devState = dev?.state;
     const brightness = dev?.brightness;
     const hasDimmer = effectiveType === "dimmer" || effectiveType === "keypaddim";
+    const hasLoad = hasDimmer || effectiveType === "switch";
 
     const iconStyle = (() => {
-      if (!hasDimmer) return "";
+      if (!hasLoad) return "";
       if (devState !== "ON") return "color: var(--state-icon-color, #44739e)";
-      const b = brightness != null ? brightness : 254;
+      // A relay-only switch has no brightness: render it at full.
+      const b = hasDimmer && brightness != null ? brightness : 254;
       return `color: var(--state-light-on-color, #f9d27e); filter: brightness(${Math.round((b + 245) / 5)}%)`;
     })();
 
@@ -1061,7 +1076,7 @@ class Control4Card extends HTMLElement {
           <div class="no-entity"><p>Loading...</p></div>
         ` : `
           <div class="card-header">
-            ${hasDimmer ? `<ha-icon class="entity-icon" icon="mdi:lightbulb" style="${iconStyle}"></ha-icon>` : ""}
+            ${hasLoad ? `<ha-icon class="entity-icon" icon="${hasDimmer ? "mdi:lightbulb" : "mdi:toggle-switch"}" style="${iconStyle}"></ha-icon>` : ""}
             <div class="name">${dev.friendly_name}</div>
           </div>
 

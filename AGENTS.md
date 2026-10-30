@@ -1,4 +1,4 @@
-# AGENTS.md -- Control4 Dimmers HA Integration
+# AGENTS.md -- Control4 Zigbee HA Integration
 
 This is the canonical agent guide for `bharat/homeassistant-control4-dimmers`. New Claude/Codex/Cursor sessions should read this before making changes. Pair it with `ARCHITECTURE.md`, `PLAN.md`, and `RESEARCH.md` for deeper context.
 
@@ -32,7 +32,8 @@ The two halves communicate ONLY over MQTT, via a frozen contract (see below). No
 │   ├── models.py               # SlotConfig / DeviceConfig / DeviceState dataclasses
 │   ├── store.py                # Persistent JSON in .storage/control4_dimmers_devices.<entry_id>
 │   ├── sensor.py               # Device anchor + ambient light (lux) sensors
-│   ├── light.py                # Brightness 0-255 (proxies Z2M's standard light entity)
+│   ├── light.py                # Brightness 0-255 (proxies Z2M's standard light entity; NOT in PLATFORMS)
+│   ├── switch.py               # Plain on/off load entity for relay-only devices (switch type)
 │   ├── event.py                # One Control4ButtonEvent entity per button slot
 │   ├── brand/                  # HACS brand icons (ship in-repo since HA 2026.3.0)
 │   ├── frontend/
@@ -69,7 +70,7 @@ pre-commit install                                  # If not already done
 
 # HA dashboard: http://localhost:8123
 # Add MQTT integration → broker localhost:1883
-# Add Control4 Dimmers integration → MQTT base topic "zigbee2mqtt"
+# Add Control4 Zigbee integration → MQTT base topic "zigbee2mqtt"
 
 # Tests
 python -m pytest tests/                             # HA component tests
@@ -86,14 +87,14 @@ Zigbee-side changes (device definition, protocol library, Docker image) are made
 
 This integration and the Zigbee-side definition are separate codebases coupled only by these MQTT names. Do NOT rename them on either side (the ZHC fork carries a contract test asserting the same list):
 
-- **Inbound (device state)**: `c4_device_type` (`dimmer`/`keypaddim`/`keypad`), `c4_led_{1..6}_{on,off}` (flat hex), `action` with the 48-value grammar `button_{1..6}_{press,scene,click_{1..4}}` + `paddle_{up,down}_{press,scene,click_{1..4}}`, `state`/`brightness`, `c4_detect_result`, `c4_response`/`c4_response_ep`, `button_N_behavior`/`button_N_led_mode`.
+- **Inbound (device state)**: `c4_device_type` (`dimmer`/`keypaddim`/`keypad`; `switch` is also accepted, and a `keypaddim` verdict whose `c4_detect_result.dim_code` is `00` is refined to `switch` on this side), `c4_led_{1..6}_{on,off}` (flat hex), `action` with the 48-value grammar `button_{1..6}_{press,scene,click_{1..4}}` + `paddle_{up,down}_{press,scene,click_{1..4}}`, `state`/`brightness`, `c4_detect_result`, `c4_response`/`c4_response_ep`, `button_N_behavior`/`button_N_led_mode`.
 - **Outbound (`<topic>/<name>/set`)**: `c4_cmd`, `c4_detect`, `c4_led`, `c4_query`, `state`/`brightness`, plus `button_N_behavior`/`button_N_led_mode` state writes.
 
 ## Conventions and gotchas
 
 - **The MQTT boundary is non-negotiable.** Protocol logic lives on the Zigbee side; nothing in `custom_components/` should know what hex bytes a C4 command uses (composing `c4.dmx.*` ASCII command strings is the ceiling).
 - **Manifest version is `"0.0.0"` on purpose.** HACS reads the version from git tags, not `manifest.json`. Don't bump it manually -- Releases section explains.
-- **`PLATFORMS = [Platform.EVENT, Platform.SENSOR]` only** -- the integration deliberately doesn't register a `light` platform; it reuses Z2M's native light entity via MQTT. Don't add `light.py` to `PLATFORMS`.
+- **`PLATFORMS = [Platform.EVENT, Platform.SENSOR, Platform.SWITCH]` only** -- the integration deliberately doesn't register a `light` platform; it reuses Z2M's native light entity via MQTT. Don't add `light.py` to `PLATFORMS`. The `switch` platform exists only for relay-only hardware (the `switch` device type, C4-SW120277, issue #189), where Z2M's light entity would show a brightness slider the hardware cannot honor.
 - **Per-device persistent state lives in `.storage/control4_dimmers_devices.<entry_id>`.** Schema changes require bumping `STORAGE_VERSION` in `const.py` and writing a migration in `store.py`.
 - **Pre-commit runs pytest with a 15s/test timeout.** Long-running tests should be marked `@pytest.mark.slow` or split.
 - **`scripts/led-*.json`** are hand-crafted protocol reverse-engineering artifacts, kept as the lab notebook behind RESEARCH.md. Not test data; don't run in CI.
@@ -108,7 +109,7 @@ This integration and the Zigbee-side definition are separate codebases coupled o
 
 ## Releases
 
-Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Dimmers v<YYYY>.<M>.<DD>`. Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape).
+Tags use **CalVer**: `v<YYYY>.<M>.<DD>` (e.g. `v2026.5.13`). Release titles use `Control4 Zigbee v<YYYY>.<M>.<DD>`. Matches the fleet-wide HA-integration convention (triad-ams set the canonical shape).
 
 The release workflow (`.github/workflows/release.yml`) auto-creates the GitHub release on `v*` tag push. HACS reads the version from the git tag, not `manifest.json` -- so do not bump `manifest.json`'s `"0.0.0"`.
 

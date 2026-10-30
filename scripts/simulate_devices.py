@@ -99,6 +99,19 @@ DEVICES = [
             "description": "Control4 Zigbee Device (Dimmer/Keypad)",
         },
     },
+    {
+        # Relay-only switch (C4-SW120277, issue #189). The converter has no
+        # switch type: it answers the dim probe with 00, which the converter
+        # files under keypaddim. The integration refines that to "switch".
+        "ieee_address": "0x000fff0000ddd001",
+        "friendly_name": "Bath Fan",
+        "type": "switch",
+        "definition": {
+            "model": "C4-Zigbee",
+            "vendor": "Control4",
+            "description": "Control4 Zigbee Device (Dimmer/Keypad)",
+        },
+    },
 ]
 
 DIMMER_TOP_BUTTON = 2
@@ -106,6 +119,28 @@ DIMMER_TOP_BUTTON = 2
 DIMMER_LED_DEFAULTS = {
     2: {"on": "ffffff", "off": "000000"},
     5: {"on": "000000", "off": "0000ff"},
+}
+
+# The SW120277 rocker reports its bottom half on wire 05 (button 6).
+SWITCH_LED_DEFAULTS = {
+    2: {"on": "ffffff", "off": "000000"},
+    6: {"on": "000000", "off": "0000ff"},
+}
+
+# What the real converter publishes as c4_device_type for each simulated
+# type. It has no switch type (issue #189), so a switch is reported as
+# keypaddim with dim_code 00 and the integration does the refinement.
+REPORTED_TYPES = {
+    "dimmer": "dimmer",
+    "keypaddim": "keypaddim",
+    "keypad": "keypad",
+    "switch": "keypaddim",
+}
+DIM_CODES = {
+    "dimmer": "01",
+    "keypaddim": "02",
+    "keypad": None,
+    "switch": "00",
 }
 
 KEYPAD_LED_DEFAULTS = {
@@ -174,21 +209,34 @@ def build_initial_state(dev: dict) -> dict:
         brightness = random.choice([0, 64, 128, 200, 254])  # noqa: S311
         state["state"] = "ON" if brightness > 0 else "OFF"
         state["brightness"] = brightness
+    elif device_type == "switch":
+        # A relay reports brightness too (always full or zero); the slider
+        # that produces is exactly the bug the switch type fixes.
+        is_on = random.choice([True, False])  # noqa: S311
+        state["state"] = "ON" if is_on else "OFF"
+        state["brightness"] = 254 if is_on else 0
     return state
 
 
 def build_detected_state(dev: dict) -> dict:
     """Build the additional state fields that c4_detect adds."""
     device_type = dev["type"]
-    state: dict[str, Any] = {"c4_device_type": device_type}
+    reported_type = REPORTED_TYPES[device_type]
+    state: dict[str, Any] = {"c4_device_type": reported_type}
 
-    leds = DIMMER_LED_DEFAULTS if device_type == "dimmer" else KEYPAD_LED_DEFAULTS
+    if device_type == "dimmer":
+        leds = DIMMER_LED_DEFAULTS
+    elif device_type == "switch":
+        leds = SWITCH_LED_DEFAULTS
+    else:
+        leds = KEYPAD_LED_DEFAULTS
     for btn_id, colors in leds.items():
         for mode in ("on", "off"):
             state[f"c4_led_{btn_id}_{mode}"] = colors[mode]
 
-    for btn_id in leds.keys() if device_type == "dimmer" else range(1, 7):
-        if device_type == "dimmer":
+    rocker = device_type in ("dimmer", "switch")
+    for btn_id in leds.keys() if rocker else range(1, 7):
+        if rocker:
             behavior = "load_on" if btn_id == DIMMER_TOP_BUTTON else "load_off"
             led_mode = "follow_load"
         elif device_type == "keypaddim" and btn_id == 1:
@@ -211,9 +259,11 @@ def build_detected_state(dev: dict) -> dict:
         "keypad": "Control4 Configurable Keypad",
     }
     state["c4_detect_result"] = {
-        "device_type": device_type,
-        "model": model_names.get(device_type, "unknown"),
-        "description": model_descs.get(device_type, "Unknown Control4 device"),
+        "device_type": reported_type,
+        "confidence": "confirmed" if DIM_CODES[device_type] else "assumed",
+        "dim_code": DIM_CODES[device_type],
+        "model": model_names.get(reported_type, "unknown"),
+        "description": model_descs.get(reported_type, "Unknown Control4 device"),
         "ieee_address": dev["ieee_address"],
         "colors_read": len(leds) * 2,
     }

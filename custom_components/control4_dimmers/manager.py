@@ -6,25 +6,43 @@ import asyncio
 import json
 import re
 import time
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components import mqtt
 from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import callback as ha_callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .audit import (
+    AuditMismatch,
+    compare_three_way,
+    pick_stalest,
+    summarize_layers,
+)
 from .const import (
+    AUDIT_MODE_HEAL,
+    AUDIT_MODES,
+    BUTTON_EVENT_TYPES,
     C4_MANUFACTURER_NAME,
+    CONF_AUDIT_INTERVAL,
+    CONF_AUDIT_MODE,
     CONF_MQTT_TOPIC,
+    DEFAULT_AUDIT_INTERVAL,
+    DEFAULT_AUDIT_MODE,
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
+    DEVICE_TYPE_SLOTS,
+    DEVICE_TYPE_SWITCH,
     DEVICE_TYPES,
     DOMAIN,
     LOGGER,
     SLOT_COUNT,
 )
-from .models import DeviceConfig, DeviceState, SlotConfig
+from .models import DeviceConfig, DeviceState, SlotConfig, _extract_color
 from .store import Control4Store  # noqa: TC001
 
 if TYPE_CHECKING:
@@ -55,6 +73,13 @@ VERIFY_SETTLE_MS = 250
 VERIFY_RETRY_SETTLE_MS = 750
 # One retry only; verification must never turn into a polling loop.
 VERIFY_MAX_RETRIES = 1
+# The audit sweep's heal gets one extra paced re-push (issue #212). The
+# interactive verify path keeps its single retry because the user is
+# waiting on it, but the sweep is a background pass: giving up after one
+# dropped write parks the slot out of sync until the next cycle (up to a
+# full day at MAX_AUDIT_INTERVAL), while a second attempt costs one more
+# VERIFY_RETRY_SETTLE_MS wait. Still strictly bounded.
+AUDIT_HEAL_MAX_RETRIES = 2
 # How long to wait (ms) for the converter's seq-matched read to come back
 # before giving up on a verify pass.
 VERIFY_TIMEOUT_MS = 5000
@@ -117,12 +142,51 @@ class Control4Manager:
         self._pending_verifies: dict[tuple[str, int], asyncio.Future[None]] = {}
         self._verify_results: dict[tuple[str, int], dict[str, Any]] = {}
         self._verifying: set[tuple[str, int]] = set()
+        # The exact field values the converter's last read-back carried for
+        # a slot, captured in _handle_device_state before the pending future
+        # resolves. DeviceState merges reads into whatever it already held,
+        # so it cannot tell a freshly read field from a stale cached one;
+        # this can.
+        self._verify_reads: dict[
+            tuple[str, int], tuple[dict[str, str], dict[str, str]]
+        ] = {}
+        # Periodic audit sweep state (issue #199). _audit_unsub cancels the
+        # interval timer. _audit_attempts records when each device was last
+        # picked (whether or not its reads succeeded) so an unreachable
+        # device goes to the back of the queue instead of being picked
+        # every tick. _audit_summaries holds the last pass per device for
+        # the coverage sensor. _audit_running keeps ticks from overlapping.
+        self._audit_unsub: Callable[[], None] | None = None
+        self._audit_attempts: dict[str, datetime] = {}
+        self._audit_summaries: dict[str, dict[str, Any]] = {}
+        self._audit_running = False
+
+    def _option(self, key: str, default: Any) -> Any:
+        """Read a setting from entry options, falling back to entry data."""
+        options = self._entry.options or {}
+        if key in options:
+            return options[key]
+        return (self._entry.data or {}).get(key, default)
 
     @property
     def mqtt_topic(self) -> str:
         """Return the configured MQTT base topic."""
-        data = self._entry.options or self._entry.data
-        return data.get(CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC)
+        return self._option(CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC)
+
+    @property
+    def audit_interval(self) -> int:
+        """Return the audit sweep interval in minutes (0 disables)."""
+        raw = self._option(CONF_AUDIT_INTERVAL, DEFAULT_AUDIT_INTERVAL)
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return DEFAULT_AUDIT_INTERVAL
+
+    @property
+    def audit_mode(self) -> str:
+        """Return the audit mode: heal (re-push on mismatch) or report."""
+        mode = self._option(CONF_AUDIT_MODE, DEFAULT_AUDIT_MODE)
+        return mode if mode in AUDIT_MODES else DEFAULT_AUDIT_MODE
 
     @property
     def devices(self) -> dict[str, DeviceState]:
@@ -258,6 +322,17 @@ class Control4Manager:
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""
+        if event_type not in BUTTON_EVENT_TYPES:
+            # Defense in depth (issue #178): an undeclared type makes HA's
+            # EventEntity raise, aborting the MQTT message handler and
+            # dropping the rest of the payload with it.
+            LOGGER.debug(
+                "Dropping undeclared button event type %s for %s slot %s",
+                event_type,
+                ieee,
+                slot_id,
+            )
+            return
         cb = self._event_callbacks.get((ieee, slot_id))
         if cb is not None:
             cb(event_type)
@@ -281,10 +356,12 @@ class Control4Manager:
         )
         self._subscriptions.append(unsub_state)
 
+        self.start_audit_sweep()
         LOGGER.debug("Control4 manager started, subscribed to %s", topic)
 
     async def async_stop(self) -> None:
         """Unsubscribe from MQTT and state listeners."""
+        self.stop_audit_sweep()
         for unsub in self._subscriptions:
             unsub()
         self._subscriptions.clear()
@@ -351,20 +428,7 @@ class Control4Manager:
         for ieee in removed:
             LOGGER.info("Control4 device removed: %s", ieee)
             del self._devices[ieee]
-            # Drop the per-device pacing state so the lock/deadline maps do
-            # not grow unbounded as devices come and go (issue #144).
-            self._send_locks.pop(ieee, None)
-            self._push_locks.pop(ieee, None)
-            self._next_send_at.pop(ieee, None)
-            # Drop any verify results and in-flight guards for the removed
-            # device so the maps do not grow unbounded (issue #145). Pending
-            # verify futures are left in place; the verify pass aborts on its
-            # own when it wakes to find the device gone (see _verify_once), so
-            # we never cancel a coroutine that is mid-await.
-            for key in [k for k in self._verify_results if k[0] == ieee]:
-                del self._verify_results[key]
-            for key in [k for k in self._verifying if k[0] == ieee]:
-                self._verifying.discard(key)
+            self._prune_device_state(ieee)
 
         # Apply any state payloads that arrived before discovery.
         if self._pending_states:
@@ -385,6 +449,29 @@ class Control4Manager:
 
         self.setup_light_tracking()
         self.notify_listeners()
+
+    def _prune_device_state(self, ieee: str) -> None:
+        """
+        Drop a removed device's per-device bookkeeping.
+
+        Pacing locks and deadlines (issue #144), verify results and
+        in-flight guards (issue #145), and audit records (issue #199) are
+        all keyed by IEEE and would otherwise grow unbounded as devices
+        come and go. Pending verify futures are left in place; the verify
+        pass aborts on its own when it wakes to find the device gone (see
+        _read_slot), so we never cancel a coroutine that is mid-await.
+        """
+        self._send_locks.pop(ieee, None)
+        self._push_locks.pop(ieee, None)
+        self._next_send_at.pop(ieee, None)
+        for key in [k for k in self._verify_results if k[0] == ieee]:
+            del self._verify_results[key]
+        for key in [k for k in self._verifying if k[0] == ieee]:
+            self._verifying.discard(key)
+        for key in [k for k in self._verify_reads if k[0] == ieee]:
+            del self._verify_reads[key]
+        self._audit_attempts.pop(ieee, None)
+        self._audit_summaries.pop(ieee, None)
 
     async def _handle_device_state(self, msg: mqtt.ReceiveMessage) -> None:
         """Handle per-device state messages from Z2M."""
@@ -424,7 +511,7 @@ class Control4Manager:
         # observed values the verify pass will compare against.
         verified_slot = payload.get("c4_verified_slot")
         if verified_slot is not None:
-            self._resolve_verify(device.ieee_address, verified_slot)
+            self._resolve_verify(device.ieee_address, verified_slot, payload)
 
         # Dispatch button action events (press / click) to event entities.
         action = payload.get("action")
@@ -724,22 +811,23 @@ class Control4Manager:
             # (ieee, slot), so _pending_verifies[key] can never be overwritten.
             self._verifying.discard(key)
 
-    async def _verify_once(self, state: DeviceState, slot: SlotConfig) -> bool | None:
+    async def _read_slot(
+        self, state: DeviceState, slot_id: int
+    ) -> tuple[dict[str, str], dict[str, str]] | None:
         """
-        Run one read-back cycle for a slot.
+        Read one slot back from the device via the converter.
 
         Publishes a targeted read, awaits the converter's seq-matched
-        response (correlated by a future keyed on (ieee, slot)), then
-        compares desired vs observed. Returns True on a full match, False on
-        a mismatch, or None if the read timed out. Records the per-slot
-        verify result whenever a read completes so the entity can surface it.
+        response (correlated by a future keyed on (ieee, slot)), and
+        returns the (led, button) fields that response carried. Returns
+        None if the read timed out or the device was removed meanwhile.
         """
         ieee = state.ieee_address
-        slot_id = slot.slot_id
         key = (ieee, slot_id)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         self._pending_verifies[key] = future
+        self._verify_reads.pop(key, None)
         try:
             await self.async_send_mqtt(ieee, {"c4_verify_slot": slot_id})
             try:
@@ -763,12 +851,36 @@ class Control4Manager:
         device = self._devices.get(ieee)
         if device is None:
             # The device was removed while we awaited the read. Observed values
-            # would all be absent, which _compare_slot would read as "in sync"
-            # for a device that is gone. Abort the pass; record nothing.
+            # would all be absent, which a compare would read as "in sync"
+            # for a device that is gone. Abort; record nothing.
             LOGGER.debug("device %s removed during verify, aborting", ieee)
+            self._verify_reads.pop(key, None)
             return None
-        observed_led = device.led_colors.get(slot_id, {})
-        observed_btn = device.button_configs.get(slot_id, {})
+        read = self._verify_reads.pop(key, None)
+        if read is None:
+            # Resolved without a payload (should not happen via MQTT); fall
+            # back to the merged device state so the pass still completes.
+            read = (
+                dict(device.led_colors.get(slot_id, {})),
+                dict(device.button_configs.get(slot_id, {})),
+            )
+        return read
+
+    async def _verify_once(self, state: DeviceState, slot: SlotConfig) -> bool | None:
+        """
+        Run one read-back cycle for a slot.
+
+        Reads the slot, then compares desired vs observed. Returns True on
+        a full match, False on a mismatch, or None if the read timed out.
+        Records the per-slot verify result whenever a read completes so the
+        entity can surface it.
+        """
+        ieee = state.ieee_address
+        slot_id = slot.slot_id
+        read = await self._read_slot(state, slot_id)
+        if read is None:
+            return None
+        observed_led, observed_btn = read
         mismatches = self._compare_slot(slot, observed_led, observed_btn)
         for field_name, expected, actual in mismatches:
             LOGGER.warning(
@@ -816,7 +928,7 @@ class Control4Manager:
             mismatches.append(("behavior", slot.behavior, observed_btn["behavior"]))
         return mismatches
 
-    def _record_verify_result(
+    def _record_verify_result(  # noqa: PLR0913
         self,
         ieee: str,
         slot_id: int,
@@ -824,11 +936,24 @@ class Control4Manager:
         observed_btn: dict[str, str],
         *,
         in_sync: bool,
+        verified_by: str = "write",
+        diverged_layer: str | None = None,
     ) -> None:
-        """Store the outcome of a verify read for one slot (issue #145)."""
+        """
+        Store the outcome of a verify read for one slot (issue #145).
+
+        verified_by is "write" for the read-after-write loop and "audit"
+        for the periodic sweep; diverged_layer is the audit's three-way
+        verdict (cache / firmware / both) or None when in sync or when the
+        pass did not classify.
+        """
+        now = dt_util.utcnow()
         self._verify_results[(ieee, slot_id)] = {
             "in_sync": in_sync,
-            "last_verified": dt_util.utcnow().isoformat(),
+            "last_verified": now.isoformat(),
+            "last_verified_at": now,
+            "verified_by": verified_by,
+            "diverged_layer": diverged_layer,
             "observed_on_color": observed_led.get("on"),
             "observed_off_color": observed_led.get("off"),
             "observed_led_mode": observed_btn.get("led_mode"),
@@ -839,15 +964,411 @@ class Control4Manager:
         """Return the last verify outcome for a slot, or None if never run."""
         return self._verify_results.get((ieee, slot_id))
 
-    def _resolve_verify(self, ieee: str, slot_id: Any) -> None:
-        """Resolve the pending verify future for a slot, if any (issue #145)."""
+    def _resolve_verify(
+        self, ieee: str, slot_id: Any, payload: dict[str, Any] | None = None
+    ) -> None:
+        """
+        Resolve the pending verify future for a slot, if any (issue #145).
+
+        The exact fields the read-back payload carried are stashed first so
+        the waiting pass compares against what was actually read, not
+        against DeviceState's merge of this read over older cached values.
+        """
         try:
             key = (ieee, int(slot_id))
         except (TypeError, ValueError):
             return
+        if payload is not None:
+            self._verify_reads[key] = _extract_slot_fields(payload, key[1])
         future = self._pending_verifies.get(key)
         if future is not None and not future.done():
             future.set_result(None)
+
+    # ── Periodic config audit sweep (issue #199) ─────────────────────
+    #
+    # Read-after-write verification only covers slots something writes to.
+    # A device nothing touches is never audited, so a drift there stays
+    # invisible until a button misbehaves. The sweep closes that gap with a
+    # rolling schedule: every audit_interval minutes it picks the single
+    # stalest device and verifies every one of its stored slots, so the
+    # worst-case staleness is bounded (interval x device count) without a
+    # mesh-wide burst. Reads go through async_send_mqtt (paced, issue
+    # #144) and take the per-device push lock so they cannot interleave
+    # with an in-flight config push.
+
+    def start_audit_sweep(self) -> None:
+        """Arm the interval timer that drives the audit sweep."""
+        self.stop_audit_sweep()
+        interval = self.audit_interval
+        if interval <= 0:
+            LOGGER.info("Config audit sweep disabled (interval 0)")
+            return
+        self._audit_unsub = async_track_time_interval(
+            self._hass, self._audit_tick, timedelta(minutes=interval)
+        )
+        LOGGER.info(
+            "Config audit sweep armed: one device every %d min, mode=%s",
+            interval,
+            self.audit_mode,
+        )
+
+    def stop_audit_sweep(self) -> None:
+        """Cancel the audit interval timer, if armed."""
+        if self._audit_unsub is not None:
+            self._audit_unsub()
+            self._audit_unsub = None
+
+    @ha_callback
+    def _audit_tick(self, _now: datetime) -> None:
+        """Interval callback: audit the stalest device in a background task."""
+        if self._audit_running:
+            LOGGER.debug("audit tick skipped: previous pass still running")
+            return
+        self._hass.async_create_task(self.async_audit_next(), "c4_audit_sweep")
+
+    def _device_verified_at(self, ieee: str, config: DeviceConfig) -> datetime | None:
+        """
+        Effective verification time of a device for sweep ordering.
+
+        The oldest last_verified across the device's stored slots (None if
+        any slot has never been verified), floored at the device's last
+        audit attempt so a device whose reads keep timing out still yields
+        its turn to the others.
+        """
+        oldest: datetime | None = None
+        for slot in config.slots:
+            result = self._verify_results.get((ieee, slot.slot_id))
+            when = result.get("last_verified_at") if result else None
+            if when is None:
+                oldest = None
+                break
+            if oldest is None or when < oldest:
+                oldest = when
+        attempted = self._audit_attempts.get(ieee)
+        if attempted is None:
+            return oldest
+        if oldest is None:
+            return attempted
+        return max(oldest, attempted)
+
+    def _audit_candidates(self) -> dict[str, datetime | None]:
+        """Discovered devices with stored slots, keyed to their staleness."""
+        candidates: dict[str, datetime | None] = {}
+        for ieee in self._devices:
+            config = self._store.get_device(ieee)
+            if config is None or not config.slots:
+                continue
+            lock = self._push_locks.get(ieee)
+            if lock is not None and lock.locked():
+                # A config push is in flight; its own verify covers it and
+                # auditing now would queue behind it. Pick another device.
+                continue
+            candidates[ieee] = self._device_verified_at(ieee, config)
+        return candidates
+
+    def pick_audit_target(self) -> str | None:
+        """Return the IEEE of the device the sweep should audit next."""
+        return pick_stalest(self._audit_candidates())
+
+    async def async_audit_next(self) -> dict[str, Any] | None:
+        """Audit the stalest device. Returns its summary, or None if idle."""
+        if self._audit_running:
+            return None
+        ieee = self.pick_audit_target()
+        if ieee is None:
+            LOGGER.debug("audit sweep: no device with stored config to audit")
+            return None
+        return await self.async_audit_device(ieee)
+
+    async def async_audit_device(
+        self, ieee: str, mode: str | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Verify every stored slot of one device against cache and firmware.
+
+        mode overrides the configured audit mode for this pass ("heal" or
+        "report"). Returns a summary dict (also kept for the coverage
+        sensor), or None if the device or its config is unknown.
+        """
+        state = self._devices.get(ieee)
+        config = self._store.get_device(ieee)
+        if state is None or config is None:
+            LOGGER.error("Cannot audit unknown device: %s", ieee)
+            return None
+        mode = mode if mode in AUDIT_MODES else self.audit_mode
+        self._audit_running = True
+        started = dt_util.utcnow()
+        self._audit_attempts[ieee] = started
+        summary: dict[str, Any] = {
+            "ieee_address": ieee,
+            "friendly_name": state.friendly_name,
+            "mode": mode,
+            "started": started.isoformat(),
+            "slots_checked": 0,
+            "slots_skipped": 0,
+            "slots_unread": 0,
+            "slots_mismatched": 0,
+            "slots_healed": 0,
+            "slots_unhealed": 0,
+            "mismatches": [],
+        }
+        LOGGER.info(
+            "Audit start device=%s ieee=%s slots=%d mode=%s",
+            state.friendly_name,
+            ieee,
+            len(config.slots),
+            mode,
+        )
+        try:
+            for slot in list(config.slots):
+                if ieee not in self._devices:
+                    break
+                key = (ieee, slot.slot_id)
+                if key in self._verifying:
+                    # A write-triggered verify owns this slot right now.
+                    summary["slots_skipped"] += 1
+                    continue
+                self._verifying.add(key)
+                try:
+                    await self._audit_slot(state, config, slot, mode, summary)
+                finally:
+                    self._verifying.discard(key)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Audit pass errored for %s", state.friendly_name)
+        finally:
+            self._audit_running = False
+        summary["finished"] = dt_util.utcnow().isoformat()
+        self._audit_summaries[ieee] = summary
+        LOGGER.info(
+            "Audit done device=%s checked=%d mismatched=%d healed=%d "
+            "unhealed=%d unread=%d skipped=%d",
+            state.friendly_name,
+            summary["slots_checked"],
+            summary["slots_mismatched"],
+            summary["slots_healed"],
+            summary["slots_unhealed"],
+            summary["slots_unread"],
+            summary["slots_skipped"],
+        )
+        self.notify_listeners()
+        return summary
+
+    async def _audit_slot(
+        self,
+        state: DeviceState,
+        config: DeviceConfig,
+        slot: SlotConfig,
+        mode: str,
+        summary: dict[str, Any],
+    ) -> None:
+        """
+        Audit one slot: snapshot the cache, read firmware, compare, act.
+
+        Order matters. The cache snapshot is taken BEFORE the read because
+        the converter publishes the read-back values under the same
+        button_N_* / c4_led_N_* keys, which refreshes both Z2M's cache and
+        our mirror of it. On a mismatch the full evidence is logged before
+        anything is re-pushed, so a heal never destroys the evidence of
+        what drifted (the gap the Entry keypad incident left us with).
+        """
+        ieee = state.ieee_address
+        slot_id = slot.slot_id
+        device = self._devices.get(ieee)
+        if device is None:
+            return
+        cached_led = dict(device.led_colors.get(slot_id, {}))
+        cached_btn = dict(device.button_configs.get(slot_id, {}))
+
+        # Hold the push lock across the read so a config push to this
+        # device cannot interleave with it (issue #144 serialization). It
+        # is released before any heal, which takes the lock itself.
+        async with self._device_lock(self._push_locks, ieee):
+            read = await self._read_slot(state, slot_id)
+        if read is None:
+            summary["slots_unread"] += 1
+            return
+        fw_led, fw_btn = read
+        summary["slots_checked"] += 1
+
+        mismatches = compare_three_way(slot, cached_led, cached_btn, fw_led, fw_btn)
+        layer = summarize_layers(mismatches)
+        if not mismatches:
+            self._record_verify_result(
+                ieee, slot_id, fw_led, fw_btn, in_sync=True, verified_by="audit"
+            )
+            LOGGER.debug("Audit ok device=%s slot=%d", state.friendly_name, slot_id)
+            return
+
+        # Evidence first: every field, every layer, before any heal.
+        summary["slots_mismatched"] += 1
+        self._log_audit_mismatch(state, slot_id, mode, mismatches, layer)
+        summary["mismatches"].extend(
+            {
+                "slot_id": slot_id,
+                "layer": m.layer,
+                "field": m.field,
+                "store": m.store,
+                "cache": m.cache,
+                "firmware": m.firmware,
+            }
+            for m in mismatches
+        )
+        self._record_verify_result(
+            ieee,
+            slot_id,
+            fw_led,
+            fw_btn,
+            in_sync=False,
+            verified_by="audit",
+            diverged_layer=layer,
+        )
+        if mode != AUDIT_MODE_HEAL:
+            return
+
+        # Heal like the read-after-write loop (re-push, longer settle,
+        # read again), but with one extra paced attempt so a single
+        # dropped write does not wait a whole audit cycle for its retry.
+        healed = False
+        for _attempt in range(AUDIT_HEAL_MAX_RETRIES):
+            await self._push_single_slot(state, config, slot_id)
+            await asyncio.sleep(VERIFY_RETRY_SETTLE_MS / 1000)
+            async with self._device_lock(self._push_locks, ieee):
+                reread = await self._read_slot(state, slot_id)
+            if reread is None:
+                break
+            fw_led, fw_btn = reread
+            remaining = self._compare_slot(slot, fw_led, fw_btn)
+            healed = not remaining
+            self._record_verify_result(
+                ieee,
+                slot_id,
+                fw_led,
+                fw_btn,
+                in_sync=healed,
+                verified_by="audit",
+                diverged_layer=None if healed else layer,
+            )
+            if healed:
+                break
+        if healed:
+            summary["slots_healed"] += 1
+            LOGGER.warning(
+                "Audit healed device=%s ieee=%s slot=%d layer=%s",
+                state.friendly_name,
+                ieee,
+                slot_id,
+                layer,
+            )
+        else:
+            summary["slots_unhealed"] += 1
+            LOGGER.error(
+                "Audit heal failed device=%s ieee=%s slot=%d layer=%s after %d "
+                "re-push attempt(s); slot left out of sync",
+                state.friendly_name,
+                ieee,
+                slot_id,
+                layer,
+                AUDIT_HEAL_MAX_RETRIES,
+            )
+
+    @staticmethod
+    def _log_audit_mismatch(
+        state: DeviceState,
+        slot_id: int,
+        mode: str,
+        mismatches: list[AuditMismatch],
+        layer: str | None,
+    ) -> None:
+        """Log one greppable WARNING line per drifted field, plus a verdict."""
+        for m in mismatches:
+            LOGGER.warning(
+                "Audit mismatch device=%s ieee=%s slot=%d field=%s store=%s "
+                "cache=%s firmware=%s layer=%s mode=%s",
+                state.friendly_name,
+                state.ieee_address,
+                slot_id,
+                m.field,
+                m.store,
+                m.cache if m.cache is not None else "absent",
+                m.firmware if m.firmware is not None else "absent",
+                m.layer,
+                mode,
+            )
+        LOGGER.warning(
+            "Audit verdict device=%s ieee=%s slot=%d layer=%s fields=%s mode=%s",
+            state.friendly_name,
+            state.ieee_address,
+            slot_id,
+            layer,
+            ",".join(m.field for m in mismatches),
+            mode,
+        )
+
+    def get_audit_status(self) -> dict[str, Any]:
+        """
+        Coverage snapshot for the diagnostic sensor.
+
+        Counts devices with stored config whose slots have all been
+        verified at least once (by either loop) versus never, and reports
+        the age of the stalest fully verified device. Verification state
+        lives in memory, so after a Home Assistant restart every device
+        starts as never verified until the sweep reaches it.
+        """
+        now = dt_util.utcnow()
+        total = 0
+        never: list[str] = []
+        out_of_sync: list[str] = []
+        stalest_name: str | None = None
+        stalest_at: datetime | None = None
+        for ieee, state in self._devices.items():
+            config = self._store.get_device(ieee)
+            if config is None or not config.slots:
+                continue
+            total += 1
+            oldest: datetime | None = None
+            fully = True
+            for slot in config.slots:
+                result = self._verify_results.get((ieee, slot.slot_id))
+                if result is None:
+                    fully = False
+                    continue
+                if result.get("in_sync") is False:
+                    out_of_sync.append(f"{state.friendly_name} slot {slot.slot_id}")
+                when = result.get("last_verified_at")
+                if when is not None and (oldest is None or when < oldest):
+                    oldest = when
+            if not fully:
+                never.append(state.friendly_name)
+                continue
+            if oldest is not None and (stalest_at is None or oldest < stalest_at):
+                stalest_at = oldest
+                stalest_name = state.friendly_name
+        last = max(
+            self._audit_summaries.values(),
+            key=lambda s: s.get("finished") or "",
+            default=None,
+        )
+        return {
+            "devices_total": total,
+            "devices_verified": total - len(never),
+            "devices_never_verified": len(never),
+            "never_verified": sorted(never),
+            "out_of_sync": sorted(out_of_sync),
+            "stalest_device": stalest_name,
+            "stalest_last_verified": stalest_at.isoformat() if stalest_at else None,
+            "stalest_age_minutes": (
+                round((now - stalest_at).total_seconds() / 60) if stalest_at else None
+            ),
+            "interval_minutes": self.audit_interval,
+            "mode": self.audit_mode,
+            "last_audit_device": last["friendly_name"] if last else None,
+            "last_audit_finished": last.get("finished") if last else None,
+            "next_audit_device": (
+                self._devices[n].friendly_name
+                if (n := self.pick_audit_target()) in self._devices
+                else None
+            ),
+        }
 
     async def _send_slot_commands(self, state: DeviceState, slot: SlotConfig) -> None:
         """Emit the firmware command sequence for a single slot."""
@@ -1172,10 +1693,14 @@ class Control4Manager:
 
     def get_default_slots(self, device_type: str) -> list[SlotConfig]:
         """Generate default slot configuration for a device type."""
-        if device_type == DEVICE_TYPE_DIMMER:
+        if device_type in (DEVICE_TYPE_DIMMER, DEVICE_TYPE_SWITCH):
+            # Two-button rocker: top turns the load on, bottom turns it
+            # off. The relay-only switch shares the layout but reports its
+            # bottom half on a different wire (DEVICE_TYPE_SLOTS).
+            top, bottom = DEVICE_TYPE_SLOTS[device_type]
             return [
                 SlotConfig(
-                    slot_id=2,
+                    slot_id=top,
                     size=1,
                     name="Top",
                     behavior="load_on",
@@ -1184,7 +1709,7 @@ class Control4Manager:
                     led_off_color="000000",
                 ),
                 SlotConfig(
-                    slot_id=5,
+                    slot_id=bottom,
                     size=1,
                     name="Bottom",
                     behavior="load_off",
@@ -1217,13 +1742,38 @@ _CLICK_COUNT_MAP: dict[int, str] = {
 
 
 def _click_count_to_event_type(count: int) -> str:
-    """Map a c4.dmx.cc click count to an event_type string."""
-    return _CLICK_COUNT_MAP.get(count, f"click_{count}")
+    """
+    Map a c4.dmx.cc click count to a declared event type.
+
+    The converter passes the firmware's click counter through unclamped, so
+    four or more rapid taps arrive as click_4, click_5, and so on. HA's
+    event entity raises on any type outside BUTTON_EVENT_TYPES, aborting
+    the whole MQTT message handler (issue #178), so clamp to the declared
+    range instead.
+    """
+    return _CLICK_COUNT_MAP[min(max(count, 1), max(_CLICK_COUNT_MAP))]
 
 
 def _color_eq(a: str, b: str) -> bool:
     """Compare two hex colors case-insensitively, ignoring a leading #."""
     return a.lstrip("#").lower() == b.lstrip("#").lower()
+
+
+def _extract_slot_fields(
+    payload: dict[str, Any], slot_id: int
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Pull one slot's LED and button fields out of a Z2M state payload."""
+    led: dict[str, str] = {}
+    btn: dict[str, str] = {}
+    if f"c4_led_{slot_id}_on" in payload:
+        led["on"] = _extract_color(payload[f"c4_led_{slot_id}_on"])
+    if f"c4_led_{slot_id}_off" in payload:
+        led["off"] = _extract_color(payload[f"c4_led_{slot_id}_off"])
+    if f"button_{slot_id}_behavior" in payload:
+        btn["behavior"] = payload[f"button_{slot_id}_behavior"]
+    if f"button_{slot_id}_led_mode" in payload:
+        btn["led_mode"] = payload[f"button_{slot_id}_led_mode"]
+    return led, btn
 
 
 def _is_control4_device(device_info: dict) -> bool:

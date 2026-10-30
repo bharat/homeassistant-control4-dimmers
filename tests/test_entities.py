@@ -21,7 +21,11 @@ from custom_components.control4_dimmers.models import (
     DeviceState,
     SlotConfig,
 )
-from custom_components.control4_dimmers.sensor import Control4DeviceSensor
+from custom_components.control4_dimmers.sensor import (
+    Control4AmbientLightSensor,
+    Control4AuditSensor,
+    Control4DeviceSensor,
+)
 
 from .conftest import IEEE_DIMMER, IEEE_KEYPAD
 
@@ -257,6 +261,35 @@ class TestEventSetupCreatesPaddles:
         assert f"{IEEE_DIMMER}_event_paddle_up" in uids
         assert f"{IEEE_DIMMER}_event_paddle_down" in uids
 
+    async def test_paddles_and_rocker_buttons_for_switch(
+        self,
+        manager: Control4Manager,
+        mock_hass: MagicMock,
+        mock_entry: MagicMock,
+    ) -> None:
+        # A relay-only switch drives a load, so it gets the paddle halves,
+        # plus button slots 2 and 6 (issue #189).
+        ieee = "0x000fff0000ddd001"
+        manager._devices[ieee] = DeviceState(
+            ieee_address=ieee,
+            friendly_name="Bath Fan",
+            model_id="C4-Zigbee",
+            device_type="switch",
+        )
+        added = await self._run_setup(manager, mock_hass, mock_entry)
+        uids = {e.unique_id for e in added}
+        assert uids == {
+            f"{ieee}_event_2",
+            f"{ieee}_event_6",
+            f"{ieee}_event_paddle_up",
+            f"{ieee}_event_paddle_down",
+        }
+        names = {
+            e.unique_id: e.name for e in added if isinstance(e, Control4ButtonEvent)
+        }
+        assert names[f"{ieee}_event_2"] == "Top"
+        assert names[f"{ieee}_event_6"] == "Bottom"
+
     async def test_no_paddles_for_keypad(
         self,
         manager: Control4Manager,
@@ -368,3 +401,57 @@ class TestControl4DeviceSensor:
         entity.async_write_ha_state = MagicMock()
         entity._on_manager_update()
         entity.async_write_ha_state.assert_called_once()
+
+
+# ── Push-only entities ───────────────────────────────────────────────
+
+
+class TestEntitiesDoNotPoll:
+    """
+    Every entity is push-based and must say so.
+
+    The entity platform arms a scan-interval timer as soon as one added
+    entity reports should_poll, and the audit sensor is added on every
+    entry setup. Leaving the default would make the whole integration
+    poll for nothing and leave that timer behind on unload.
+    """
+
+    def test_sensor_entities_do_not_poll(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        entities = [
+            Control4AuditSensor(manager, "entry1"),
+            Control4DeviceSensor(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+            ),
+            Control4AmbientLightSensor(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+            ),
+        ]
+        assert [entity.should_poll for entity in entities] == [False] * 3
+
+    def test_event_entities_do_not_poll(self, manager: Control4Manager) -> None:
+        entities = [
+            Control4ButtonEvent(
+                manager=manager,
+                ieee_address=IEEE_KEYPAD,
+                friendly_name="Theater",
+                model_id="C4-KC120277",
+                slot_id=1,
+            ),
+            Control4PaddleEvent(
+                manager=manager,
+                ieee_address=IEEE_DIMMER,
+                friendly_name="Kitchen",
+                model_id="C4-APD120",
+                paddle_id="paddle_up",
+            ),
+        ]
+        assert [entity.should_poll for entity in entities] == [False] * 2

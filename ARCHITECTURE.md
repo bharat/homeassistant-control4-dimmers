@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the architecture of the Control4 Dimmers integration
+This document describes the architecture of the Control4 Zigbee integration
 for Home Assistant, covering the full data flow from Zigbee wire protocol
 through to the Lovelace card.
 
@@ -90,7 +90,8 @@ MQTT topics and manages HA entities.
 
 | Module | Responsibility |
 |--------|---------------|
-| `manager.py` | MQTT subscription, device discovery, state tracking, event dispatch |
+| `manager.py` | MQTT subscription, device discovery, state tracking, event dispatch, read-back verification, periodic config audit sweep |
+| `audit.py` | Pure helpers for the audit sweep: three-way drift classification (store / Z2M cache / firmware) and stalest-device ordering |
 | `store.py` | Persistent storage (`.storage/`) for device configs |
 | `models.py` | Data models: `DeviceConfig`, `DeviceState`, `SlotConfig` |
 | `sensor.py` | Sensor anchor entity (device representation) |
@@ -143,6 +144,30 @@ HA Device: "Kitchen Dimmer"
 └── sensor.kitchen_dimmer_ambient_light   # ambient light sensor
       state: lux value
 ```
+
+### Relay-only switch (e.g., Z2M name "Bath Fan", C4-SW120277)
+
+```
+HA Device: "Bath Fan"
+│
+├── sensor.bath_fan                       # anchor
+│     attributes: device_type: "switch", detected_type: "switch"
+│
+├── switch.bath_fan_load                  # on/off only, no brightness
+│
+├── event.bath_fan_button_2               # Top (wire 01)
+├── event.bath_fan_button_6               # Bottom (wire 05)
+├── event.bath_fan_paddle_up / paddle_down
+└── sensor.bath_fan_ambient_light
+```
+
+The Zigbee-side converter cannot tell a relay from a dimmer: it maps dim
+answer `01` to `dimmer`, `02` to `keypaddim`, and anything else to
+`keypaddim`. A relay-only switch answers `00`, so the integration refines a
+`keypaddim` verdict whose `c4_detect_result.dim_code` is `00` into `switch`
+(`models.refine_device_type`). A converter that reports `switch` directly is
+honored as-is. Units that never answer the probe stay `keypaddim` until the
+user runs `set_device_type` with `switch`.
 
 ### Keypad (e.g., Z2M name "Theater Keypad")
 
@@ -197,6 +222,17 @@ slot (or defaults), then routing the full slot list through
 
 Re-push a device's stored config to firmware and re-run LED tracking
 without mutating the store (`manager.async_push_config`).
+
+### `control4_dimmers.audit_config`
+
+Run the periodic audit sweep's pass on one device now: read every
+stored slot back, compare store vs Z2M cache vs firmware, log the
+evidence, then heal (or only report with `mode: report`). The sweep
+itself runs from `Control4Manager.start_audit_sweep`, picking the
+stalest device every `audit_interval` minutes (entry option, 0 disables)
+and reusing the read-after-write verify machinery, per-device pacing,
+and the single-slot push path. Coverage is exposed on the per-entry
+diagnostic sensor `Control4AuditSensor`.
 
 ### `control4_dimmers.set_led`
 

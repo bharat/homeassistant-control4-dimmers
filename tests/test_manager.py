@@ -23,6 +23,8 @@ from custom_components.control4_dimmers.store import Control4Store
 
 from .conftest import IEEE_DIMMER, IEEE_KEYPAD, make_bridge_device
 
+IEEE_SWITCH = "0x000fff0000ddd001"
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
@@ -87,15 +89,17 @@ class TestClickCountToEventType:
     @pytest.mark.parametrize(
         ("count", "expected"),
         [
+            (0, "single_tap"),
             (1, "single_tap"),
             (2, "double_tap"),
             (3, "triple_tap"),
-            (4, "click_4"),
-            (5, "click_5"),
-            (99, "click_99"),
+            (4, "triple_tap"),
+            (5, "triple_tap"),
+            (99, "triple_tap"),
         ],
     )
     def test_mapping(self, count: int, expected: str) -> None:
+        """Counts outside 1..3 clamp to the declared range (issue #178)."""
         assert _click_count_to_event_type(count) == expected
 
 
@@ -229,6 +233,36 @@ class TestManagerEventCallbacks:
         manager.register_event_callback(IEEE_DIMMER, "paddle_up", cb)
         manager._dispatch_button_action(dimmer_state, "paddle_up_click_2")
         cb.assert_called_once_with("double_tap")
+
+    def test_button_click_4_clamps_to_triple_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Four rapid taps fire triple_tap instead of raising (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager._dispatch_button_action(dimmer_state, "button_1_click_4")
+        cb.assert_called_once_with("triple_tap")
+
+    def test_paddle_click_4_clamps_to_triple_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """The paddle path clamps the same way as buttons (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_down", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_down_click_4")
+        cb.assert_called_once_with("triple_tap")
+
+    def test_fire_button_event_drops_undeclared_type(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """The chokepoint guard drops out-of-grammar types (issue #178)."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 1, cb)
+        manager.fire_button_event(IEEE_DIMMER, 1, "click_4")
+        cb.assert_not_called()
 
     def test_paddle_does_not_fire_button_slot(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -384,6 +418,59 @@ class TestManagerDeviceState:
         cb.assert_called_once_with("pressed")
 
     @pytest.mark.asyncio
+    async def test_detect_result_refines_relay_to_switch(
+        self, manager: Control4Manager
+    ) -> None:
+        # Real-world shape from issue #189: the converter answers keypaddim
+        # for a C4-SW120277 because the dim probe returned 00.
+        bridge = _make_mqtt_msg(
+            "zigbee2mqtt/bridge/devices",
+            [make_bridge_device(ieee=IEEE_SWITCH, friendly_name="Bath Fan")],
+        )
+        await manager._handle_bridge_devices(bridge)
+        state_msg = _make_mqtt_msg(
+            "zigbee2mqtt/Bath Fan",
+            {
+                "state": "ON",
+                "brightness": 254,
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {
+                    "ieee_address": IEEE_SWITCH,
+                    "device_type": "keypaddim",
+                    "confidence": "confirmed",
+                    "dim_code": "00",
+                    "model": "C4-KD120",
+                    "description": "Control4 Keypad Dimmer",
+                    "colors_read": 12,
+                },
+            },
+        )
+        await manager._handle_device_state(state_msg)
+        device = manager.devices[IEEE_SWITCH]
+        assert device.device_type == "switch"
+        assert device.state == "ON"
+        assert manager.get_device_info(IEEE_SWITCH)["device_type"] == "switch"
+
+    async def test_refinement_survives_buffered_state(
+        self, manager: Control4Manager
+    ) -> None:
+        # State that arrives before discovery is buffered and applied later;
+        # the refinement must happen on that path too.
+        state_msg = _make_mqtt_msg(
+            "zigbee2mqtt/Bath Fan",
+            {
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {"device_type": "keypaddim", "dim_code": "00"},
+            },
+        )
+        await manager._handle_device_state(state_msg)
+        bridge = _make_mqtt_msg(
+            "zigbee2mqtt/bridge/devices",
+            [make_bridge_device(ieee=IEEE_SWITCH, friendly_name="Bath Fan")],
+        )
+        await manager._handle_bridge_devices(bridge)
+        assert manager.devices[IEEE_SWITCH].device_type == "switch"
+
     async def test_ignores_bridge_subtopics(self, manager: Control4Manager) -> None:
         msg = _make_mqtt_msg("zigbee2mqtt/bridge/config", {"log_level": "debug"})
         await manager._handle_device_state(msg)
@@ -457,6 +544,19 @@ class TestManagerDefaultSlots:
         assert slots[0].led_mode == "follow_load"
         assert slots[0].tap_action is None
         assert slots[1].behavior == "keypad"
+
+    def test_switch_defaults(self, manager: Control4Manager) -> None:
+        # Same rocker as the dimmer, but the bottom half lives on wire 05
+        # (button 6) per the SW120277 community report (issue #189).
+        slots = manager.get_default_slots("switch")
+        assert [s.slot_id for s in slots] == [2, 6]
+        top, bottom = slots
+        assert (top.name, top.behavior, top.led_mode) == (
+            "Top",
+            "load_on",
+            "follow_load",
+        )
+        assert (bottom.name, bottom.behavior) == ("Bottom", "load_off")
 
 
 # ── Manager: configure_device ────────────────────────────────────────

@@ -13,6 +13,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    AUDIT_MODES,
     DEVICE_TYPE_SLOTS,
     DEVICE_TYPES,
     DOMAIN,
@@ -27,9 +28,13 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
+# No Platform.LIGHT on purpose: dimmable loads reuse Z2M's native light
+# entity over MQTT. Relay-only switches (issue #189) get their own switch
+# entity here because Z2M's light would show a dead brightness slider.
 PLATFORMS: list[Platform] = [
     Platform.EVENT,
     Platform.SENSOR,
+    Platform.SWITCH,
 ]
 
 # The "control this device's own load" sentinel an action target can
@@ -639,6 +644,31 @@ async def _svc_push_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, 
     return {"pushed": pushed, "ieee_address": ieee}
 
 
+async def _svc_audit_config(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
+    """
+    Handle control4_dimmers.audit_config service call.
+
+    Runs the periodic sweep's audit pass on one device right now: every
+    stored slot is read back and compared three ways (store vs Z2M cache
+    vs firmware), with the evidence logged before any heal. An optional
+    mode overrides the configured audit mode for this call, so "report"
+    reads without re-pushing and preserves the evidence of a drift.
+    Returns the pass summary.
+    """
+    runtime = _get_runtime(hass)
+    if runtime is None:
+        msg = "Integration not loaded"
+        raise ServiceValidationError(msg)
+    manager: Control4Manager = runtime["manager"]
+
+    ieee = _resolve_ieee(hass, manager, call.data)
+    summary = await manager.async_audit_device(ieee, mode=call.data.get("mode"))
+    if summary is None:
+        msg = f"No stored config to audit for device {ieee}"
+        raise ServiceValidationError(msg)
+    return summary
+
+
 async def _svc_snapshot(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]:
     """
     Handle control4_dimmers.snapshot service call.
@@ -769,6 +799,9 @@ async def _register_services(hass: HomeAssistant) -> None:
     async def _wrap_push_config(call: ServiceCall) -> dict[str, Any]:
         return await _svc_push_config(hass, call)
 
+    async def _wrap_audit_config(call: ServiceCall) -> dict[str, Any]:
+        return await _svc_audit_config(hass, call)
+
     async def _wrap_snapshot(call: ServiceCall) -> dict[str, Any]:
         return await _svc_snapshot(hass, call)
 
@@ -843,7 +876,7 @@ async def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,
-                vol.Required("device_type"): vol.In(["dimmer", "keypaddim", "keypad"]),
+                vol.Required("device_type"): vol.In(DEVICE_TYPES),
             }
         ),
     )
@@ -898,6 +931,20 @@ async def _register_services(hass: HomeAssistant) -> None:
             {
                 vol.Optional("entity_id"): cv.string,
                 vol.Optional("ieee_address"): cv.string,
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "audit_config",
+        _wrap_audit_config,
+        schema=vol.Schema(
+            {
+                vol.Optional("entity_id"): cv.string,
+                vol.Optional("ieee_address"): cv.string,
+                vol.Optional("mode"): vol.In(AUDIT_MODES),
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

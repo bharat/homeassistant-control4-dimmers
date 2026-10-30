@@ -1,5 +1,5 @@
 {
-    "name": "Control4 Dimmers",
+    "name": "Control4 Zigbee",
     "content_in_root": false,
     "homeassistant": "2026.3.1"
 }

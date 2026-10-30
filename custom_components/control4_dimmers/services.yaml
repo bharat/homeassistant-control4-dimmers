@@ -29,7 +29,7 @@ set_device_config:
         text:
     device_type_override:
       name: Device Type Override
-      description: Force the device type (dimmer, keypaddim, or keypad).
+      description: Force the device type (dimmer, keypaddim, keypad, or switch).
       required: false
       selector:
         select:
@@ -37,6 +37,7 @@ set_device_config:
             - "dimmer"
             - "keypaddim"
             - "keypad"
+            - "switch"
     faceplate_color:
       name: Faceplate Color
       description: Hex RGB faceplate color (e.g. "#ffffff" or "ffffff").
@@ -205,6 +206,47 @@ push_config:
       required: false
       selector:
         text:
+
+audit_config:
+  name: Audit Config
+  description: >
+    Read every stored slot of a device back right now and compare the
+    stored intent against both Zigbee2MQTT's cached button state and the
+    device firmware, naming the layer that drifted. This is the same pass
+    the periodic audit sweep runs. The evidence is logged before any
+    re-push, and mode "report" skips the re-push entirely so a drift can
+    be inspected before it is healed. Identify the device with either
+    entity_id or ieee_address (exactly one). Returns the pass summary.
+  fields:
+    entity_id:
+      name: Device Entity
+      description: >
+        Any entity belonging to the device. Provide this or ieee_address,
+        not both.
+      required: false
+      selector:
+        entity:
+          integration: control4_dimmers
+    ieee_address:
+      name: IEEE Address
+      description: >
+        The device's Zigbee IEEE address. Provide this or entity_id, not
+        both.
+      required: false
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: >
+        Override the configured audit mode for this call: "heal" re-pushes
+        the stored config on mismatch, "report" only logs. Defaults to the
+        integration's configured audit mode.
+      required: false
+      selector:
+        select:
+          options:
+            - "heal"
+            - "report"
 
 snapshot:
   name: Snapshot Device Config
@@ -458,7 +500,9 @@ send_raw_command:
 
 set_device_type:
   name: Set Device Type
-  description: Override the auto-detected device type.
+  description: >-
+    Override the auto-detected device type. Use "switch" for a relay-only
+    wall switch (C4-SW120277) that was detected as a keypad dimmer.
   fields:
     entity_id:
       name: Device Sensor
@@ -477,3 +521,4 @@ set_device_type:
             - "dimmer"
             - "keypaddim"
             - "keypad"
+            - "switch"

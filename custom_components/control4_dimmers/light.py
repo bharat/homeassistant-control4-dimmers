@@ -2,7 +2,8 @@
 Light platform for Control4 Dimmers.
 
 Creates a dimmer load entity (brightness-only) for devices with a
-physical dimmer (dimmer and keypaddim types).
+physical dimmer (dimmer and keypaddim types). Relay-only switches are
+excluded on purpose; they get a switch entity instead (switch.py).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from homeassistant.components.light import (
     LightEntity,
 )
 
-from .const import DEVICE_TYPE_DIMMER, DEVICE_TYPE_KEYPADDIM, DOMAIN, LOGGER
+from .const import DIMMABLE_TYPES, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 
     from .manager import Control4Manager
 
-LOAD_DEVICE_TYPES = {DEVICE_TYPE_DIMMER, DEVICE_TYPE_KEYPADDIM}
+LOAD_DEVICE_TYPES = set(DIMMABLE_TYPES)
 
 
 async def async_setup_entry(

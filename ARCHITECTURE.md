@@ -145,6 +145,30 @@ HA Device: "Kitchen Dimmer"
       state: lux value
 ```
 
+### Relay-only switch (e.g., Z2M name "Bath Fan", C4-SW120277)
+
+```
+HA Device: "Bath Fan"
+│
+├── sensor.bath_fan                       # anchor
+│     attributes: device_type: "switch", detected_type: "switch"
+│
+├── switch.bath_fan_load                  # on/off only, no brightness
+│
+├── event.bath_fan_button_2               # Top (wire 01)
+├── event.bath_fan_button_6               # Bottom (wire 05)
+├── event.bath_fan_paddle_up / paddle_down
+└── sensor.bath_fan_ambient_light
+```
+
+The Zigbee-side converter cannot tell a relay from a dimmer: it maps dim
+answer `01` to `dimmer`, `02` to `keypaddim`, and anything else to
+`keypaddim`. A relay-only switch answers `00`, so the integration refines a
+`keypaddim` verdict whose `c4_detect_result.dim_code` is `00` into `switch`
+(`models.refine_device_type`). A converter that reports `switch` directly is
+honored as-is. Units that never answer the probe stay `keypaddim` until the
+user runs `set_device_type` with `switch`.
+
 ### Keypad (e.g., Z2M name "Theater Keypad")
 
 ```

@@ -89,6 +89,33 @@ def _keypaddim_config(ieee: str, slot_count: int = 6) -> DeviceConfig:
     )
 
 
+def _switch_config(ieee: str) -> DeviceConfig:
+    """Build a relay-only switch: rocker on wires 01 and 05 (issue #189)."""
+    return DeviceConfig(
+        ieee_address=ieee,
+        friendly_name=NAMES[ieee],
+        device_type="switch",
+        slots=[
+            SlotConfig(
+                slot_id=2,
+                name="Top",
+                behavior="load_on",
+                led_mode="follow_load",
+                led_on_color="ffffff",
+                led_off_color="000000",
+            ),
+            SlotConfig(
+                slot_id=6,
+                name="Bottom",
+                behavior="load_off",
+                led_mode="follow_load",
+                led_on_color="000000",
+                led_off_color="0000ff",
+            ),
+        ],
+    )
+
+
 def _build(
     mock_hass: MagicMock,
     ieees: list[str],
@@ -760,6 +787,60 @@ class TestAuditPass:
         assert [e for e in fake.events if e[0] == "read"] == [("read", 2)]
         # The guard we planted is untouched; our own guards are cleared.
         assert mgr._verifying == {(IEEE_A, 1)}
+
+    @pytest.mark.asyncio
+    async def test_switch_audits_slots_only_no_level_writes(
+        self, mock_hass: MagicMock
+    ) -> None:
+        # A relay-only switch is audited exactly like any other load-bearing
+        # device: per-slot LED and behavior reads, never a state or
+        # brightness push (issue #189).
+        mgr = _build(mock_hass, [IEEE_A], slot_count=1)
+        mgr.store._devices[IEEE_A] = _switch_config(IEEE_A)
+        mgr._devices[IEEE_A].device_type = "switch"
+        slots = mgr.store.get_device(IEEE_A).slots
+        fake = _FakeDevice(
+            mgr, IEEE_A, {s.slot_id: _matching_payload(s) for s in slots}
+        )
+        with patch.object(mgr, "async_send_mqtt", new=fake.send):
+            summary = await mgr.async_audit_device(IEEE_A)
+        assert summary["slots_mismatched"] == 0
+        assert [e for e in fake.events if e[0] == "read"] == [
+            ("read", 2),
+            ("read", 6),
+        ]
+        assert not [e for e in fake.events if e[0] == "push"]
+        assert not [e for e in fake.events if e[0] == "state_write"]
+        for slot_id in (2, 6):
+            assert _result(mgr, IEEE_A, slot_id)["in_sync"] is True
+
+    @pytest.mark.asyncio
+    async def test_switch_heal_pushes_slot_commands_only(
+        self, mock_hass: MagicMock
+    ) -> None:
+        mgr = _build(mock_hass, [IEEE_A], slot_count=1)
+        mgr.store._devices[IEEE_A] = _switch_config(IEEE_A)
+        mgr._devices[IEEE_A].device_type = "switch"
+        top, bottom = mgr.store.get_device(IEEE_A).slots
+        firmware = {
+            2: _fw_payload(
+                2, on="123456", off="000000", led_mode="follow_load", behavior="load_on"
+            ),
+            6: _matching_payload(bottom),
+        }
+        fake = _FakeDevice(mgr, IEEE_A, firmware, heal_fixes=False)
+        with _fast(), patch.object(mgr, "async_send_mqtt", new=fake.send):
+            summary = await mgr.async_audit_device(IEEE_A)
+        assert summary["slots_mismatched"] == 1
+        pushes = [e[1] for e in fake.events if e[0] == "push"]
+        assert pushes
+        # Every heal command re-pushes the wire-01 slot's own config.
+        assert all(cmd.startswith(("c4.dmx.btn 01", "c4.dmx.led 01")) for cmd in pushes)
+        writes = [e[1] for e in fake.events if e[0] == "state_write"]
+        assert all("brightness" not in w and "state" not in w for w in writes)
+        assert _result(mgr, IEEE_A, 2)["in_sync"] is False
+        assert _result(mgr, IEEE_A, 6)["in_sync"] is True
+        assert top.slot_id == 2
 
     @pytest.mark.asyncio
     async def test_unknown_device_returns_none(self, mock_hass: MagicMock) -> None:

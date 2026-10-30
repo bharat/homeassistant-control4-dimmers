@@ -35,6 +35,8 @@ from .const import (
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
+    DEVICE_TYPE_SLOTS,
+    DEVICE_TYPE_SWITCH,
     DEVICE_TYPES,
     DOMAIN,
     LOGGER,
@@ -1691,10 +1693,14 @@ class Control4Manager:
 
     def get_default_slots(self, device_type: str) -> list[SlotConfig]:
         """Generate default slot configuration for a device type."""
-        if device_type == DEVICE_TYPE_DIMMER:
+        if device_type in (DEVICE_TYPE_DIMMER, DEVICE_TYPE_SWITCH):
+            # Two-button rocker: top turns the load on, bottom turns it
+            # off. The relay-only switch shares the layout but reports its
+            # bottom half on a different wire (DEVICE_TYPE_SLOTS).
+            top, bottom = DEVICE_TYPE_SLOTS[device_type]
             return [
                 SlotConfig(
-                    slot_id=2,
+                    slot_id=top,
                     size=1,
                     name="Top",
                     behavior="load_on",
@@ -1703,7 +1709,7 @@ class Control4Manager:
                     led_off_color="000000",
                 ),
                 SlotConfig(
-                    slot_id=5,
+                    slot_id=bottom,
                     size=1,
                     name="Bottom",
                     behavior="load_off",

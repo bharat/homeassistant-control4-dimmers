@@ -261,6 +261,35 @@ class TestEventSetupCreatesPaddles:
         assert f"{IEEE_DIMMER}_event_paddle_up" in uids
         assert f"{IEEE_DIMMER}_event_paddle_down" in uids
 
+    async def test_paddles_and_rocker_buttons_for_switch(
+        self,
+        manager: Control4Manager,
+        mock_hass: MagicMock,
+        mock_entry: MagicMock,
+    ) -> None:
+        # A relay-only switch drives a load, so it gets the paddle halves,
+        # plus button slots 2 and 6 (issue #189).
+        ieee = "0x000fff0000ddd001"
+        manager._devices[ieee] = DeviceState(
+            ieee_address=ieee,
+            friendly_name="Bath Fan",
+            model_id="C4-Zigbee",
+            device_type="switch",
+        )
+        added = await self._run_setup(manager, mock_hass, mock_entry)
+        uids = {e.unique_id for e in added}
+        assert uids == {
+            f"{ieee}_event_2",
+            f"{ieee}_event_6",
+            f"{ieee}_event_paddle_up",
+            f"{ieee}_event_paddle_down",
+        }
+        names = {
+            e.unique_id: e.name for e in added if isinstance(e, Control4ButtonEvent)
+        }
+        assert names[f"{ieee}_event_2"] == "Top"
+        assert names[f"{ieee}_event_6"] == "Bottom"
+
     async def test_no_paddles_for_keypad(
         self,
         manager: Control4Manager,

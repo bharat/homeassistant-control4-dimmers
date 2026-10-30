@@ -34,7 +34,7 @@ Pairs with a Zigbee2MQTT stack that speaks the Control4 protocol natively
 | C4-APD120 | Adaptive Phase Dimmer | Yes | Yes | 2 (rocker) | **Confirmed** |
 | C4-KD120 | Keypad Dimmer | Yes | Yes | 6 (rocker + keypad) | **Confirmed** |
 | C4-KC120277 | Configurable Keypad | N/A | Yes | 6 (configurable slots) | **Confirmed** |
-| C4-SW120277 | Switch (on/off) | No | Untested | 2 (rocker) | **Partial**: on/off works, but it is detected as a keypad dimmer, so HA shows a brightness slider that does nothing |
+| C4-SW120277 | Switch (on/off) | No | Untested | 2 (rocker) | **Community confirmed**: on/off via a `switch` entity (no brightness slider). Units that answer the dim probe are recognised automatically; the rest need `set_device_type` with `switch` (see Troubleshooting) |
 
 All newer Control4 Zigbee devices with manufacturer ID `43981` (`0xABCD`) are
 expected to work. To move a device to a new Zigbee mesh, use the **13-4-13**
@@ -262,6 +262,12 @@ appropriate contrast.
 | **Dimmer** (C4-APD120) | 2 (rocker) | Yes | Top = Load On, Bottom = Load Off |
 | **Keypad Dimmer** (C4-KD120) | 6 (rocker + 4 keypad) | Yes | Button 1 = Toggle Load, 2-6 = Programmable |
 | **Keypad** (C4-KC120277) | 6 (configurable) | No | All Programmable |
+| **Switch** (C4-SW120277) | 2 (rocker) | Yes (on/off only) | Top = Load On, Bottom = Load Off |
+
+A switch gets a `switch.<name>_load` entity instead of a light, so there is
+no brightness slider. If one of yours was previously exposed as a light,
+the light entity is gone and the switch entity replaces it; update any
+automations or dashboards that referenced the old entity id.
 
 ### Troubleshooting
 
@@ -282,6 +288,14 @@ appropriate contrast.
   a minute from the device's own telemetry. To force it, run
   `{"c4_detect": true}` manually, or override with the
   `set_device_type` service.
+
+- **A relay-only switch (C4-SW120277) shows a brightness slider**: The
+  Zigbee side cannot tell a relay from a dimmer and reports it as a keypad
+  dimmer. Units that answer the dim probe with `00` are recognised as a
+  switch automatically. Units that do not answer at all stay a keypad
+  dimmer; run `set_device_type` with `device_type: switch` on the device's
+  sensor entity to flag them by hand. The Z2M light entity for the device
+  still exists; use the integration's `switch.<name>_load` entity instead.
 
 - **Pairing fails (orange/yellow blinking, then back to solid green,
   unpaired)**: Open permit-join before pressing top 4x, and scope it to
@@ -566,13 +580,14 @@ data:
 ### `control4_dimmers.set_device_type`
 
 Override the auto-detected device type. Use this when detection
-misclassifies a keypad as a dimmer or vice versa.
+misclassifies a keypad as a dimmer or vice versa, or to flag a relay-only
+wall switch (C4-SW120277) that detection filed as a keypad dimmer.
 
 ```yaml
 service: control4_dimmers.set_device_type
 data:
   entity_id: sensor.entry_keypad
-  device_type: keypaddim    # or dimmer, keypad
+  device_type: keypaddim    # or dimmer, keypad, switch
 ```
 
 ### `control4_dimmers.send_raw_command`
@@ -619,6 +634,7 @@ the same manufacturer ID. The device definition uses a single
 |----------|--------|------|
 | `01` | C4-APD120 | Forward-phase dimmer (2 buttons) |
 | `02` | C4-KD120 | Reverse-phase keypad dimmer (6 buttons + load) |
+| `00` | C4-SW120277 | Relay-only switch (2 buttons, on/off load); the Zigbee side reports `keypaddim`, the integration refines it to `switch` from the published `dim_code` |
 | error/timeout | C4-KC120277 | Pure keypad (6 buttons, no load) |
 
 ### Config audit sweep

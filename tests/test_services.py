@@ -6,9 +6,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import voluptuous as vol
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.control4_dimmers import (
+    _register_services,
     _svc_delete_snapshot,
     _svc_list_snapshots,
     _svc_push_config,
@@ -184,6 +186,91 @@ class TestSetDeviceType:
         assert bottom.behavior == "load_off"
         # Seeded slots are pushed to firmware.
         mgr._push_slot_config.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_switch_override_seeds_rocker_on_wires_01_and_05(
+        self, mock_hass: MagicMock
+    ) -> None:
+        # A C4-SW120277 detected as keypaddim is flagged by hand (issue #189).
+        mgr, store = _make_runtime(mock_hass, device_type="keypaddim", config=None)
+        mock_hass.states.get.return_value = _entity_state(IEEE)
+        call = _call({"entity_id": "sensor.theater", "device_type": "switch"})
+        await _svc_set_device_type(mock_hass, call)
+        config = store.get_device(IEEE)
+        assert config is not None
+        assert config.device_type_override == "switch"
+        assert config.effective_type == "switch"
+        assert [s.slot_id for s in config.slots] == [2, 6]
+        assert config.slots[0].behavior == "load_on"
+        assert config.slots[1].behavior == "load_off"
+        mgr._push_slot_config.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_set_device_config_accepts_switch_override(
+        self, mock_hass: MagicMock
+    ) -> None:
+        _mgr, store = _make_runtime(mock_hass, device_type="keypaddim", config=None)
+        call = _call({"ieee_address": IEEE, "device_type_override": "switch"})
+        await _svc_set_device_config(mock_hass, call)
+        config = store.get_device(IEEE)
+        assert config is not None
+        assert config.effective_type == "switch"
+        assert [s.slot_id for s in config.slots] == [2, 6]
+
+    @pytest.mark.asyncio
+    async def test_set_device_config_validates_slots_for_switch(
+        self, mock_hass: MagicMock
+    ) -> None:
+        _make_runtime(mock_hass, device_type="keypaddim", config=None)
+        bad = _call(
+            {
+                "ieee_address": IEEE,
+                "device_type_override": "switch",
+                "slots": [{"slot_id": 5, "name": "Nope"}],
+            }
+        )
+        with pytest.raises(ServiceValidationError):
+            await _svc_set_device_config(mock_hass, bad)
+        good = _call(
+            {
+                "ieee_address": IEEE,
+                "device_type_override": "switch",
+                "slots": [{"slot_id": 6, "name": "Bottom"}],
+            }
+        )
+        result = await _svc_set_device_config(mock_hass, good)
+        assert result is not None
+        assert [s["slot_id"] for s in result["slots"]] == [6]
+
+
+class TestDeviceTypeSchemas:
+    """The registered service schemas accept the switch type (issue #189)."""
+
+    @staticmethod
+    def _schema(mock_hass: MagicMock, service: str) -> vol.Schema:
+        for call in mock_hass.services.async_register.call_args_list:
+            if call.args[1] == service:
+                return call.kwargs["schema"]
+        msg = f"service {service} not registered"
+        raise AssertionError(msg)
+
+    @pytest.mark.asyncio
+    async def test_set_device_type_accepts_switch(self, mock_hass: MagicMock) -> None:
+        await _register_services(mock_hass)
+        schema = self._schema(mock_hass, "set_device_type")
+        data = schema({"entity_id": "sensor.bath_fan", "device_type": "switch"})
+        assert data["device_type"] == "switch"
+        with pytest.raises(vol.Invalid):
+            schema({"entity_id": "sensor.bath_fan", "device_type": "relay"})
+
+    @pytest.mark.asyncio
+    async def test_set_device_config_accepts_switch(self, mock_hass: MagicMock) -> None:
+        await _register_services(mock_hass)
+        schema = self._schema(mock_hass, "set_device_config")
+        data = schema({"ieee_address": IEEE, "device_type_override": "switch"})
+        assert data["device_type_override"] == "switch"
+        with pytest.raises(vol.Invalid):
+            schema({"ieee_address": IEEE, "device_type_override": "relay"})
 
 
 # ── set_slot ─────────────────────────────────────────────────────────

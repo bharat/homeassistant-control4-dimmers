@@ -29,7 +29,7 @@ set_device_config:
         text:
     device_type_override:
       name: Device Type Override
-      description: Force the device type (dimmer, keypaddim, or keypad).
+      description: Force the device type (dimmer, keypaddim, keypad, or switch).
       required: false
       selector:
         select:
@@ -37,6 +37,7 @@ set_device_config:
             - "dimmer"
             - "keypaddim"
             - "keypad"
+            - "switch"
     faceplate_color:
       name: Faceplate Color
       description: Hex RGB faceplate color (e.g. "#ffffff" or "ffffff").
@@ -499,7 +500,9 @@ send_raw_command:
 
 set_device_type:
   name: Set Device Type
-  description: Override the auto-detected device type.
+  description: >-
+    Override the auto-detected device type. Use "switch" for a relay-only
+    wall switch (C4-SW120277) that was detected as a keypad dimmer.
   fields:
     entity_id:
       name: Device Sensor
@@ -518,3 +521,4 @@ set_device_type:
             - "dimmer"
             - "keypaddim"
             - "keypad"
+            - "switch"

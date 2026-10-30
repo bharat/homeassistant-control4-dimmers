@@ -28,9 +28,13 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
+# No Platform.LIGHT on purpose: dimmable loads reuse Z2M's native light
+# entity over MQTT. Relay-only switches (issue #189) get their own switch
+# entity here because Z2M's light would show a dead brightness slider.
 PLATFORMS: list[Platform] = [
     Platform.EVENT,
     Platform.SENSOR,
+    Platform.SWITCH,
 ]
 
 # The "control this device's own load" sentinel an action target can
@@ -872,7 +876,7 @@ async def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema(
             {
                 vol.Required("entity_id"): cv.string,
-                vol.Required("device_type"): vol.In(["dimmer", "keypaddim", "keypad"]),
+                vol.Required("device_type"): vol.In(DEVICE_TYPES),
             }
         ),
     )

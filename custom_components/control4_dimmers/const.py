@@ -114,6 +114,12 @@ PADDLE_NAMES: Final[dict[str, str]] = {
     PADDLE_DOWN: "Paddle Down",
 }
 
+# On a dimmer the rocker's button and LED wire IDs differ: the top half is
+# button 2 / LED 2, but the bottom half is reported as button 6 while its LED
+# is LED 5 (the LED slot the Bottom config lives on). Button events are mapped
+# onto the LED slot so the Bottom slot receives them.
+DIMMER_BUTTON_TO_SLOT: Final[dict[int, int]] = {6: 5}
+
 DEVICE_TYPE_SLOTS: Final[dict[str, list[int]]] = {
     DEVICE_TYPE_DIMMER: [2, 5],
     DEVICE_TYPE_KEYPADDIM: [1, 2, 3, 4, 5, 6],

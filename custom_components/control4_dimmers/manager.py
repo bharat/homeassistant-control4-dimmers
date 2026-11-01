@@ -562,6 +562,7 @@ class Control4Manager:
         device_type_override: str | None = None,
         slots: list[dict[str, Any]] | None = None,
         faceplate_color: str | None = None,
+        backlight_color: str | None = None,
     ) -> None:
         """Save device configuration and push LED colors via MQTT."""
         state = self._devices.get(ieee_address)
@@ -583,6 +584,12 @@ class Control4Manager:
 
         if faceplate_color is not None:
             config.faceplate_color = faceplate_color
+
+        backlight_changed = (
+            backlight_color is not None and backlight_color != config.backlight_color
+        )
+        if backlight_changed:
+            config.backlight_color = backlight_color
 
         config.friendly_name = state.friendly_name
         if state.device_type:
@@ -606,6 +613,9 @@ class Control4Manager:
 
         if slots is not None or seeded:
             await self._push_slot_config(state, config)
+        elif backlight_changed:
+            async with self._device_lock(self._push_locks, state.ieee_address):
+                await self._send_backlight(state, config)
 
         self.setup_light_tracking()
         self.notify_listeners()
@@ -683,6 +693,23 @@ class Control4Manager:
         async with self._device_lock(self._push_locks, state.ieee_address):
             for slot in config.slots:
                 await self._send_slot_commands(state, slot)
+            await self._send_backlight(state, config)
+
+    async def _send_backlight(self, state: DeviceState, config: DeviceConfig) -> None:
+        """
+        Write the stored keypad backlight color, if one is set.
+
+        Param 05 of c4.dmx.blc set 00 is the backlight color; the firmware
+        applies it to the hidden backlight LEDs (06-0c) at once, and
+        000000 turns the backlight off. Devices without backlight hardware
+        (APD120 dimmers) accept the command and show nothing.
+        """
+        if config.backlight_color is None:
+            return
+        await self.async_send_mqtt(
+            state.ieee_address,
+            {"c4_cmd": f"c4.dmx.blc 00 05 {config.backlight_color}"},
+        )
 
     async def _push_single_slot(
         self, state: DeviceState, config: DeviceConfig, slot_id: int

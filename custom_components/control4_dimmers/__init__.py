@@ -215,6 +215,7 @@ async def _ws_get_devices(
         vol.Optional("device_type_override"): vol.Any(cv.string, None),
         vol.Optional("slots"): list,
         vol.Optional("faceplate_color"): vol.Any(cv.string, None),
+        vol.Optional("backlight_color"): vol.Any(_hex_color, None),
     }
 )
 @websocket_api.async_response
@@ -234,6 +235,7 @@ async def _ws_configure_device(
         device_type_override=msg.get("device_type_override"),
         slots=msg.get("slots"),
         faceplate_color=msg.get("faceplate_color"),
+        backlight_color=msg.get("backlight_color"),
     )
     info = manager.get_device_info(msg["ieee_address"])
     connection.send_result(msg["id"], info)
@@ -531,11 +533,12 @@ async def _svc_set_device_config(
     Handle control4_dimmers.set_device_config service call.
 
     Applies a full device configuration in one call: optional
-    device_type_override, optional faceplate_color, and an optional
-    slots list that replaces the device's entire slot configuration.
-    Omitted fields are left unchanged. Routes through
-    async_configure_device so persistence, the firmware push, and entity
-    refresh stay identical to the Lovelace card's websocket path.
+    device_type_override, optional faceplate_color, optional
+    backlight_color, and an optional slots list that replaces the
+    device's entire slot configuration. Omitted fields are left
+    unchanged. Routes through async_configure_device so persistence,
+    the firmware push, and entity refresh stay identical to the
+    Lovelace card's websocket path.
     Returns the device's resulting stored config.
     """
     runtime = _get_runtime(hass)
@@ -562,6 +565,7 @@ async def _svc_set_device_config(
         device_type_override=device_type_override,
         slots=slots,
         faceplate_color=call.data.get("faceplate_color"),
+        backlight_color=call.data.get("backlight_color"),
     )
 
     config = manager.store.get_device(ieee)
@@ -723,6 +727,7 @@ async def _svc_restore(hass: HomeAssistant, call: ServiceCall) -> dict[str, Any]
         device_type_override=snapshot.get("device_type_override"),
         slots=snapshot.get("slots", []),
         faceplate_color=snapshot.get("faceplate_color"),
+        backlight_color=snapshot.get("backlight_color"),
     )
 
     if call.data.get("delete", False):
@@ -893,6 +898,7 @@ async def _register_services(hass: HomeAssistant) -> None:
                     None, vol.In(DEVICE_TYPES)
                 ),
                 vol.Optional("faceplate_color"): vol.Any(None, cv.string),
+                vol.Optional("backlight_color"): vol.Any(None, _hex_color),
                 vol.Optional("slots"): [dict],
             }
         ),

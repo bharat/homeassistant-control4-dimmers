@@ -6,7 +6,7 @@ isal==1.8.0
 mutagen==1.48.1
 pymicro-vad==2.1.0
 pyspeex-noise==2.0.1
-PyTurboJPEG==2.5.0
+PyTurboJPEG==2.6.0
 pip==26.2.2
 ruff==0.17.2
 pre_commit==4.7.0

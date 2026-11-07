@@ -61,6 +61,14 @@ class TestOutletDiscovery:
         assert manager.devices[IEEE_OUTLET].device_type == DEVICE_TYPE_OUTLET
 
     @pytest.mark.asyncio
+    async def test_model_id_drops_the_zigbee_prefix(
+        self, manager: Control4Manager
+    ) -> None:
+        # The device page shows the model, not "c4:control4_light:...".
+        await manager._handle_bridge_devices(_bridge_msg([_outlet_bridge_device()]))
+        assert manager.devices[IEEE_OUTLET].model_id == "C4-V-ROSW120"
+
+    @pytest.mark.asyncio
     async def test_outlet_type_from_raw_model_id(
         self, manager: Control4Manager
     ) -> None:

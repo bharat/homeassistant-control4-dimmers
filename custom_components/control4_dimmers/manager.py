@@ -416,7 +416,9 @@ class Control4Manager:
                 continue
             seen.add(ieee)
             friendly_name = device_info.get("friendly_name", ieee)
-            model_id = device_info.get("model_id", "")
+            # Some devices prefix their Zigbee modelID (the ROS reports
+            # "c4:control4_light:C4-V-ROSW120"); keep only the model.
+            model_id = device_info.get("model_id", "").rsplit(":", 1)[-1]
 
             if ieee not in self._devices:
                 self._devices[ieee] = DeviceState(

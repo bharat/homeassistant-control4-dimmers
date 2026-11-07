@@ -173,7 +173,7 @@ class TestControl4ButtonEvent:
 
 
 class TestControl4PaddleEvent:
-    """Tests for the local load paddle event entity."""
+    """Tests for the 3-way auxiliary switch event entity."""
 
     def _make_entity(
         self,
@@ -197,8 +197,8 @@ class TestControl4PaddleEvent:
         assert entity.unique_id == f"{IEEE_DIMMER}_event_paddle_down"
 
     def test_names(self, manager: Control4Manager) -> None:
-        assert self._make_entity(manager, "paddle_up").name == "Paddle Up"
-        assert self._make_entity(manager, "paddle_down").name == "Paddle Down"
+        assert self._make_entity(manager, "paddle_up").name == "Auxiliary Up"
+        assert self._make_entity(manager, "paddle_down").name == "Auxiliary Down"
 
     def test_event_types(self, manager: Control4Manager) -> None:
         entity = self._make_entity(manager)

@@ -71,8 +71,9 @@ async def async_setup_entry(
                         slot_id=slot_id,
                     )
                 )
-            # Load-bearing devices also expose their physical load paddle
-            # halves (issue #117). Pure keypads have no load, so no paddle.
+            # Load-bearing devices also expose the halves of a 3-way
+            # auxiliary switch (issue #117). Pure keypads have no load, so
+            # nothing can be wired to them.
             if device_type in LOAD_BEARING_TYPES:
                 for paddle_id in PADDLE_IDS:
                     key = f"{ieee}_{paddle_id}"
@@ -307,7 +308,7 @@ class Control4ButtonEvent(EventEntity):
 
 
 class Control4PaddleEvent(EventEntity):
-    """Event entity for a local load paddle half on a load-bearing device."""
+    """Event entity for one half of a 3-way auxiliary switch on a load device."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True
@@ -322,7 +323,7 @@ class Control4PaddleEvent(EventEntity):
         model_id: str,
         paddle_id: str,
     ) -> None:
-        """Initialize the paddle event entity."""
+        """Initialize the auxiliary switch event entity."""
         self._manager = manager
         self._ieee = ieee_address
         self._paddle_id = paddle_id

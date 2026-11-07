@@ -218,7 +218,7 @@ class Control4Manager:
         Register a callback for button events on a specific slot or paddle.
 
         slot_id is an int (1..6) for a button-array slot, or a paddle id
-        string ("paddle_up" / "paddle_down") for a local load paddle half.
+        string ("paddle_up" / "paddle_down") for a 3-way auxiliary switch half.
         The callback receives the event_type string (e.g. "pressed",
         "double_tap").  Returns an unsubscribe callable.
         """
@@ -228,7 +228,7 @@ class Control4Manager:
 
     def _dispatch_paddle_action(self, device: DeviceState, action_str: str) -> bool:
         """
-        Dispatch a local load paddle action (issue #117).
+        Dispatch a 3-way auxiliary switch action (issue #117).
 
         paddle_up / paddle_down share the button grammar. Firmware drives the
         load directly, so we only surface the event for automations; there is

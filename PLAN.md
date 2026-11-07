@@ -9,6 +9,8 @@ functional, running in production against a 31-device fleet.
 - Automatic device type detection (dimmer / keypad-dimmer / keypad) via `c4_device_type` MQTT field
 - Event entities for each physical button slot
 - Per-slot LED color/mode configuration pushed to device firmware
+- Load power sensors from `c4.dmx.ls` (power, voltage, current, apparent power, power factor) on dimmers and relay switches
+- Dimming table settings from `c4.dm.tv` (ramp times, default/min/max level, cold start) as number entities, dimmers only
 - Persistent device configuration storage with snapshot/restore
 - Bundled Lovelace card (`control4-dimmer-card`) with dashboard view and visual chassis editor
 - WebSocket API for card-to-backend communication

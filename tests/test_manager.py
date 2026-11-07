@@ -10,6 +10,7 @@ import pytest
 
 from custom_components.control4_dimmers.manager import (
     C4_MODEL_IDS,
+    PRESS_PAIR_WINDOW,
     Control4Manager,
     _click_count_to_event_type,
     _is_control4_device,
@@ -272,6 +273,95 @@ class TestManagerEventCallbacks:
         manager.register_event_callback(IEEE_DIMMER, 2, slot_cb)
         manager._dispatch_button_action(dimmer_state, "paddle_up_press")
         slot_cb.assert_not_called()
+
+    def test_press_scene_pair_fires_pressed_once(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """One tap sends bp and sc; only one "pressed" fires."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
+        manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        manager._dispatch_button_action(dimmer_state, "button_2_click_1")
+        assert [c.args[0] for c in cb.call_args_list] == ["pressed", "single_tap"]
+
+    def test_scene_first_swallows_following_press(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Whichever half arrives first wins, so sc then bp is still one."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
+        cb.assert_called_once_with("pressed")
+
+    def test_double_tap_fires_pressed_per_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """A fast double tap (bp sc bp sc) fires "pressed" twice, not four times."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        for action in ("press", "scene", "press", "scene", "click_2"):
+            manager._dispatch_button_action(dimmer_state, f"button_2_{action}")
+        assert [c.args[0] for c in cb.call_args_list] == [
+            "pressed",
+            "pressed",
+            "double_tap",
+        ]
+
+    def test_scene_only_device_fires_pressed_per_tap(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """A device that only sends sc still gets one "pressed" per tap."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        assert cb.call_count == 2
+
+    def test_late_scene_outside_window_fires_again(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """A sc that arrives after the pair window is treated as a new tap."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        with patch(
+            "custom_components.control4_dimmers.manager.time.monotonic",
+            side_effect=[100.0, 100.0 + PRESS_PAIR_WINDOW + 0.1],
+        ):
+            manager._dispatch_button_action(dimmer_state, "button_2_press")
+            manager._dispatch_button_action(dimmer_state, "button_2_scene")
+        assert cb.call_count == 2
+
+    def test_pairs_are_tracked_per_slot(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """A press on one slot does not swallow a scene on another."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb2 = MagicMock()
+        cb6 = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 2, cb2)
+        manager.register_event_callback(IEEE_DIMMER, 6, cb6)
+        manager._dispatch_button_action(dimmer_state, "button_2_press")
+        manager._dispatch_button_action(dimmer_state, "button_6_scene")
+        cb2.assert_called_once_with("pressed")
+        cb6.assert_called_once_with("pressed")
+
+    def test_paddle_press_scene_pair_fires_pressed_once(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """The auxiliary path dedupes its bp/sc pair the same way."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, "paddle_up", cb)
+        manager._dispatch_button_action(dimmer_state, "paddle_up_press")
+        manager._dispatch_button_action(dimmer_state, "paddle_up_scene")
+        cb.assert_called_once_with("pressed")
 
 
 # ── Manager: bridge device handling ──────────────────────────────────

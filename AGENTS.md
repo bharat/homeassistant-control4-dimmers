@@ -87,7 +87,7 @@ Zigbee-side changes (device definition, protocol library, Docker image) are made
 
 This integration and the Zigbee-side definition are separate codebases coupled only by these MQTT names. Do NOT rename them on either side (the ZHC fork carries a contract test asserting the same list):
 
-- **Inbound (device state)**: `c4_device_type` (`dimmer`/`keypaddim`/`keypad`; `switch` is also accepted, and a `keypaddim` verdict whose `c4_detect_result.dim_code` is `00` is refined to `switch` on this side), `c4_led_{1..6}_{on,off}` (flat hex), `action` with the 48-value grammar `button_{1..6}_{press,scene,click_{1..4}}` + `paddle_{up,down}_{press,scene,click_{1..4}}`, `state`/`brightness`, `c4_detect_result`, `c4_response`/`c4_response_ep`, `button_N_behavior`/`button_N_led_mode`.
+- **Inbound (device state)**: `c4_device_type` (`dimmer`/`keypaddim`/`keypad`; `switch` is also accepted, and a `keypaddim` verdict whose `c4_detect_result.dim_code` is `00` is refined to `switch` on this side; the C4-V-ROSW120 outlet never reports one and is typed `outlet` here from its model), `c4_led_{1..6}_{on,off}` (flat hex), `action` with the 48-value grammar `button_{1..6}_{press,scene,click_{1..4}}` + `paddle_{up,down}_{press,scene,click_{1..4}}`, `state`/`brightness`, `c4_detect_result`, `c4_response`/`c4_response_ep`, `button_N_behavior`/`button_N_led_mode`.
 - **Outbound (`<topic>/<name>/set`)**: `c4_cmd`, `c4_detect`, `c4_led`, `c4_query`, `state`/`brightness`, plus `button_N_behavior`/`button_N_led_mode` state writes.
 
 ## Conventions and gotchas

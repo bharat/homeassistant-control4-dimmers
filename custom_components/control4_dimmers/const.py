@@ -72,6 +72,14 @@ DEVICE_TYPE_KEYPAD: Final = "keypad"
 # as a light, so HA does not render a brightness slider the hardware
 # cannot honor.
 DEVICE_TYPE_SWITCH: Final = "switch"
+# Outlet relay (C4-V-ROSW120): one button that toggles the receptacle,
+# no LED rocker, no ambient sensor and no c4.dmx.dim answer. The converter
+# never reports a c4_device_type for it, so the integration assigns this
+# type from the model. Z2M's own switch entity drives the load; the
+# integration only adds the button's event entity.
+DEVICE_TYPE_OUTLET: Final = "outlet"
+OUTLET_MODELS: Final = frozenset({"C4-V-ROSW120"})
+
 DEVICE_TYPES: Final = [
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
@@ -121,6 +129,8 @@ DEVICE_TYPE_SLOTS: Final[dict[str, list[int]]] = {
     # Community report (issue #189): the SW120277 rocker reports its top
     # half on wire 01 (button 2) and its bottom half on wire 05 (button 6).
     DEVICE_TYPE_SWITCH: [2, 6],
+    # The ROS button reports as button 1 (c4.dmx.bp 00).
+    DEVICE_TYPE_OUTLET: [1],
 }
 
 BUTTON_EVENT_TYPES: Final[list[str]] = [

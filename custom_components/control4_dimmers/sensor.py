@@ -17,7 +17,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import LIGHT_LUX, EntityCategory
 
-from .const import DOMAIN, LOGGER
+from .const import DEVICE_TYPE_OUTLET, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,7 +59,8 @@ async def async_setup_entry(
                         model_id=state.model_id,
                     )
                 )
-            if ieee not in known_ambient:
+            # The outlet relay has no ambient light sensor (amb answers n01).
+            if ieee not in known_ambient and state.device_type != DEVICE_TYPE_OUTLET:
                 known_ambient.add(ieee)
                 new_entities.append(
                     Control4AmbientLightSensor(

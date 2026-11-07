@@ -23,6 +23,8 @@ Pairs with a Zigbee2MQTT stack that speaks the Control4 protocol natively
 - Trigger automations from physical button events (`pressed`, `released`, `single_tap`, `double_tap`, `triple_tap`) exposed as HA event entities.
 - Auto-detect device type (dimmer, keypad dimmer, or pure keypad) at pairing time.
 - Read stored LED colors from device firmware so dimmers retain their existing C4 colors.
+- See each load's power, voltage, current, apparent power and power factor, measured by the device itself.
+- Adjust dimming settings (ramp times, default/minimum/maximum level, cold start) from HA.
 - Send raw C4 text protocol commands for experimentation and debugging.
 
 ## Supported Devices
@@ -291,6 +293,36 @@ trigger:
   platform: state
   entity_id: event.office_hallway_paddle_down
 ```
+
+### Power readings and dimming settings
+
+These need a Zigbee2MQTT image whose Control4 converter publishes `c4_load_*` and `c4_tv_*` (see [zigbee2mqtt-control4](https://github.com/bharat/zigbee2mqtt-control4)). With an older image the entities are simply never created or never get a value.
+
+**Power sensors** appear on every device with a load (dimmers, keypad dimmers and relay switches) the first time it reports a reading:
+
+| Sensor | Unit | Enabled by default |
+|--------|------|--------------------|
+| Power | W | Yes |
+| Voltage | V | Yes |
+| Current | mA | Yes |
+| Apparent power | VA | Yes |
+| Power factor | 0 to 1 | Yes |
+| Load field 9, Load field 10 | none | No (diagnostic; meaning not confirmed yet) |
+
+The device pushes a reading when its load changes (on, off, or a new level), so a light that stays on keeps its last reading. Readings can't be polled. The first reading right after turning on can be low; the next one settles.
+
+**Dimming settings** are number entities in each dimmer's Configuration section. They are disabled by default, so enable the ones you want first:
+
+| Setting | Unit |
+|---------|------|
+| Default on level | % |
+| Click ramp up / Click ramp down | ms |
+| Hold ramp up / Hold ramp down | ms |
+| Maximum level / Minimum level | % |
+| Cold start time | ms |
+| Cold start level | % |
+
+The integration reads each device's dimming table once and Zigbee2MQTT keeps the values, so restarting HA doesn't read them again. Changing a setting writes it to the device and reads it back. Relay switches (C4-SW120277) can't dim, so they get no dimming settings.
 
 ### Troubleshooting
 

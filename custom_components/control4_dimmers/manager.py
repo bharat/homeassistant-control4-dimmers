@@ -44,6 +44,7 @@ from .const import (
     DOMAIN,
     LOGGER,
     OUTLET_MODELS,
+    RELAY_MODELS,
     SLOT_COUNT,
 )
 from .models import DeviceConfig, DeviceState, SlotConfig, _extract_color
@@ -1759,6 +1760,17 @@ class Control4Manager:
         LOGGER.info("Auto-detecting device type for %s", ieee_address)
         await self.async_send_mqtt(ieee_address, {"c4_detect": True})
 
+    def is_relay(self, ieee_address: str) -> bool:
+        """Return whether a device can only switch its load, not dim it."""
+        device = self._devices.get(ieee_address)
+        if device is None:
+            return False
+        if device.raw.get("c4_model") in RELAY_MODELS:
+            return True
+        config = self._store.get_device(ieee_address)
+        effective = (config.effective_type if config else None) or device.device_type
+        return effective == DEVICE_TYPE_SWITCH
+
     def _maybe_read_dimming(self, device: DeviceState) -> None:
         """
         Queue one dimming table read for a load device with no known values.
@@ -1769,6 +1781,7 @@ class Control4Manager:
         ieee = device.ieee_address
         if (
             device.device_type not in DEVICE_TYPES_WITH_LOAD
+            or self.is_relay(ieee)
             or ieee in self._dimming_requested
             or any(key.startswith("c4_tv_") for key in device.raw)
         ):
@@ -1790,11 +1803,10 @@ class Control4Manager:
     async def async_set_dimming(
         self, ieee_address: str, param: str, value: int
     ) -> None:
-        """Write one dimming table parameter, then read the table back."""
+        """Write one dimming table parameter; the converter publishes the read-back."""
         await self.async_send_mqtt(
             ieee_address, {"c4_cmd": f"c4.dm.tv 00 {param} {value:08x}"}
         )
-        await self.async_send_mqtt(ieee_address, {"c4_read_dimming": True})
 
     async def async_send_mqtt(self, ieee_address: str, payload: dict[str, Any]) -> None:
         """

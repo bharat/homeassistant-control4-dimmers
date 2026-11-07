@@ -143,6 +143,10 @@ BUTTON_EVENT_TYPES: Final[list[str]] = [
     "triple_tap",
 ]
 
+# Relay-only models. A relay can report another type, from a stored override or
+# a missing dim code, so the self-reported model is checked as well.
+RELAY_MODELS = frozenset({"C4-SW120277"})
+
 # Device types that drive a load, so they report load readings and have a
 # dimming table. A keypad has no load.
 DEVICE_TYPES_WITH_LOAD = frozenset(

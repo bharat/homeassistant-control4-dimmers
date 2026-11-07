@@ -2,7 +2,8 @@
 Number platform for Control4 Dimmers.
 
 Exposes the dimming table (c4.dm.tv): ramp rates, level limits and cold start
-values. An entity appears once the converter has read its parameter.
+values. An entity appears once the converter has read its parameter. Relays get
+none.
 """
 
 from __future__ import annotations
@@ -17,8 +18,7 @@ from homeassistant.components.number import (
 )
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTime
 
-from .const import DEVICE_TYPE_SWITCH, DOMAIN, LOGGER
-from .switch import _effective_type
+from .const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,9 +30,6 @@ if TYPE_CHECKING:
     from .manager import Control4Manager
 
 MAX_RAMP_MS = 60000
-# A relay can only switch its load, so it has nothing to ramp.
-RAMP_PARAMS = frozenset({"02", "03", "04", "05"})
-RELAY_MODELS = frozenset({"C4-SW120277"})
 
 
 def _level(param: str, name: str) -> NumberEntityDescription:
@@ -66,18 +63,6 @@ def _time(param: str, name: str) -> NumberEntityDescription:
     )
 
 
-def _is_relay(manager: Control4Manager, ieee: str) -> bool:
-    """
-    Return whether a device is relay-only.
-
-    The self-reported model comes first: a relay can still have another type
-    from a stored override or a missing dim code.
-    """
-    if manager.devices[ieee].raw.get("c4_model") in RELAY_MODELS:
-        return True
-    return _effective_type(manager, ieee) == DEVICE_TYPE_SWITCH
-
-
 DIMMING_NUMBERS: tuple[NumberEntityDescription, ...] = (
     _level("01", "Default on level"),
     _time("02", "Click ramp up"),
@@ -107,11 +92,12 @@ async def async_setup_entry(
     def _check_new_numbers() -> None:
         new: list[Control4DimmingNumber] = []
         for ieee, state in manager.devices.items():
+            # A relay only switches its load, so these settings mean nothing.
+            if manager.is_relay(ieee):
+                continue
             for description in DIMMING_NUMBERS:
                 key = (ieee, description.key)
                 if key in known or f"c4_tv_{description.key}" not in state.raw:
-                    continue
-                if description.key in RAMP_PARAMS and _is_relay(manager, ieee):
                     continue
                 known.add(key)
                 new.append(

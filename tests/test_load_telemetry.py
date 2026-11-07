@@ -70,7 +70,7 @@ async def test_load_sensors_appear_on_first_reading(
 async def test_dimming_numbers_read_and_write(
     manager: Control4Manager, dimmer_state: DeviceState
 ) -> None:
-    """A number shows the read value, and a write is followed by a read-back."""
+    """A number shows the read value, and a write sends one command."""
     _add(manager, dimmer_state)
     dimmer_state.update_from_mqtt({"c4_tv_02": 750})
     added = await _setup(manager, number_async_setup_entry)
@@ -83,27 +83,25 @@ async def test_dimming_numbers_read_and_write(
     manager.async_send_mqtt = AsyncMock()
     await number.async_set_native_value(1000)
     sent = [call.args[1] for call in manager.async_send_mqtt.await_args_list]
-    assert sent == [{"c4_cmd": "c4.dm.tv 00 02 000003e8"}, {"c4_read_dimming": True}]
+    assert sent == [{"c4_cmd": "c4.dm.tv 00 02 000003e8"}]
 
     dimmer_state.update_from_mqtt({f"c4_tv_{d.key}": 0 for d in DIMMING_NUMBERS})
     manager.notify_listeners()
     assert len(added) == len(DIMMING_NUMBERS)
 
 
-async def test_relay_has_no_ramp_numbers(
+async def test_relay_type_gets_no_numbers(
     manager: Control4Manager, dimmer_state: DeviceState
 ) -> None:
-    """A relay-only switch gets its level settings but no ramp settings."""
+    """A relay-only switch gets no dimming settings."""
     dimmer_state.device_type = "switch"
     _add(manager, dimmer_state)
     dimmer_state.update_from_mqtt({f"c4_tv_{d.key}": 0 for d in DIMMING_NUMBERS})
-    added = await _setup(manager, number_async_setup_entry)
 
-    keys = {number.entity_description.key for number in added}
-    assert keys == {"01", "06", "08", "09", "0a"}
+    assert await _setup(manager, number_async_setup_entry) == []
 
 
-async def test_relay_model_has_no_ramp_numbers_despite_type(
+async def test_relay_model_gets_no_numbers_despite_type(
     manager: Control4Manager, dimmer_state: DeviceState
 ) -> None:
     """The model identifies a relay whose type says otherwise."""
@@ -112,10 +110,20 @@ async def test_relay_model_has_no_ramp_numbers_despite_type(
     dimmer_state.update_from_mqtt(
         {"c4_model": "C4-SW120277"} | {f"c4_tv_{d.key}": 0 for d in DIMMING_NUMBERS}
     )
-    added = await _setup(manager, number_async_setup_entry)
 
-    keys = {number.entity_description.key for number in added}
-    assert keys == {"01", "06", "08", "09", "0a"}
+    assert await _setup(manager, number_async_setup_entry) == []
+
+
+def test_relay_dimming_table_not_read(
+    manager: Control4Manager, dimmer_state: DeviceState
+) -> None:
+    """A relay's table isn't read, since nothing would use it."""
+    _add(manager, dimmer_state)
+    dimmer_state.update_from_mqtt({"c4_model": "C4-SW120277"})
+
+    manager._maybe_read_dimming(dimmer_state)
+
+    assert not manager._dimming_queue
 
 
 def test_dimming_read_requested_once_for_load_devices(

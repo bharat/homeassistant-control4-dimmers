@@ -77,6 +77,5 @@ Tracked in [issue #104](https://github.com/bharat/homeassistant-control4-zigbee/
 ## Remaining Work
 
 - Upstream campaign (Phase 7, above)
-- Expose `c4.dmx.ls` telemetry as HA sensor entities (voltage, current, power, temperature, energy)
-- Expose dimming table parameters (`c4.dm.tv`) as HA number entities (ramp rates, min/max brightness)
+- Identify the last two `c4.dmx.ls` fields (field 9 looks like an energy counter, field 10 is unknown)
 - HACS default-repository inclusion (gated on upstream support so strangers get a working stack)

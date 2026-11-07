@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 # entity here because Z2M's light would show a dead brightness slider.
 PLATFORMS: list[Platform] = [
     Platform.EVENT,
+    Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 ]

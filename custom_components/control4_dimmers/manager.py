@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -39,6 +40,7 @@ from .const import (
     DEVICE_TYPE_SLOTS,
     DEVICE_TYPE_SWITCH,
     DEVICE_TYPES,
+    DEVICE_TYPES_WITH_LOAD,
     DOMAIN,
     LOGGER,
     OUTLET_MODELS,
@@ -58,6 +60,9 @@ if TYPE_CHECKING:
 # back to back they overrun the Zigbee mesh and some are silently dropped
 # (issue #144). Pacing sends this far apart makes delivery reliable.
 MIN_SEND_INTERVAL = 0.05
+
+# Seconds between dimming table reads of different devices.
+DIMMING_READ_INTERVAL = 5
 
 # Read-after-write verification (issue #145). After a single-slot push we
 # read the slot's written parameters back and compare desired vs observed,
@@ -155,6 +160,10 @@ class Control4Manager:
         self._pending_verifies: dict[tuple[str, int], asyncio.Future[None]] = {}
         self._verify_results: dict[tuple[str, int], dict[str, Any]] = {}
         self._verifying: set[tuple[str, int]] = set()
+        # Dimming table reads, spaced out so a fresh start doesn't flood the mesh.
+        self._dimming_requested: set[str] = set()
+        self._dimming_queue: deque[str] = deque()
+        self._dimming_task: asyncio.Task[None] | None = None
         # The exact field values the converter's last read-back carried for
         # a slot, captured in _handle_device_state before the pending future
         # resolves. DeviceState merges reads into whatever it already held,
@@ -412,6 +421,9 @@ class Control4Manager:
     async def async_stop(self) -> None:
         """Unsubscribe from MQTT and state listeners."""
         self.stop_audit_sweep()
+        if self._dimming_task is not None:
+            self._dimming_task.cancel()
+            self._dimming_task = None
         for unsub in self._subscriptions:
             unsub()
         self._subscriptions.clear()
@@ -576,6 +588,7 @@ class Control4Manager:
             self._dispatch_button_action(device, action)
 
         self._maybe_auto_detect(device)
+        self._maybe_read_dimming(device)
 
         self.notify_listeners()
 
@@ -1745,6 +1758,43 @@ class Control4Manager:
         await asyncio.sleep(3)
         LOGGER.info("Auto-detecting device type for %s", ieee_address)
         await self.async_send_mqtt(ieee_address, {"c4_detect": True})
+
+    def _maybe_read_dimming(self, device: DeviceState) -> None:
+        """
+        Queue one dimming table read for a load device with no known values.
+
+        Z2M keeps the values in its state cache and republishes them, so this
+        only sends Zigbee traffic the first time a device is seen.
+        """
+        ieee = device.ieee_address
+        if (
+            device.device_type not in DEVICE_TYPES_WITH_LOAD
+            or ieee in self._dimming_requested
+            or any(key.startswith("c4_tv_") for key in device.raw)
+        ):
+            return
+        self._dimming_requested.add(ieee)
+        self._dimming_queue.append(ieee)
+        if self._dimming_task is None or self._dimming_task.done():
+            self._dimming_task = self._hass.async_create_background_task(
+                self._async_read_dimming_queue(), "c4_read_dimming"
+            )
+
+    async def _async_read_dimming_queue(self) -> None:
+        """Read queued dimming tables one device at a time, to spare the mesh."""
+        while self._dimming_queue:
+            ieee = self._dimming_queue.popleft()
+            await self.async_send_mqtt(ieee, {"c4_read_dimming": True})
+            await asyncio.sleep(DIMMING_READ_INTERVAL)
+
+    async def async_set_dimming(
+        self, ieee_address: str, param: str, value: int
+    ) -> None:
+        """Write one dimming table parameter, then read the table back."""
+        await self.async_send_mqtt(
+            ieee_address, {"c4_cmd": f"c4.dm.tv 00 {param} {value:08x}"}
+        )
+        await self.async_send_mqtt(ieee_address, {"c4_read_dimming": True})
 
     async def async_send_mqtt(self, ieee_address: str, payload: dict[str, Any]) -> None:
         """

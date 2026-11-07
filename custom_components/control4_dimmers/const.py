@@ -142,3 +142,9 @@ BUTTON_EVENT_TYPES: Final[list[str]] = [
     "double_tap",
     "triple_tap",
 ]
+
+# Device types that drive a load, so they report load readings and have a
+# dimming table. A keypad has no load.
+DEVICE_TYPES_WITH_LOAD = frozenset(
+    {DEVICE_TYPE_DIMMER, DEVICE_TYPE_KEYPADDIM, DEVICE_TYPE_SWITCH}
+)

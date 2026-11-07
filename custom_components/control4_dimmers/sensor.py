@@ -1,10 +1,11 @@
 """
 Sensor platform for Control4 Dimmers.
 
-Three sensor entity types:
+Four sensor entity types:
   - Control4DeviceSensor: lightweight device anchor (primary entity)
   - Control4AmbientLightSensor: ambient light level from the device's sensor
   - Control4AuditSensor: one per config entry, config audit coverage
+  - Control4LoadSensor: electrical readings the device reports with its load
 """
 
 from __future__ import annotations
@@ -14,8 +15,17 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
 )
-from homeassistant.const import LIGHT_LUX, EntityCategory
+from homeassistant.const import (
+    LIGHT_LUX,
+    EntityCategory,
+    UnitOfApparentPower,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfPower,
+)
 
 from .const import DEVICE_TYPE_OUTLET, DOMAIN, LOGGER
 
@@ -27,6 +37,59 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .manager import Control4Manager
+
+
+# Published by the converter from c4.dmx.ls frames, which only arrive when the
+# load changes, so a value holds until the next change. The field names are
+# inferred from captured frames; two fields are still unidentified.
+LOAD_SENSORS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="c4_load_power",
+        name="Power",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+    ),
+    SensorEntityDescription(
+        key="c4_load_voltage",
+        name="Voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    ),
+    SensorEntityDescription(
+        key="c4_load_current",
+        name="Current",
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
+    ),
+    SensorEntityDescription(
+        key="c4_load_apparent_power",
+        name="Apparent power",
+        device_class=SensorDeviceClass.APPARENT_POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
+    ),
+    SensorEntityDescription(
+        key="c4_load_power_factor",
+        name="Power factor",
+        device_class=SensorDeviceClass.POWER_FACTOR,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="c4_load_field_9",
+        name="Load field 9",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="c4_load_field_10",
+        name="Load field 10",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+)
 
 
 async def async_setup_entry(
@@ -42,6 +105,7 @@ async def async_setup_entry(
     manager: Control4Manager = runtime["manager"]
     known_anchors: set[str] = set()
     known_ambient: set[str] = set()
+    known_load: set[str] = set()
 
     # One integration-level coverage sensor per entry (issue #199).
     async_add_entities([Control4AuditSensor(manager, entry.entry_id)])
@@ -69,6 +133,19 @@ async def async_setup_entry(
                         friendly_name=state.friendly_name,
                         model_id=state.model_id,
                     )
+                )
+            # Created on the first reading, so a loadless keypad gets none.
+            if ieee not in known_load and "c4_load_power" in state.raw:
+                known_load.add(ieee)
+                new_entities.extend(
+                    Control4LoadSensor(
+                        manager=manager,
+                        ieee_address=ieee,
+                        friendly_name=state.friendly_name,
+                        model_id=state.model_id,
+                        description=description,
+                    )
+                    for description in LOAD_SENSORS
                 )
         if new_entities:
             async_add_entities(new_entities)
@@ -180,6 +257,56 @@ class Control4AmbientLightSensor(SensorEntity):
         if device is None:
             return None
         return device.raw.get("ambient_light")
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to manager updates."""
+        self._unsub_listener = self._manager.add_listener(self._on_manager_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from manager updates."""
+        if self._unsub_listener:
+            self._unsub_listener()
+            self._unsub_listener = None
+
+    def _on_manager_update(self) -> None:
+        """Refresh state when new data arrives."""
+        self.async_write_ha_state()
+
+
+class Control4LoadSensor(SensorEntity):
+    """One electrical reading reported by a device with a load."""
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        manager: Control4Manager,
+        ieee_address: str,
+        friendly_name: str,
+        model_id: str,
+        description: SensorEntityDescription,
+    ) -> None:
+        """Initialize the load sensor entity."""
+        self.entity_description = description
+        self._manager = manager
+        self._ieee = ieee_address
+        self._unsub_listener: Callable[[], None] | None = None
+        self._attr_unique_id = f"{ieee_address}_{description.key}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, ieee_address)},
+            "name": friendly_name,
+            "manufacturer": "Control4",
+            "model": model_id or None,
+        }
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the most recent reading."""
+        device = self._manager.devices.get(self._ieee)
+        if device is None:
+            return None
+        return device.raw.get(self.entity_description.key)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to manager updates."""

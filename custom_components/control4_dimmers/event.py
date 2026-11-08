@@ -132,6 +132,8 @@ def _behavior_from_action(tap_action: dict) -> str:
 class Control4ButtonEvent(EventEntity):
     """Event entity representing a button press on a Control4 device."""
 
+    # Push-based: the manager fires events into this entity directly.
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types = BUTTON_EVENT_TYPES
@@ -228,6 +230,11 @@ class Control4ButtonEvent(EventEntity):
         verify = self._manager.get_verify_result(self._ieee, self._slot_id)
         attrs["in_sync"] = verify["in_sync"] if verify else None
         attrs["last_verified"] = verify["last_verified"] if verify else None
+        # Which loop produced the last verify ("write" or "audit") and, for
+        # an audit mismatch, which layer diverged from the stored intent
+        # (cache / firmware / both) (issue #199).
+        attrs["verified_by"] = verify.get("verified_by") if verify else None
+        attrs["diverged_layer"] = verify.get("diverged_layer") if verify else None
 
         return attrs
 
@@ -302,6 +309,7 @@ class Control4ButtonEvent(EventEntity):
 class Control4PaddleEvent(EventEntity):
     """Event entity for a local load paddle half on a load-bearing device."""
 
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types = BUTTON_EVENT_TYPES

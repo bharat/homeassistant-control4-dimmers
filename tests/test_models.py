@@ -10,6 +10,7 @@ from custom_components.control4_dimmers.models import (
     SlotConfig,
     _extract_color,
     _hs_to_hex,
+    refine_device_type,
 )
 
 # ── SlotConfig ───────────────────────────────────────────────────────
@@ -225,6 +226,116 @@ class TestDeviceState:
         state = DeviceState(ieee_address="0x001", friendly_name="Test")
         state.update_from_mqtt({"c4_device_type": "keypaddim"})
         assert state.device_type == "keypaddim"
+
+    def test_keypaddim_with_dim_code_00_is_a_switch(self) -> None:
+        # The converter files an unknown dim answer under keypaddim; a
+        # relay-only switch answers 00 (issue #189).
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {
+                    "device_type": "keypaddim",
+                    "confidence": "confirmed",
+                    "dim_code": "00",
+                    "model": "C4-KD120",
+                },
+            }
+        )
+        assert state.device_type == "switch"
+        assert state.dim_code == "00"
+
+    def test_keypaddim_with_dim_code_02_stays_keypaddim(self) -> None:
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {"device_type": "keypaddim", "dim_code": "02"},
+            }
+        )
+        assert state.device_type == "keypaddim"
+
+    def test_keypaddim_without_dim_code_stays_keypaddim(self) -> None:
+        # Units that never answer the probe need the override service.
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {"device_type": "keypaddim", "dim_code": None},
+            }
+        )
+        assert state.device_type == "keypaddim"
+        assert state.dim_code is None
+
+    def test_dim_code_remembered_for_later_bare_verdict(self) -> None:
+        # Z2M may republish c4_device_type without the detect result; the
+        # remembered dim code keeps the refinement stable.
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt({"c4_detect_result": {"dim_code": "00"}})
+        assert state.device_type is None
+        state.update_from_mqtt({"c4_device_type": "keypaddim"})
+        assert state.device_type == "switch"
+
+    def test_converter_switch_verdict_honored(self) -> None:
+        # A future converter that knows the type itself passes straight through.
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt({"c4_device_type": "switch"})
+        assert state.device_type == "switch"
+
+    def test_dimmer_verdict_never_refined(self) -> None:
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "dimmer",
+                "c4_detect_result": {"device_type": "dimmer", "dim_code": "00"},
+            }
+        )
+        assert state.device_type == "dimmer"
+
+    def test_heal_to_dimmer_overrides_earlier_switch(self) -> None:
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "keypaddim",
+                "c4_detect_result": {"dim_code": "00"},
+            }
+        )
+        assert state.device_type == "switch"
+        state.update_from_mqtt(
+            {
+                "c4_device_type": "dimmer",
+                "c4_detect_result": {"dim_code": "01", "healed": True},
+            }
+        )
+        assert state.device_type == "dimmer"
+        assert state.dim_code == "01"
+
+    def test_malformed_detect_result_ignored(self) -> None:
+        state = DeviceState(ieee_address="0x001", friendly_name="Test")
+        state.update_from_mqtt({"c4_device_type": "keypaddim", "c4_detect_result": "x"})
+        assert state.device_type == "keypaddim"
+        assert state.dim_code is None
+
+
+class TestRefineDeviceType:
+    """Tests for the pure refine_device_type helper."""
+
+    @pytest.mark.parametrize(
+        ("reported", "dim_code", "expected"),
+        [
+            ("keypaddim", "00", "switch"),
+            ("keypaddim", "02", "keypaddim"),
+            ("keypaddim", None, "keypaddim"),
+            ("dimmer", "00", "dimmer"),
+            ("keypad", None, "keypad"),
+            ("switch", None, "switch"),
+            (None, "00", None),
+        ],
+    )
+    def test_matrix(
+        self, reported: str | None, dim_code: str | None, expected: str | None
+    ) -> None:
+        assert refine_device_type(reported, dim_code) == expected
 
     def test_update_led_colors_flat_hex(self) -> None:
         state = DeviceState(ieee_address="0x001", friendly_name="Test")

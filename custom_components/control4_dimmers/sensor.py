@@ -1,9 +1,10 @@
 """
 Sensor platform for Control4 Dimmers.
 
-Two sensor entity types:
+Three sensor entity types:
   - Control4DeviceSensor: lightweight device anchor (primary entity)
   - Control4AmbientLightSensor: ambient light level from the device's sensor
+  - Control4AuditSensor: one per config entry, config audit coverage
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
 )
-from homeassistant.const import LIGHT_LUX
+from homeassistant.const import LIGHT_LUX, EntityCategory
 
 from .const import DOMAIN, LOGGER
 
@@ -41,6 +42,9 @@ async def async_setup_entry(
     manager: Control4Manager = runtime["manager"]
     known_anchors: set[str] = set()
     known_ambient: set[str] = set()
+
+    # One integration-level coverage sensor per entry (issue #199).
+    async_add_entities([Control4AuditSensor(manager, entry.entry_id)])
 
     def _check_new_devices() -> None:
         new_entities: list[SensorEntity] = []
@@ -76,6 +80,9 @@ async def async_setup_entry(
 class Control4DeviceSensor(SensorEntity):
     """Sensor entity representing a Control4 device (anchor)."""
 
+    # Push-based: the manager listener below writes state. Without this
+    # the entity platform arms a scan-interval timer for nothing.
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_name = None
 
@@ -140,6 +147,7 @@ class Control4DeviceSensor(SensorEntity):
 class Control4AmbientLightSensor(SensorEntity):
     """Sensor entity for the device's ambient light level."""
 
+    _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_name = "Ambient Light"
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
@@ -184,4 +192,58 @@ class Control4AmbientLightSensor(SensorEntity):
 
     def _on_manager_update(self) -> None:
         """Refresh state when new data arrives."""
+        self.async_write_ha_state()
+
+
+class Control4AuditSensor(SensorEntity):
+    """
+    Config audit coverage for the whole integration (issue #199).
+
+    State is the number of devices with stored config that have never had
+    every slot verified since Home Assistant started. Attributes carry the
+    stalest verified device and its age, the out-of-sync slots, and the
+    sweep's settings, so coverage holes are visible at a glance instead of
+    only on the per-button event entities.
+
+    Push-based: the manager notifies listeners after every audit pass and
+    on every device change, so the entity never needs polling. This sensor
+    is added on every entry setup, so leaving should_poll at its default
+    would arm the sensor platform's scan-interval timer unconditionally.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_name = "Config audit never verified"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:clipboard-check-outline"
+    _attr_native_unit_of_measurement = "devices"
+
+    def __init__(self, manager: Control4Manager, entry_id: str) -> None:
+        """Initialize the audit coverage sensor."""
+        self._manager = manager
+        self._unsub_listener: Callable[[], None] | None = None
+        self._attr_unique_id = f"{entry_id}_config_audit"
+
+    @property
+    def native_value(self) -> int:
+        """Return the count of devices never fully verified."""
+        return self._manager.get_audit_status()["devices_never_verified"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the full coverage snapshot."""
+        return self._manager.get_audit_status()
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to manager updates."""
+        self._unsub_listener = self._manager.add_listener(self._on_manager_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from manager updates."""
+        if self._unsub_listener:
+            self._unsub_listener()
+            self._unsub_listener = None
+
+    def _on_manager_update(self) -> None:
+        """Refresh when the manager reports new data."""
         self.async_write_ha_state()

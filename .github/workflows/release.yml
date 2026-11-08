@@ -37,7 +37,7 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
-          name: Control4 Dimmers ${{ steps.vars.outputs.tag }}
+          name: Control4 Zigbee ${{ steps.vars.outputs.tag }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

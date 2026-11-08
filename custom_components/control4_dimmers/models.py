@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .const import DEVICE_TYPE_KEYPADDIM, DEVICE_TYPE_SWITCH, SWITCH_DIM_CODES
+
 
 @dataclass
 class SlotConfig:
@@ -115,6 +117,10 @@ class DeviceState:
     friendly_name: str
     model_id: str = ""
     device_type: str | None = None
+    # The converter's raw c4.dmx.dim answer, published inside
+    # c4_detect_result. Remembered so a later bare c4_device_type can be
+    # refined the same way (see refine_device_type).
+    dim_code: str | None = None
     available: bool = True
     brightness: int | None = None
     state: str | None = None
@@ -130,8 +136,13 @@ class DeviceState:
             self.state = payload["state"]
         if "brightness" in payload:
             self.brightness = payload["brightness"]
+        detect_result = payload.get("c4_detect_result")
+        if isinstance(detect_result, dict) and "dim_code" in detect_result:
+            self.dim_code = detect_result["dim_code"]
         if "c4_device_type" in payload:
-            self.device_type = payload["c4_device_type"]
+            self.device_type = refine_device_type(
+                payload["c4_device_type"], self.dim_code
+            )
 
         for btn in range(1, 7):
             # Flat hex LED attributes from the Z2M device state (c4_led_N_on/off)
@@ -164,6 +175,21 @@ class DeviceState:
                 self.button_configs.setdefault(btn, {})["behavior"] = payload[beh_key]
             if mode_key in payload:
                 self.button_configs.setdefault(btn, {})["led_mode"] = payload[mode_key]
+
+
+def refine_device_type(reported: str | None, dim_code: str | None) -> str | None:
+    """
+    Turn the converter's c4_device_type verdict into the integration's type.
+
+    The converter files any dim answer it does not recognize under
+    keypaddim. A relay-only switch answers one of SWITCH_DIM_CODES, so that
+    verdict plus that code is a switch (issue #189). Every other verdict,
+    including a converter that already reports "switch" itself, passes
+    through untouched.
+    """
+    if reported == DEVICE_TYPE_KEYPADDIM and dim_code in SWITCH_DIM_CODES:
+        return DEVICE_TYPE_SWITCH
+    return reported
 
 
 def _extract_color(color_data: Any) -> str:

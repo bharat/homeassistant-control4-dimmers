@@ -73,18 +73,25 @@ def slot_readings(
     fw_led: dict[str, str],
     fw_btn: dict[str, str],
 ) -> dict[str, FieldReading]:
-    """Assemble per-field (store, cache, firmware) readings for a slot."""
-    return {
-        "on_color": FieldReading(
+    """
+    Assemble per-field (store, cache, firmware) readings for a slot.
+
+    An LED tracking another entity has its colors set at runtime from that
+    entity's state, so its stored on/off colors are not compared.
+    """
+    readings: dict[str, FieldReading] = {}
+    if not slot.tracks_other_entity:
+        readings["on_color"] = FieldReading(
             _norm_color(slot.led_on_color) or "",
             _norm_color(cached_led.get("on")),
             _norm_color(fw_led.get("on")),
-        ),
-        "off_color": FieldReading(
+        )
+        readings["off_color"] = FieldReading(
             _norm_color(slot.led_off_color) or "",
             _norm_color(cached_led.get("off")),
             _norm_color(fw_led.get("off")),
-        ),
+        )
+    return readings | {
         "led_mode": FieldReading(
             firmware_led_mode(slot),
             cached_btn.get("led_mode"),

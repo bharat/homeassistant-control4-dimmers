@@ -25,6 +25,13 @@ class SlotConfig:
     hold_action: dict | None = None
     led_track_entity_id: str | None = None
 
+    @property
+    def tracks_other_entity(self) -> bool:
+        """Return True when the LED follows an entity other than its own load."""
+        return bool(self.led_track_entity_id) and (
+            self.led_track_entity_id != "__self_load__"
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
         d = {

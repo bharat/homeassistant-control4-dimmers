@@ -998,6 +998,10 @@ class Control4Manager:
         # LED mode, so map it before comparing against the observed value.
         firmware_mode = "programmed" if slot.led_mode == "fixed" else slot.led_mode
         mismatches: list[tuple[str, str, str]] = []
+        if slot.tracks_other_entity:
+            # The tracked entity sets the colors at runtime, so the stored
+            # on/off colors are not what the firmware should hold.
+            observed_led = {}
         if "on" in observed_led and not _color_eq(
             slot.led_on_color, observed_led["on"]
         ):
@@ -1494,21 +1498,29 @@ class Control4Manager:
         #   - push_release: press color / release color
         #   - fixed (Programmed): mode 03 / mode 04 alone don't light
         #     the LED; the mode-05 override below is what drives it.
-        await self.async_send_mqtt(
-            state.ieee_address,
-            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
-        )
-        await self.async_send_mqtt(
-            state.ieee_address,
-            {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
-        )
+        # An LED tracking another entity gets that entity's current color
+        # instead (see _send_tracked_led_color for why all three).
+        tracked_color = self._tracked_led_color(slot)
+        if tracked_color is not None:
+            await self._send_tracked_led_color(
+                state.ieee_address, wire_id, tracked_color
+            )
+        else:
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
+            )
+            await self.async_send_mqtt(
+                state.ieee_address,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 04 {slot.led_off_color}"},
+            )
         # Programmed-mode display. Without a Composer programming
         # engine driving the firmware's internal "state", neither
         # mode 03 nor mode 04 lights the LED in Programmed mode.
         # Mode 05 is the explicit override that does. The chassis
         # editor's single "Color" picker for fixed mode binds to
         # led_off_color, so the user's picked color lives there.
-        if slot.led_mode == "fixed":
+        if slot.led_mode == "fixed" and tracked_color is None:
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {slot.led_off_color}"},
@@ -1547,6 +1559,41 @@ class Control4Manager:
         if entity_id == "__self_load__":
             return self._find_light_entity(ieee)
         return entity_id
+
+    def _tracked_led_color(self, slot: SlotConfig) -> str | None:
+        """
+        Return the color an LED tracking another entity should show now.
+
+        None when the slot does not track an entity other than its own
+        load. An entity that is missing or not "on" shows the off color.
+        """
+        if not slot.tracks_other_entity or slot.led_track_entity_id is None:
+            return None
+        target = self._hass.states.get(slot.led_track_entity_id)
+        is_on = target is not None and target.state == "on"
+        return slot.led_on_color if is_on else slot.led_off_color
+
+    async def _send_tracked_led_color(
+        self,
+        ieee: str,
+        wire_id: int,
+        color: str,
+        modes: tuple[int, ...] = (5, 3, 4),
+    ) -> None:
+        """
+        Show a tracked color on an LED, so its own load cannot repaint it.
+
+        The firmware redraws an LED from its load-on (mode 03) and load-off
+        (mode 04) colors whenever the device's own load changes, which
+        replaces the mode-05 override. Writing the tracked color to all
+        three keeps the LED on the tracked entity's color either way. The
+        visible override goes first so the change shows without waiting.
+        """
+        for mode in modes:
+            await self.async_send_mqtt(
+                ieee,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode:02x} {color}"},
+            )
 
     async def press_button(
         self, ieee: str, slot_id: int, event_type: str = "pressed"
@@ -1628,39 +1675,71 @@ class Control4Manager:
         target = action.get("target", {})
         entity_id = self._resolve_entity_id(ieee, target.get("entity_id", ""))
 
+        load_color_writes: list[tuple[int, str]] = []
         if slot.led_track_entity_id:
-            await self.async_optimistic_led(ieee, slot_id)
+            load_color_writes = await self.async_optimistic_led(ieee, slot_id, service)
 
         service_data = dict(action.get("data", {}))
         if entity_id:
             service_data["entity_id"] = entity_id
         await self._hass.services.async_call(domain, svc_name, service_data)
 
-    async def async_optimistic_led(self, ieee: str, slot_id: int) -> None:
-        """
-        Send an immediate LED color based on the opposite of the target light state.
+        # The visible overrides went out before the action; the load-color
+        # writes that keep them in place can wait until after it.
+        for wire_id, color in load_color_writes:
+            await self._send_tracked_led_color(ieee, wire_id, color, modes=(3, 4))
 
-        Also sets a cooldown so the tracking callback doesn't send a
-        redundant LED command while the toggle is in flight.
+    async def async_optimistic_led(
+        self, ieee: str, slot_id: int, service: str | None = None
+    ) -> list[tuple[int, str]]:
+        """
+        Show the tracked entity's expected new state on the LEDs right away.
+
+        The expected state comes from the action: turn_on means on,
+        turn_off means off, anything else (a toggle) means the opposite of
+        now. Every LED on the device that tracks the same entity is updated,
+        not only the pressed button's, so a Top/Bottom pair switches
+        together instead of one waiting for the entity's state report.
+        Only the visible override (mode 05) is sent here, with a cooldown so
+        the tracking callback does not repeat it while the action is in
+        flight. Returns the (wire_id, color) pairs whose load-on/load-off
+        colors still need writing, for LEDs tracking another entity.
         """
         config = self._store.get_device(ieee)
         if not config:
-            return
+            return []
+        pressed = self._find_slot(config, slot_id)
+        if pressed is None or not pressed.led_track_entity_id:
+            return []
+        track_entity = self._resolve_entity_id(ieee, pressed.led_track_entity_id)
+        if not track_entity:
+            return []
+        target_state = self._hass.states.get(track_entity)
+        currently_on = target_state is not None and target_state.state == "on"
+        if service and service.endswith(".turn_on"):
+            will_be_on = True
+        elif service and service.endswith(".turn_off"):
+            will_be_on = False
+        else:
+            will_be_on = not currently_on
+
+        load_color_writes: list[tuple[int, str]] = []
+        cooldown_until = time.monotonic() + 2.0
         for slot in config.slots:
-            if slot.slot_id == slot_id and slot.led_track_entity_id:
-                track_entity = self._resolve_entity_id(ieee, slot.led_track_entity_id)
-                if not track_entity:
-                    return
-                target_state = self._hass.states.get(track_entity)
-                is_on = target_state and target_state.state == "on"
-                color = slot.led_off_color if is_on else slot.led_on_color
-                wire_id = slot_id - 1
-                await self.async_send_mqtt(
-                    ieee,
-                    {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
-                )
-                self._led_cooldowns[(ieee, slot_id)] = time.monotonic() + 2.0
-                return
+            if not slot.led_track_entity_id or (
+                self._resolve_entity_id(ieee, slot.led_track_entity_id) != track_entity
+            ):
+                continue
+            color = slot.led_on_color if will_be_on else slot.led_off_color
+            wire_id = slot.slot_id - 1
+            await self.async_send_mqtt(
+                ieee,
+                {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
+            )
+            self._led_cooldowns[(ieee, slot.slot_id)] = cooldown_until
+            if slot.tracks_other_entity:
+                load_color_writes.append((wire_id, color))
+        return load_color_writes
 
     def setup_light_tracking(self) -> None:
         """
@@ -1674,8 +1753,8 @@ class Control4Manager:
             unsub()
         self._light_track_unsubs.clear()
 
-        # Build a map: resolved_entity_id -> [(ieee, slot_id, on_color, off_color)]
-        tracking: dict[str, list[tuple[str, int, str, str]]] = {}
+        # Build a map: resolved_entity_id -> [(ieee, slot, on_color, off_color)]
+        tracking: dict[str, list[tuple[str, SlotConfig, str, str]]] = {}
         for ieee in self._devices:
             config = self._store.get_device(ieee)
             if not config:
@@ -1685,7 +1764,7 @@ class Control4Manager:
                     resolved = self._resolve_entity_id(ieee, slot.led_track_entity_id)
                     if resolved:
                         tracking.setdefault(resolved, []).append(
-                            (ieee, slot.slot_id, slot.led_on_color, slot.led_off_color)
+                            (ieee, slot, slot.led_on_color, slot.led_off_color)
                         )
 
         if not tracking:
@@ -1702,12 +1781,13 @@ class Control4Manager:
                 return
             is_on = new_state.state == "on"
             now = time.monotonic()
-            for ieee, slot_id, on_color, off_color in tracking[entity_id]:
+            load_color_writes: list[tuple[str, int, str]] = []
+            for ieee, slot, on_color, off_color in tracking[entity_id]:
                 # Skip if an optimistic LED update was sent recently
-                cooldown = self._led_cooldowns.get((ieee, slot_id), 0)
+                cooldown = self._led_cooldowns.get((ieee, slot.slot_id), 0)
                 if now < cooldown:
                     continue
-                wire_id = slot_id - 1
+                wire_id = slot.slot_id - 1
                 color = on_color if is_on else off_color
                 # Mode 05 = immediate override — forces the LED to display
                 # this color now, bypassing the on/off state logic.
@@ -1715,6 +1795,12 @@ class Control4Manager:
                     ieee,
                     {"c4_cmd": f"c4.dmx.led {wire_id:02x} 05 {color}"},
                 )
+                if slot.tracks_other_entity:
+                    load_color_writes.append((ieee, wire_id, color))
+            # Every visible override first, then the load-on/load-off colors
+            # that keep them in place, so no LED waits behind another's.
+            for ieee, wire_id, color in load_color_writes:
+                await self._send_tracked_led_color(ieee, wire_id, color, modes=(3, 4))
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)

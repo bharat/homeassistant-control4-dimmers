@@ -309,7 +309,7 @@ These need a Zigbee2MQTT image whose Control4 converter publishes `c4_load_*` an
 | Power factor | 0 to 1 | Yes |
 | Load field 9, Load field 10 | none | No (diagnostic; meaning not confirmed yet) |
 
-The device pushes a reading when its load changes (on, off, or a new level), so a light that stays on keeps its last reading. Readings can't be polled. The first reading right after turning on can be low; the next one settles.
+The device pushes a reading when its load changes (on, off, or a new level), so a light that stays on keeps its last reading. Readings can't be polled. The first reading right after turning on can be low; the next one settles. After a restart or integration reload, each sensor shows its last reading until the device reports again.
 
 **Dimming settings** are number entities in each dimmer's Configuration section. They are disabled by default, so enable the ones you want first:
 

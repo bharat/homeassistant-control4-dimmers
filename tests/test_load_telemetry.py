@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from homeassistant.components.sensor import SensorExtraStoredData
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.control4_dimmers.const import DOMAIN
 from custom_components.control4_dimmers.manager import Control4Manager
@@ -29,9 +32,13 @@ def _add(manager: Control4Manager, state: DeviceState) -> None:
     manager.devices[state.ieee_address] = state
 
 
-async def _setup(manager: Control4Manager, setup) -> list:
+async def _setup(
+    manager: Control4Manager, setup, registered: str | None = None
+) -> list:
     hass = MagicMock()
-    hass.data = {DOMAIN: {"entry": {"manager": manager}}}
+    registry = MagicMock()
+    registry.async_get_entity_id.return_value = registered
+    hass.data = {DOMAIN: {"entry": {"manager": manager}}, er.DATA_REGISTRY: registry}
     entry = MagicMock(entry_id="entry")
     added: list = []
     await setup(hass, entry, added.extend)
@@ -65,6 +72,40 @@ async def test_load_sensors_appear_on_first_reading(
     assert len([e for e in added if isinstance(e, Control4LoadSensor)]) == len(
         LOAD_SENSORS
     )
+
+
+async def test_load_sensors_return_after_reload(
+    manager: Control4Manager, dimmer_state: DeviceState
+) -> None:
+    """A device with registered load sensors gets them back before any reading."""
+    _add(manager, dimmer_state)
+    added = await _setup(manager, sensor_async_setup_entry, "sensor.test_power")
+    load = [e for e in added if isinstance(e, Control4LoadSensor)]
+    assert len(load) == len(LOAD_SENSORS)
+    assert load[0].native_value is None
+
+
+async def test_load_sensor_keeps_last_reading_until_next_report(
+    manager: Control4Manager, dimmer_state: DeviceState
+) -> None:
+    """The restored value shows until the device reports a new reading."""
+    _add(manager, dimmer_state)
+    sensor = Control4LoadSensor(
+        manager=manager,
+        ieee_address=dimmer_state.ieee_address,
+        friendly_name="Test",
+        model_id="C4-APD120",
+        description=LOAD_SENSORS[0],
+    )
+    last = SensorExtraStoredData(native_value=29, native_unit_of_measurement="W")
+    with patch.object(
+        sensor, "async_get_last_sensor_data", AsyncMock(return_value=last)
+    ):
+        await sensor.async_added_to_hass()
+    assert sensor.native_value == 29
+
+    dimmer_state.update_from_mqtt({"c4_load_power": 0})
+    assert sensor.native_value == 0
 
 
 async def test_dimming_numbers_read_and_write(

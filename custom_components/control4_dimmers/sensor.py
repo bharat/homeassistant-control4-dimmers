@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -26,17 +27,22 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfPower,
 )
+from homeassistant.helpers import entity_registry as er
 
 from .const import DEVICE_TYPE_OUTLET, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import date, datetime
+    from decimal import Decimal
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
+    from homeassistant.helpers.typing import StateType
 
     from .manager import Control4Manager
+    from .models import DeviceState
 
 
 # Published by the converter from c4.dmx.ls frames, which only arrive when the
@@ -106,9 +112,17 @@ async def async_setup_entry(
     known_anchors: set[str] = set()
     known_ambient: set[str] = set()
     known_load: set[str] = set()
+    registry = er.async_get(hass)
 
     # One integration-level coverage sensor per entry (issue #199).
     async_add_entities([Control4AuditSensor(manager, entry.entry_id)])
+
+    def _has_load(ieee: str, state: DeviceState) -> bool:
+        # Readings are only held in memory and can't be polled, so after a reload
+        # the registry is what remembers that this device has a load.
+        return "c4_load_power" in state.raw or bool(
+            registry.async_get_entity_id("sensor", DOMAIN, f"{ieee}_c4_load_power")
+        )
 
     def _check_new_devices() -> None:
         new_entities: list[SensorEntity] = []
@@ -135,7 +149,7 @@ async def async_setup_entry(
                     )
                 )
             # Created on the first reading, so a loadless keypad gets none.
-            if ieee not in known_load and "c4_load_power" in state.raw:
+            if ieee not in known_load and _has_load(ieee, state):
                 known_load.add(ieee)
                 new_entities.extend(
                     Control4LoadSensor(
@@ -273,7 +287,7 @@ class Control4AmbientLightSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-class Control4LoadSensor(SensorEntity):
+class Control4LoadSensor(RestoreSensor):
     """One electrical reading reported by a device with a load."""
 
     _attr_should_poll = False
@@ -292,6 +306,7 @@ class Control4LoadSensor(SensorEntity):
         self._manager = manager
         self._ieee = ieee_address
         self._unsub_listener: Callable[[], None] | None = None
+        self._restored_value: StateType | date | datetime | Decimal = None
         self._attr_unique_id = f"{ieee_address}_{description.key}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, ieee_address)},
@@ -301,15 +316,17 @@ class Control4LoadSensor(SensorEntity):
         }
 
     @property
-    def native_value(self) -> float | None:
-        """Return the most recent reading."""
+    def native_value(self) -> StateType | date | datetime | Decimal:
+        """Return the most recent reading, or the last one from before a reload."""
         device = self._manager.devices.get(self._ieee)
-        if device is None:
-            return None
-        return device.raw.get(self.entity_description.key)
+        value = device.raw.get(self.entity_description.key) if device else None
+        return self._restored_value if value is None else value
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to manager updates."""
+        """Restore the last reading and subscribe to manager updates."""
+        await super().async_added_to_hass()
+        if last := await self.async_get_last_sensor_data():
+            self._restored_value = last.native_value
         self._unsub_listener = self._manager.add_listener(self._on_manager_update)
 
     async def async_will_remove_from_hass(self) -> None:

@@ -38,7 +38,6 @@ from .const import (
     DEVICE_TYPE_SLOTS,
     DEVICE_TYPE_SWITCH,
     DEVICE_TYPES,
-    DIMMER_BUTTON_TO_SLOT,
     DOMAIN,
     LOGGER,
     SLOT_COUNT,
@@ -322,12 +321,21 @@ class Control4Manager:
             return
 
     def _button_slot(self, device: DeviceState, button: int) -> int:
-        """Map a reported button number to the slot it belongs to."""
+        """
+        Map a reported button number to the slot it belongs to.
+
+        A dimmer or relay switch has only a top and a bottom half, but the
+        wire a half reports on varies by hardware: an APD120 and an SW120277
+        both send the bottom half as button 6 (wire 05) while the dimmer
+        layout keeps Bottom on slot 5, where its LED lives. On those types
+        buttons 1-3 are the top half and 4-6 the bottom half.
+        """
         config = self._store.get_device(device.ieee_address)
         device_type = config.effective_type if config else device.device_type
-        if device_type == DEVICE_TYPE_DIMMER:
-            return DIMMER_BUTTON_TO_SLOT.get(button, button)
-        return button
+        if device_type not in (DEVICE_TYPE_DIMMER, DEVICE_TYPE_SWITCH):
+            return button
+        top, bottom = DEVICE_TYPE_SLOTS[device_type]
+        return top if button <= SLOT_COUNT // 2 else bottom
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""

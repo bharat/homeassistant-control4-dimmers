@@ -280,10 +280,7 @@ data:
 | `04` | 5 | Bottom rocker LED (dimmers) / Fifth button |
 | `05` | 6 | Bottom rocker press (dimmers) / Sixth button |
 
-On dimmers the bottom rocker's press and LED use different IDs: the press
-arrives as `button_6` but its LED is LED 5, where the Bottom slot lives. The
-integration maps dimmer `button_6` events onto slot 5
-(`DIMMER_BUTTON_TO_SLOT` in `const.py`), so the Bottom event entity fires.
+On the two-button types (`dimmer`, `switch`) the bottom rocker's press and LED can use different IDs: an APD120 or SW120277 sends the press as `button_6` while a dimmer's Bottom slot, and its LED, is 5. Since those devices only have a top and a bottom half, the integration maps buttons 1-3 to the Top slot and 4-6 to the Bottom slot (`_button_slot` in `manager.py`), so the Bottom event entity fires whichever wire the hardware uses.
 
 The translation from 0-based wire IDs to 1-based happens once, in the Z2M
 device definition's `parseButtonEvent()` (in the zigbee-herdsman-converters fork): `wireId = parseInt(hex, 16) + 1`.

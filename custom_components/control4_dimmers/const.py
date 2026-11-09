@@ -104,8 +104,10 @@ SWITCH_DIM_CODES: Final = frozenset({"00"})
 
 SLOT_COUNT: Final = 6
 
-# Local load paddle halves. These live on a wire-id space (bp 07/08) distinct
-# from the button-array slots and are exposed as paddle_up / paddle_down.
+# Paddle halves on their own wire-id space (bp 07/08), separate from the
+# button-array slots and exposed as paddle_up / paddle_down. On 3-way installs
+# they usually come from an auxiliary switch; on some models from the device's
+# own paddle.
 PADDLE_UP: Final = "paddle_up"
 PADDLE_DOWN: Final = "paddle_down"
 PADDLE_IDS: Final[list[str]] = [PADDLE_UP, PADDLE_DOWN]

@@ -120,6 +120,11 @@ const DEVICE_TYPES = {
   switch:    { label: "Switch",        model: "C4-SW120277", slots: [2, 6],        fixedLayout: true },
 };
 
+// Device types with a keypad backlight (c4.dmx.blc). 0080ff is the
+// factory color seen on a KD120.
+const HAS_BACKLIGHT = ["keypaddim", "keypad"];
+const DEFAULT_BACKLIGHT_COLOR = "0080ff";
+
 const DOMAIN_ICONS = {
   light: "mdi:lightbulb", switch: "mdi:toggle-switch", cover: "mdi:window-shutter",
   fan: "mdi:fan", climate: "mdi:thermostat", media_player: "mdi:cast",
@@ -1158,6 +1163,7 @@ class Control4CardEditor extends HTMLElement {
     this._editingAction = null; // which action field is being edited
     this._embedded = false; // true when used inside grid editor
     this._localFaceplateColor = undefined;
+    this._localBacklightColor = undefined; // undefined = unchanged, "000000" = off
   }
 
   set hass(hass) {
@@ -1218,10 +1224,14 @@ class Control4CardEditor extends HTMLElement {
       if (!this._dirty) {
         if (info.config?.slots?.length > 0) {
           this._localSlots = JSON.parse(JSON.stringify(info.config.slots));
+          // Saved slots, to skip re-pushing them when only the backlight changed.
+          this._savedSlotsJson = JSON.stringify(this._localSlots);
         } else {
           this._localSlots = defaultSlotsForType(effectiveType);
+          this._savedSlotsJson = null;
         }
         this._localFaceplateColor = info.config?.faceplate_color || undefined;
+        this._localBacklightColor = undefined;
       }
       this._render();
     } catch (err) {
@@ -1393,10 +1403,17 @@ class Control4CardEditor extends HTMLElement {
       const msg = {
         type: `${DOMAIN}/device_config`,
         ieee_address: this._deviceInfo.ieee_address,
-        slots: this._localSlots,
       };
+      // Sending slots re-pushes every button, so leave them out when they
+      // match what's saved (e.g. only the backlight or faceplate changed).
+      if (JSON.stringify(this._localSlots) !== this._savedSlotsJson) {
+        msg.slots = this._localSlots;
+      }
       if (this._localFaceplateColor !== undefined) {
         msg.faceplate_color = this._localFaceplateColor;
+      }
+      if (this._localBacklightColor !== undefined) {
+        msg.backlight_color = this._localBacklightColor;
       }
       await this._hass.connection.sendMessagePromise(msg);
       this._dirty = false;
@@ -1417,6 +1434,7 @@ class Control4CardEditor extends HTMLElement {
     } else {
       this._localSlots = defaultSlotsForType(this._getEffectiveType());
     }
+    this._localBacklightColor = undefined;
     this._dirty = false;
     this._selectedSlotId = null;
     this._render();
@@ -1477,6 +1495,23 @@ class Control4CardEditor extends HTMLElement {
             `).join("")}
           </div>
         </div>
+        ${HAS_BACKLIGHT.includes(effectiveType) ? (() => {
+          // Only keypads have a backlight. Unset (null) means the
+          // integration has never written it, so the device keeps
+          // whatever color it already had.
+          const stored = dev.config?.backlight_color ?? null;
+          const current = this._localBacklightColor ?? stored;
+          const lit = current !== null && current !== "000000";
+          return `
+        <div class="editor-section">
+          <span class="section-label">Backlight</span>
+          <div class="color-pair">
+            <input type="checkbox" id="backlight-on" ${lit ? "checked" : ""}>
+            <input type="color" id="backlight-color" value="${hexToInputColor(lit ? current : DEFAULT_BACKLIGHT_COLOR)}" ${lit ? "" : "disabled"}>
+            ${current === null ? `<span class="color-label">Device default</span>` : ""}
+          </div>
+        </div>`;
+        })() : ""}
       ` : ""}
       ${!this._embedded ? `</div>` : ""}
 
@@ -1690,6 +1725,26 @@ class Control4CardEditor extends HTMLElement {
     for (const swatch of root.querySelectorAll(".swatch")) {
       swatch.addEventListener("click", () => {
         this._localFaceplateColor = swatch.dataset.color;
+        this._dirty = true;
+        this._render();
+      });
+    }
+
+    // Keypad backlight — written to the device on save
+    const backlightOn = root.getElementById("backlight-on");
+    const backlightColor = root.getElementById("backlight-color");
+    if (backlightOn) {
+      backlightOn.addEventListener("change", (e) => {
+        this._localBacklightColor = e.target.checked
+          ? inputColorToHex(backlightColor.value)
+          : "000000";
+        this._dirty = true;
+        this._render();
+      });
+    }
+    if (backlightColor) {
+      backlightColor.addEventListener("change", (e) => {
+        this._localBacklightColor = inputColorToHex(e.target.value);
         this._dirty = true;
         this._render();
       });

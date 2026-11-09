@@ -77,6 +77,9 @@ class DeviceConfig:
     device_type_override: str | None = None
     slots: list[SlotConfig] = field(default_factory=list)
     faceplate_color: str | None = None
+    # Keypad backlight color (c4.dmx.blc 00 05). None leaves the device's
+    # own setting alone; "000000" turns the backlight off.
+    backlight_color: str | None = None
 
     @property
     def effective_type(self) -> str:
@@ -94,6 +97,8 @@ class DeviceConfig:
         }
         if self.faceplate_color:
             d["faceplate_color"] = self.faceplate_color
+        if self.backlight_color is not None:
+            d["backlight_color"] = self.backlight_color
         return d
 
     @classmethod
@@ -106,6 +111,7 @@ class DeviceConfig:
             device_type_override=data.get("device_type_override"),
             slots=[SlotConfig.from_dict(s) for s in data.get("slots", [])],
             faceplate_color=data.get("faceplate_color"),
+            backlight_color=data.get("backlight_color"),
         )
 
 

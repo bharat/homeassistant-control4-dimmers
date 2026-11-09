@@ -55,6 +55,7 @@ Key commands:
 - `c4.dmx.cc <btn> <count>` — Click count (tap detection)
 - `c4.dmx.dim` — Query dimmer type (response identifies device model)
 - `c4.dmx.amb <sensor>` — Query ambient light sensor
+- `c4.dmx.blc 00 05 <rgb>` — GET/SET keypad backlight color (`000000` = off; drives hidden LEDs `06`-`0c`)
 
 ### Layer 2: Zigbee-side device definition
 

@@ -86,6 +86,14 @@ AUDIT_HEAL_MAX_RETRIES = 2
 # before giving up on a verify pass.
 VERIFY_TIMEOUT_MS = 5000
 
+# A single tap emits both c4.dmx.bp (press) and c4.dmx.sc (scene) back to
+# back, and both map to the "pressed" event. Whichever arrives first fires
+# the event; the other half of the pair is swallowed if it lands within this
+# many seconds. Pairing (rather than a plain time debounce) keeps the second
+# press of a fast double tap, and a device that only ever sends one of the
+# two still gets exactly one "pressed" per tap.
+PRESS_PAIR_WINDOW = 2.0
+
 # Z2M model strings that identify C4 devices
 C4_MODEL_IDS = {
     "C4-APD120",
@@ -119,6 +127,9 @@ class Control4Manager:
         self._event_callbacks: dict[
             tuple[str, int | str], Callable[[str], None]
         ] = {}  # (ieee, slot_id | paddle_id) -> callback(event_type)
+        # (ieee, slot_id | paddle_id) -> (verb that fired "pressed", monotonic
+        # time), waiting for the other half of the press/scene pair.
+        self._press_pairs: dict[tuple[str, int | str], tuple[str, float]] = {}
         self._light_track_unsubs: list[Callable[[], None]] = []  # state listeners
         self._led_cooldowns: dict[
             tuple[str, int], float
@@ -245,13 +256,29 @@ class Control4Manager:
         paddle_id = paddle_match.group(1)
         verb = paddle_match.group(2)
         if verb == "release":
-            event_type = "released"
+            self.fire_button_event(device.ieee_address, paddle_id, "released")
         elif verb in ("press", "scene"):
-            event_type = "pressed"
+            self._fire_pressed(device.ieee_address, paddle_id, verb)
         else:  # click_N
             event_type = _click_count_to_event_type(int(paddle_match.group(3)))
-        self.fire_button_event(device.ieee_address, paddle_id, event_type)
+            self.fire_button_event(device.ieee_address, paddle_id, event_type)
         return True
+
+    def _fire_pressed(self, ieee: str, slot_id: int | str, verb: str) -> None:
+        """
+        Fire one "pressed" event per tap from a press/scene pair.
+
+        The firmware sends c4.dmx.bp and c4.dmx.sc for the same tap. The
+        first of the two fires "pressed"; the other is dropped if it arrives
+        within PRESS_PAIR_WINDOW. A repeat of the same verb is a new tap.
+        """
+        key = (ieee, slot_id)
+        now = time.monotonic()
+        pending = self._press_pairs.pop(key, None)
+        if pending and pending[0] != verb and now - pending[1] < PRESS_PAIR_WINDOW:
+            return
+        self._press_pairs[key] = (verb, now)
+        self.fire_button_event(ieee, slot_id, "pressed")
 
     def _dispatch_button_action(self, device: DeviceState, action_str: str) -> None:
         """Parse an action string from Z2M and dispatch to event entities."""
@@ -266,7 +293,7 @@ class Control4Manager:
         if press_match:
             slot_id = self._button_slot(device, int(press_match.group(1)))
             is_scene = press_match.group(2) == "scene"
-            self.fire_button_event(device.ieee_address, slot_id, "pressed")
+            self._fire_pressed(device.ieee_address, slot_id, press_match.group(2))
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
             behavior = slot.behavior if slot else "keypad"
@@ -330,11 +357,15 @@ class Control4Manager:
         wire a half reports on varies by hardware: an APD120 and an SW120277
         both send the bottom half as button 6 (wire 05) while the dimmer
         layout keeps Bottom on slot 5, where its LED lives. On those types
-        buttons 1-3 are the top half and 4-6 the bottom half.
+        buttons 1-3 are the top half and 4-6 the bottom half. Numbers outside
+        1-6 (an older converter reporting the paddle as button 8 or 9) pass
+        through unmapped so they match no slot and drive no load action.
         """
         config = self._store.get_device(device.ieee_address)
         device_type = config.effective_type if config else device.device_type
         if device_type not in (DEVICE_TYPE_DIMMER, DEVICE_TYPE_SWITCH):
+            return button
+        if not 1 <= button <= SLOT_COUNT:
             return button
         top, bottom = DEVICE_TYPE_SLOTS[device_type]
         return top if button <= SLOT_COUNT // 2 else bottom

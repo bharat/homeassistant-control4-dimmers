@@ -35,11 +35,13 @@ from .const import (
     DEFAULT_MQTT_TOPIC,
     DEVICE_TYPE_DIMMER,
     DEVICE_TYPE_KEYPADDIM,
+    DEVICE_TYPE_OUTLET,
     DEVICE_TYPE_SLOTS,
     DEVICE_TYPE_SWITCH,
     DEVICE_TYPES,
     DOMAIN,
     LOGGER,
+    OUTLET_MODELS,
     SLOT_COUNT,
 )
 from .models import DeviceConfig, DeviceState, SlotConfig, _extract_color
@@ -445,7 +447,9 @@ class Control4Manager:
                 continue
             seen.add(ieee)
             friendly_name = device_info.get("friendly_name", ieee)
-            model_id = device_info.get("model_id", "")
+            # Some devices prefix their Zigbee modelID (the ROS reports
+            # "c4:control4_light:C4-V-ROSW120"); keep only the model.
+            model_id = device_info.get("model_id", "").rsplit(":", 1)[-1]
 
             if ieee not in self._devices:
                 self._devices[ieee] = DeviceState(
@@ -471,6 +475,11 @@ class Control4Manager:
                     dev.friendly_name = friendly_name
                     self._update_device_registry_name(ieee, friendly_name)
                 dev.model_id = model_id
+            # The outlet relay has no c4.dmx.dim answer, so its type comes
+            # from the model. Setting it also keeps c4_detect from being
+            # sent to a device whose converter can't take it.
+            if _is_outlet(device_info):
+                self._devices[ieee].device_type = DEVICE_TYPE_OUTLET
 
         removed = set(self._devices.keys()) - seen
         for ieee in removed:
@@ -1849,6 +1858,15 @@ def _extract_slot_fields(
     if f"button_{slot_id}_led_mode" in payload:
         btn["led_mode"] = payload[f"button_{slot_id}_led_mode"]
     return led, btn
+
+
+def _is_outlet(device_info: dict) -> bool:
+    """Check if a Z2M device info dict is a Control4 outlet relay (ROS)."""
+    model = (device_info.get("definition") or {}).get("model", "")
+    # Z2M's model_id is the raw Zigbee modelID, e.g.
+    # "c4:control4_light:C4-V-ROSW120".
+    model_id = device_info.get("model_id", "").rsplit(":", 1)[-1]
+    return model in OUTLET_MODELS or model_id in OUTLET_MODELS
 
 
 def _is_control4_device(device_info: dict) -> bool:

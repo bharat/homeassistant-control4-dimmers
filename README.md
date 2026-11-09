@@ -44,7 +44,7 @@ factory reset sequence: press top 13x, bottom 4x, top 13x.
 
 | Model | Type | Status | Device type |
 | ------- | ------ | ------- | -------- |
-| C4-V-ROSW120 | Outlet (on/off) | **Confirmed** with a Z2M image that includes ROS support: on/off through Z2M's own switch entity, and the outlet's button as a `Button 1` event entity (pressed, single tap, ...). It has no ambient light sensor and no LED settings. Older images report it as unsupported | Router |
+| C4-V-ROSW120 | Outlet (on/off) | Supported with the Control4 Zigbee2MQTT image (community report): on/off through Z2M's own switch entity, and the outlet's button as a `Button 1` event entity (pressed, single tap, ...). It has no ambient light sensor and no LED settings. Older images report it as unsupported | Router |
 | C4-SR-260 | TV remote | **Unknown** | End Device |
 | C4-SR-250 | TV remote | **Unknown** | End Device |
 | C4-THERM | Thermostat | **Unknown** | Mixed (battery or 24VAC powered) |

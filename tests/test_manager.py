@@ -767,6 +767,91 @@ class TestManagerConfigureDevice:
         assert len(saved.slots) == len(expected)
         assert [s.slot_id for s in saved.slots] == [s.slot_id for s in expected]
 
+    @pytest.mark.asyncio
+    async def test_backlight_only_change_sends_blc(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """A backlight-only change writes just the blc command, not the slots."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store._devices[IEEE_DIMMER] = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="keypaddim",
+            slots=[SlotConfig(slot_id=1)],
+        )
+        manager._store.async_save_device = AsyncMock()
+        manager._push_slot_config = AsyncMock()
+        manager.async_send_mqtt = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER, backlight_color="00ff00"
+        )
+        saved = manager._store.async_save_device.call_args[0][0]
+        assert saved.backlight_color == "00ff00"
+        manager._push_slot_config.assert_not_awaited()
+        manager.async_send_mqtt.assert_awaited_once_with(
+            IEEE_DIMMER, {"c4_cmd": "c4.dmx.blc 00 05 00ff00"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_unchanged_backlight_not_resent(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store._devices[IEEE_DIMMER] = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            slots=[SlotConfig(slot_id=1)],
+            backlight_color="000000",
+        )
+        manager._store.async_save_device = AsyncMock()
+        manager.async_send_mqtt = AsyncMock()
+        await manager.async_configure_device(
+            ieee_address=IEEE_DIMMER, backlight_color="000000"
+        )
+        manager.async_send_mqtt.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_full_push_ends_with_backlight(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """push_config re-sends a stored backlight after the slots."""
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            slots=[SlotConfig(slot_id=1)],
+            backlight_color="000000",
+        )
+        manager._send_slot_commands = AsyncMock()
+        manager.async_send_mqtt = AsyncMock()
+        await manager._push_slot_config(dimmer_state, config)
+        manager._send_slot_commands.assert_awaited_once()
+        manager.async_send_mqtt.assert_awaited_once_with(
+            IEEE_DIMMER, {"c4_cmd": "c4.dmx.blc 00 05 000000"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_full_push_skips_unset_backlight(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+    ) -> None:
+        """With no stored backlight the device's own setting is left alone."""
+        config = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            slots=[SlotConfig(slot_id=1)],
+        )
+        manager._send_slot_commands = AsyncMock()
+        manager.async_send_mqtt = AsyncMock()
+        await manager._push_slot_config(dimmer_state, config)
+        manager.async_send_mqtt.assert_not_awaited()
+
 
 # ── Manager: _execute_slot_action ──────────────────────────────────
 

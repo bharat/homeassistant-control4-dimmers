@@ -123,6 +123,20 @@ class TestSetDeviceConfig:
         mgr._push_slot_config.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_backlight_only_writes_backlight(self, mock_hass: MagicMock) -> None:
+        mgr, store = _make_runtime(mock_hass, config=_keypad_config())
+        mgr.async_send_mqtt = AsyncMock()
+        result = await _svc_set_device_config(
+            mock_hass, _call({"ieee_address": IEEE, "backlight_color": "00ff00"})
+        )
+        assert store.get_device(IEEE).backlight_color == "00ff00"
+        assert result["backlight_color"] == "00ff00"
+        mgr._push_slot_config.assert_not_awaited()
+        mgr.async_send_mqtt.assert_awaited_once_with(
+            IEEE, {"c4_cmd": "c4.dmx.blc 00 05 00ff00"}
+        )
+
+    @pytest.mark.asyncio
     async def test_device_type_override_only(self, mock_hass: MagicMock) -> None:
         _, store = _make_runtime(mock_hass, config=_keypad_config())
         call = _call({"ieee_address": IEEE, "device_type_override": "keypaddim"})

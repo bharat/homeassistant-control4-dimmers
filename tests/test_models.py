@@ -209,6 +209,19 @@ class TestDeviceConfig:
         assert len(rebuilt.slots) == len(dimmer_config.slots)
         assert rebuilt.slots[0].name == dimmer_config.slots[0].name
 
+    def test_backlight_unset_is_omitted(self) -> None:
+        config = DeviceConfig(ieee_address="0x001", friendly_name="Test")
+        assert "backlight_color" not in config.to_dict()
+        assert DeviceConfig.from_dict(config.to_dict()).backlight_color is None
+
+    def test_backlight_off_roundtrips(self) -> None:
+        # "000000" (off) is a real setting and must survive a save/load.
+        config = DeviceConfig(
+            ieee_address="0x001", friendly_name="Test", backlight_color="000000"
+        )
+        rebuilt = DeviceConfig.from_dict(config.to_dict())
+        assert rebuilt.backlight_color == "000000"
+
 
 # ── DeviceState ──────────────────────────────────────────────────────
 

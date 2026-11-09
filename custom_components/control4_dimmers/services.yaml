@@ -44,6 +44,16 @@ set_device_config:
       required: false
       selector:
         text:
+    backlight_color:
+      name: Backlight Color
+      description: >
+        Hex RGB keypad backlight color (e.g. "0080ff"), written to the
+        device right away. "000000" turns the backlight off. Only keypads
+        (e.g. C4-KD120) have a backlight; dimmers accept it and show
+        nothing.
+      required: false
+      selector:
+        text:
     slots:
       name: Slots
       description: >

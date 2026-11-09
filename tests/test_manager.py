@@ -185,9 +185,81 @@ class TestManagerEventCallbacks:
     ) -> None:
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 3, cb)
-        manager._dispatch_button_action(dimmer_state, "button_3_click_2")
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_click_2")
         cb.assert_called_once_with("double_tap")
+
+    def test_dimmer_bottom_button_maps_to_bottom_slot(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        # The dimmer's bottom half reports as button 6; its slot (and LED) is 5.
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        bottom = MagicMock()
+        sixth = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 5, bottom)
+        manager.register_event_callback(IEEE_DIMMER, 6, sixth)
+        manager._dispatch_button_action(dimmer_state, "button_6_press")
+        manager._dispatch_button_action(dimmer_state, "button_6_release")
+        manager._dispatch_button_action(dimmer_state, "button_6_click_2")
+        assert [c.args[0] for c in bottom.call_args_list] == [
+            "pressed",
+            "released",
+            "double_tap",
+        ]
+        sixth.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("device_type", "button", "slot_id"),
+        [
+            ("dimmer", 1, 2),
+            ("dimmer", 3, 2),
+            ("dimmer", 4, 5),
+            ("dimmer", 5, 5),
+            ("switch", 2, 2),
+            ("switch", 5, 6),
+            ("switch", 6, 6),
+        ],
+    )
+    def test_two_button_halves(
+        self,
+        manager: Control4Manager,
+        dimmer_state: DeviceState,
+        device_type: str,
+        button: int,
+        slot_id: int,
+    ) -> None:
+        """Buttons 1-3 are the top half and 4-6 the bottom half."""
+        dimmer_state.device_type = device_type
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, slot_id, cb)
+        manager._dispatch_button_action(dimmer_state, f"button_{button}_press")
+        cb.assert_called_once_with("pressed")
+
+    def test_override_type_keeps_six_buttons(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """A keypaddim override keeps all six buttons separate."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        manager._store._devices[IEEE_DIMMER] = DeviceConfig(
+            ieee_address=IEEE_DIMMER,
+            friendly_name="Kitchen",
+            device_type="dimmer",
+            device_type_override="keypaddim",
+        )
+        cb = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 6, cb)
+        manager._dispatch_button_action(dimmer_state, "button_6_press")
+        cb.assert_called_once_with("pressed")
+
+    def test_keypad_button_6_not_remapped(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        manager._devices[keypad_state.ieee_address] = keypad_state
+        cb = MagicMock()
+        manager.register_event_callback(keypad_state.ieee_address, 6, cb)
+        manager._dispatch_button_action(keypad_state, "button_6_release")
+        cb.assert_called_once_with("released")
 
     def test_unsubscribe_event_callback(
         self, manager: Control4Manager, dimmer_state: DeviceState
@@ -240,8 +312,8 @@ class TestManagerEventCallbacks:
         """Four rapid taps fire triple_tap instead of raising (issue #178)."""
         manager._devices[IEEE_DIMMER] = dimmer_state
         cb = MagicMock()
-        manager.register_event_callback(IEEE_DIMMER, 1, cb)
-        manager._dispatch_button_action(dimmer_state, "button_1_click_4")
+        manager.register_event_callback(IEEE_DIMMER, 2, cb)
+        manager._dispatch_button_action(dimmer_state, "button_2_click_4")
         cb.assert_called_once_with("triple_tap")
 
     def test_paddle_click_4_clamps_to_triple_tap(
@@ -1012,11 +1084,11 @@ class TestDispatchWithActions:
                 friendly_name="Kitchen",
                 device_type="dimmer",
                 slots=[
-                    SlotConfig(slot_id=1, behavior=behavior, led_mode="follow_load")
+                    SlotConfig(slot_id=2, behavior=behavior, led_mode="follow_load")
                 ],
             )
             manager._store._devices[IEEE_DIMMER] = config
-            manager._dispatch_button_action(dimmer_state, "button_1_scene")
+            manager._dispatch_button_action(dimmer_state, "button_2_scene")
             (
                 manager._hass.async_create_task.assert_called(),
                 (f"Scene on {behavior} should dispatch"),

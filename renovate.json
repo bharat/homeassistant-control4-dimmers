@@ -19,6 +19,12 @@
       "groupName": "github actions"
     },
     {
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["python"],
+      "groupName": "python version",
+      "description": "The setup-python python-version input is a runtime upgrade, not an action update. Keep it out of the github actions group so a blocked Python bump (3.15 waiting on isal wheels) doesn't hold back action updates."
+    },
+    {
       "matchManagers": ["devcontainer"],
       "groupName": "devcontainer"
     },

@@ -237,6 +237,19 @@ class TestManagerEventCallbacks:
         manager._dispatch_button_action(dimmer_state, f"button_{button}_press")
         cb.assert_called_once_with("pressed")
 
+    @pytest.mark.parametrize("button", [7, 8, 9])
+    def test_out_of_range_buttons_not_remapped(
+        self, manager: Control4Manager, dimmer_state: DeviceState, button: int
+    ) -> None:
+        """Buttons past 6 never land on the Bottom slot or its load action."""
+        manager._devices[IEEE_DIMMER] = dimmer_state
+        bottom = MagicMock()
+        manager.register_event_callback(IEEE_DIMMER, 5, bottom)
+        with patch.object(manager, "press_button", new=AsyncMock()) as press:
+            manager._dispatch_button_action(dimmer_state, f"button_{button}_scene")
+        bottom.assert_not_called()
+        press.assert_not_called()
+
     def test_override_type_keeps_six_buttons(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:

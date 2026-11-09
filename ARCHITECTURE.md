@@ -285,7 +285,7 @@ data:
 
 On the two-button types (`dimmer`, `switch`) the bottom rocker's press and LED can use different IDs: an APD120 or SW120277 sends the press as `button_6` while a dimmer's Bottom slot, and its LED, is 5. Since those devices only have a top and a bottom half, the integration maps buttons 1-3 to the Top slot and 4-6 to the Bottom slot (`_button_slot` in `manager.py`), so the Bottom event entity fires whichever wire the hardware uses.
 
-`07`/`08` are exposed as the Paddle Up / Paddle Down event entities. On 3-way installs they usually come from a non-Zigbee auxiliary switch wired to the device's traveler terminal, and on some models they come from the device's own paddle.
+`07`/`08` are exposed as the Paddle Up / Paddle Down event entities. On 3-way installs they usually come from a non-Zigbee auxiliary switch wired to the device's traveler terminal, and on some models they come from the device's own paddle. This needs a converter that reports them as `paddle_up` / `paddle_down`; older converters report them as `button_8` / `button_9`, which no slot handles.
 
 The translation from 0-based wire IDs to 1-based happens once, in the Z2M
 device definition's `parseButtonEvent()` (in the zigbee-herdsman-converters fork): `wireId = parseInt(hex, 16) + 1`.

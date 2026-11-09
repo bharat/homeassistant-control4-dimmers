@@ -271,11 +271,11 @@ automations or dashboards that referenced the old entity id.
 
 ### Paddle events and 3-way auxiliary switches
 
-Each load-bearing device gets two event entities, **Paddle Up** and **Paddle Down**, which fire with the same event types as the buttons. They stay `unknown` if nothing reports on them.
+Each load-bearing device gets two event entities, **Paddle Up** and **Paddle Down**, which fire with the same event types as the buttons. They stay `unknown` if nothing reports on them. They need a Zigbee2MQTT image whose converter reports these presses as `paddle_up` / `paddle_down`; older converters report them as `button_8` / `button_9`, which the integration ignores.
 
 On 3-way installs these events usually come from the auxiliary switch: a second switch with no Zigbee radio of its own, such as a Control4 [Auxiliary Keypad, C4-KA](https://docs.control4.com/docs/product/auxiliary-keypad/data-sheet/english/latest/auxiliary-keypad-data-sheet-rev-a.pdf). It talks to the Control4 device over the 3-way wiring, and that device reports its presses. An auxiliary has no LEDs, which is the easiest way to tell one apart. On some models these events come from the device's own paddle instead, including a 2-button dimmer with no auxiliary wired.
 
-On a C4-KD120 with an auxiliary wired, the device's own rocker was seen reporting through its button entities and only the auxiliary fired these events, so check which one fires on your hardware.
+Community report (C4-KD120): with an auxiliary wired, the device's own rocker reported through its button entities and only the auxiliary fired these events, so check which one fires on your hardware.
 
 ```yaml
 trigger:

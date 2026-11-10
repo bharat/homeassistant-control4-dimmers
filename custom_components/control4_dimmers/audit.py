@@ -66,21 +66,35 @@ def firmware_led_mode(slot: SlotConfig) -> str:
     return "programmed" if slot.led_mode == "fixed" else slot.led_mode
 
 
-def slot_readings(
+def slot_readings(  # noqa: PLR0913
     slot: SlotConfig,
     cached_led: dict[str, str],
     cached_btn: dict[str, str],
     fw_led: dict[str, str],
     fw_btn: dict[str, str],
+    *,
+    tracked_color: str | None = None,
 ) -> dict[str, FieldReading]:
     """
     Assemble per-field (store, cache, firmware) readings for a slot.
 
-    An LED tracking another entity has its colors set at runtime from that
-    entity's state, so its stored on/off colors are not compared.
+    An LED tracking another entity holds that entity's current color
+    (tracked_color) in both its on and off slots instead of the stored
+    colors. Those writes go out as raw commands that Zigbee2MQTT doesn't
+    cache, so only the firmware is compared for them. Without a
+    tracked_color, a tracking LED's colors are not compared.
     """
     readings: dict[str, FieldReading] = {}
-    if not slot.tracks_other_entity:
+    if slot.tracks_other_entity:
+        if tracked_color is not None:
+            expected = _norm_color(tracked_color) or ""
+            readings["on_color"] = FieldReading(
+                expected, None, _norm_color(fw_led.get("on"))
+            )
+            readings["off_color"] = FieldReading(
+                expected, None, _norm_color(fw_led.get("off"))
+            )
+    else:
         readings["on_color"] = FieldReading(
             _norm_color(slot.led_on_color) or "",
             _norm_color(cached_led.get("on")),
@@ -126,17 +140,19 @@ def classify_drift(reading: FieldReading) -> str | None:
     return DRIFT_LAYER_BOTH
 
 
-def compare_three_way(
+def compare_three_way(  # noqa: PLR0913
     slot: SlotConfig,
     cached_led: dict[str, str],
     cached_btn: dict[str, str],
     fw_led: dict[str, str],
     fw_btn: dict[str, str],
+    *,
+    tracked_color: str | None = None,
 ) -> list[AuditMismatch]:
     """Compare the store against the cache and firmware for every field."""
     mismatches: list[AuditMismatch] = []
     for field, reading in slot_readings(
-        slot, cached_led, cached_btn, fw_led, fw_btn
+        slot, cached_led, cached_btn, fw_led, fw_btn, tracked_color=tracked_color
     ).items():
         layer = classify_drift(reading)
         if layer is not None:

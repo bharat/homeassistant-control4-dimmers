@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.control4_dimmers.audit import slot_readings
+from custom_components.control4_dimmers.audit import compare_three_way, slot_readings
+from custom_components.control4_dimmers.const import DRIFT_LAYER_FIRMWARE
 from custom_components.control4_dimmers.manager import Control4Manager
 from custom_components.control4_dimmers.models import (
     DeviceConfig,
@@ -119,6 +120,55 @@ class TestTrackingWritesLoadColors:
         ]
 
     @pytest.mark.asyncio
+    async def test_unchanged_color_skips_load_color_writes(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """Attribute-only updates (a brightness ramp) don't rewrite 03/04."""
+        _setup(manager, dimmer_state, _tracked_slot())
+        listener = _state_listener(manager)
+        await listener(_event("light.living_room", "on"))
+        await listener(_event("light.living_room", "on"))
+        await listener(_event("light.living_room", "on"))
+        assert _sent(manager) == [
+            "c4.dmx.led 01 05 ffffff",
+            "c4.dmx.led 01 03 ffffff",
+            "c4.dmx.led 01 04 ffffff",
+            "c4.dmx.led 01 05 ffffff",
+            "c4.dmx.led 01 05 ffffff",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_color_change_writes_load_colors_again(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        _setup(manager, dimmer_state, _tracked_slot())
+        listener = _state_listener(manager)
+        await listener(_event("light.living_room", "on"))
+        await listener(_event("light.living_room", "off"))
+        assert _sent(manager)[-2:] == [
+            "c4.dmx.led 01 03 0000ff",
+            "c4.dmx.led 01 04 0000ff",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_untracked_push_forgets_the_written_color(
+        self, manager: Control4Manager, dimmer_state: DeviceState
+    ) -> None:
+        """After a push of the stored colors, tracking writes 03/04 again."""
+        _setup(manager, dimmer_state, _tracked_slot())
+        listener = _state_listener(manager)
+        await listener(_event("light.living_room", "on"))
+        assert (IEEE_DIMMER, 1) in manager._tracked_load_colors
+        untracked = SlotConfig(slot_id=2, led_on_color="ffffff", led_off_color="0000ff")
+        await manager._send_slot_commands(dimmer_state, untracked)
+        assert (IEEE_DIMMER, 1) not in manager._tracked_load_colors
+        await listener(_event("light.living_room", "on"))
+        assert _sent(manager)[-2:] == [
+            "c4.dmx.led 01 03 ffffff",
+            "c4.dmx.led 01 04 ffffff",
+        ]
+
+    @pytest.mark.asyncio
     async def test_self_load_still_writes_only_the_override(
         self, manager: Control4Manager, dimmer_state: DeviceState
     ) -> None:
@@ -181,16 +231,62 @@ class TestPushUsesTrackedColor:
         ]
 
 
-class TestAuditSkipsTrackedColors:
-    """Runtime tracked colors are not drift from the stored colors."""
+class TestAuditComparesTrackedColors:
+    """A tracked LED is audited against the tracked entity's current color."""
 
-    def test_compare_slot_ignores_colors(self) -> None:
+    def test_compare_slot_without_tracked_color_ignores_colors(self) -> None:
         mismatches = Control4Manager._compare_slot(
             _tracked_slot(),
             {"on": "0000ff", "off": "0000ff"},
             {"behavior": "keypad", "led_mode": "programmed"},
         )
         assert mismatches == []
+
+    def test_compare_slot_matches_tracked_color(self) -> None:
+        mismatches = Control4Manager._compare_slot(
+            _tracked_slot(),
+            {"on": "FFFFFF", "off": "#ffffff"},
+            {},
+            "ffffff",
+        )
+        assert mismatches == []
+
+    def test_compare_slot_catches_reverted_tracked_color(self) -> None:
+        """A dropped write leaves the stored color, which is now drift."""
+        mismatches = Control4Manager._compare_slot(
+            _tracked_slot(),
+            {"on": "ffffff", "off": "0000ff"},
+            {},
+            "ffffff",
+        )
+        assert mismatches == [("off_color", "ffffff", "0000ff")]
+
+    def test_three_way_flags_firmware_and_ignores_cache(self) -> None:
+        """The cache misses raw writes, so only the firmware is judged."""
+        mismatches = compare_three_way(
+            _tracked_slot(),
+            {"on": "0000ff", "off": "0000ff"},
+            {},
+            {"on": "ffffff", "off": "0000ff"},
+            {},
+            tracked_color="ffffff",
+        )
+        assert [(m.field, m.layer, m.cache) for m in mismatches] == [
+            ("off_color", DRIFT_LAYER_FIRMWARE, None)
+        ]
+
+    def test_slot_readings_compare_tracked_color(self) -> None:
+        readings = slot_readings(
+            _tracked_slot(),
+            {"on": "aaaaaa"},
+            {},
+            {"on": "0000ff"},
+            {},
+            tracked_color="ffffff",
+        )
+        assert readings["on_color"].store == "ffffff"
+        assert readings["on_color"].cache is None
+        assert readings["on_color"].firmware == "0000ff"
 
     def test_compare_slot_still_checks_behavior(self) -> None:
         mismatches = Control4Manager._compare_slot(

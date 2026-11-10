@@ -134,6 +134,11 @@ class Control4Manager:
         self._led_cooldowns: dict[
             tuple[str, int], float
         ] = {}  # (ieee, slot) -> timestamp
+        # (ieee, wire_id) -> color last written to a tracked LED's load-on
+        # and load-off slots (modes 03/04), so a state update that doesn't
+        # change the color (a brightness step, an attribute change) doesn't
+        # write them again.
+        self._tracked_load_colors: dict[tuple[str, int], str] = {}
         # Per-device send pacing/serialization (issue #144). _send_locks
         # serializes individual publishes to one device and, together with
         # _next_send_at, spaces them >= MIN_SEND_INTERVAL apart. _push_locks
@@ -965,7 +970,9 @@ class Control4Manager:
         if read is None:
             return None
         observed_led, observed_btn = read
-        mismatches = self._compare_slot(slot, observed_led, observed_btn)
+        mismatches = self._compare_slot(
+            slot, observed_led, observed_btn, self._tracked_led_color(slot)
+        )
         for field_name, expected, actual in mismatches:
             LOGGER.warning(
                 "Verify mismatch on %s slot %d: %s expected %s, observed %s",
@@ -985,6 +992,7 @@ class Control4Manager:
         slot: SlotConfig,
         observed_led: dict[str, str],
         observed_btn: dict[str, str],
+        tracked_color: str | None = None,
     ) -> list[tuple[str, str, str]]:
         """
         Compare a desired slot config against observed device-read values.
@@ -998,18 +1006,18 @@ class Control4Manager:
         # LED mode, so map it before comparing against the observed value.
         firmware_mode = "programmed" if slot.led_mode == "fixed" else slot.led_mode
         mismatches: list[tuple[str, str, str]] = []
+        on_color, off_color = slot.led_on_color, slot.led_off_color
         if slot.tracks_other_entity:
-            # The tracked entity sets the colors at runtime, so the stored
-            # on/off colors are not what the firmware should hold.
-            observed_led = {}
-        if "on" in observed_led and not _color_eq(
-            slot.led_on_color, observed_led["on"]
-        ):
-            mismatches.append(("on_color", slot.led_on_color, observed_led["on"]))
-        if "off" in observed_led and not _color_eq(
-            slot.led_off_color, observed_led["off"]
-        ):
-            mismatches.append(("off_color", slot.led_off_color, observed_led["off"]))
+            # Both slots hold the tracked entity's current color, not the
+            # stored colors. Without it, the colors can't be judged.
+            if tracked_color is None:
+                observed_led = {}
+            else:
+                on_color = off_color = tracked_color
+        if "on" in observed_led and not _color_eq(on_color, observed_led["on"]):
+            mismatches.append(("on_color", on_color, observed_led["on"]))
+        if "off" in observed_led and not _color_eq(off_color, observed_led["off"]):
+            mismatches.append(("off_color", off_color, observed_led["off"]))
         if "led_mode" in observed_btn and observed_btn["led_mode"] != firmware_mode:
             mismatches.append(("led_mode", firmware_mode, observed_btn["led_mode"]))
         if "behavior" in observed_btn and observed_btn["behavior"] != slot.behavior:
@@ -1278,7 +1286,14 @@ class Control4Manager:
         fw_led, fw_btn = read
         summary["slots_checked"] += 1
 
-        mismatches = compare_three_way(slot, cached_led, cached_btn, fw_led, fw_btn)
+        mismatches = compare_three_way(
+            slot,
+            cached_led,
+            cached_btn,
+            fw_led,
+            fw_btn,
+            tracked_color=self._tracked_led_color(slot),
+        )
         layer = summarize_layers(mismatches)
         if not mismatches:
             self._record_verify_result(
@@ -1325,7 +1340,9 @@ class Control4Manager:
             if reread is None:
                 break
             fw_led, fw_btn = reread
-            remaining = self._compare_slot(slot, fw_led, fw_btn)
+            remaining = self._compare_slot(
+                slot, fw_led, fw_btn, self._tracked_led_color(slot)
+            )
             healed = not remaining
             self._record_verify_result(
                 ieee,
@@ -1506,6 +1523,7 @@ class Control4Manager:
                 state.ieee_address, wire_id, tracked_color
             )
         else:
+            self._tracked_load_colors.pop((state.ieee_address, wire_id), None)
             await self.async_send_mqtt(
                 state.ieee_address,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} 03 {slot.led_on_color}"},
@@ -1594,6 +1612,22 @@ class Control4Manager:
                 ieee,
                 {"c4_cmd": f"c4.dmx.led {wire_id:02x} {mode:02x} {color}"},
             )
+        if {3, 4}.issubset(modes):
+            self._tracked_load_colors[(ieee, wire_id)] = color
+
+    async def _update_tracked_load_colors(
+        self, ieee: str, wire_id: int, color: str
+    ) -> None:
+        """
+        Write a tracked LED's load-on/load-off colors only when they change.
+
+        State updates arrive for attribute changes too (every brightness
+        step of a transition), and most don't change the color. Skipping
+        those keeps a dim ramp from sending a burst of LED writes.
+        """
+        if self._tracked_load_colors.get((ieee, wire_id)) == color:
+            return
+        await self._send_tracked_led_color(ieee, wire_id, color, modes=(3, 4))
 
     async def press_button(
         self, ieee: str, slot_id: int, event_type: str = "pressed"
@@ -1687,7 +1721,7 @@ class Control4Manager:
         # The visible overrides went out before the action; the load-color
         # writes that keep them in place can wait until after it.
         for wire_id, color in load_color_writes:
-            await self._send_tracked_led_color(ieee, wire_id, color, modes=(3, 4))
+            await self._update_tracked_load_colors(ieee, wire_id, color)
 
     async def async_optimistic_led(
         self, ieee: str, slot_id: int, service: str | None = None
@@ -1800,7 +1834,7 @@ class Control4Manager:
             # Every visible override first, then the load-on/load-off colors
             # that keep them in place, so no LED waits behind another's.
             for ieee, wire_id, color in load_color_writes:
-                await self._send_tracked_led_color(ieee, wire_id, color, modes=(3, 4))
+                await self._update_tracked_load_colors(ieee, wire_id, color)
 
         unsub = self._hass.bus.async_listen(EVENT_STATE_CHANGED, _on_state_changed)
         self._light_track_unsubs.append(unsub)

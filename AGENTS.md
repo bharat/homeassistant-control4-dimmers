@@ -1,6 +1,6 @@
 # AGENTS.md -- Control4 Zigbee HA Integration
 
-This is the canonical agent guide for `bharat/homeassistant-control4-dimmers`. New Claude/Codex/Cursor sessions should read this before making changes. Pair it with `ARCHITECTURE.md`, `PLAN.md`, and `RESEARCH.md` for deeper context.
+This is the canonical agent guide for `bharat/homeassistant-control4-zigbee`. New Claude/Codex/Cursor sessions should read this before making changes. Pair it with `ARCHITECTURE.md`, `PLAN.md`, and `RESEARCH.md` for deeper context.
 
 ## What this is
 

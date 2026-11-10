@@ -67,7 +67,7 @@ graph TB
 
 ## Phase 7: Upstream (in progress)
 
-Tracked in [issue #104](https://github.com/bharat/homeassistant-control4-dimmers/issues/104). The strategy: production evidence first, minimal PRs second.
+Tracked in [issue #104](https://github.com/bharat/homeassistant-control4-zigbee/issues/104). The strategy: production evidence first, minimal PRs second.
 
 - **PR 1 to `Koenkk/zigbee-herdsman`**: the profile whitelist only (+8/-2, Shelly precedent #1418). Branch `control4-profile` is ready on the fork.
 - **Feature request to herdsman**: a public `Endpoint.sendRaw` for non-ZCL vendor payloads, pointing at the fork's working implementation and its consumer. Filed alongside PR 1, with ArcadeMachinist (who requested exactly this in #1792) looped in.

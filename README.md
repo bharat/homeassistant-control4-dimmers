@@ -1,8 +1,8 @@
 # Control4 Zigbee for Home Assistant
 
-[![Tests](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/test.yml?query=branch%3Amain)
-[![Validate](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/validate.yml?query=branch%3Amain)
-[![Lint](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-dimmers/actions/workflows/lint.yml?query=branch%3Amain)
+[![Tests](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/test.yml?query=branch%3Amain)
+[![Validate](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/validate.yml?query=branch%3Amain)
+[![Lint](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/bharat/homeassistant-control4-zigbee/actions/workflows/lint.yml?query=branch%3Amain)
 
 > **Background:** Control4 ships solid Zigbee dimmers and keypads. This
 > project bridges them into Home Assistant alongside other Zigbee devices,
@@ -84,6 +84,15 @@ Control4 devices from Zigbee2MQTT and provides:
   directly in the editor.
 - **Light entities** for dimmers with brightness control via the native HA
   more-info dialog.
+
+### Installed through HACS before November 2026?
+
+This repository was renamed from `homeassistant-control4-dimmers` to
+`homeassistant-control4-zigbee`. Your installed integration keeps working, and
+the integration domain (`control4_dimmers`) is unchanged, so entities and
+automations are unaffected. To keep getting updates, remove the old custom
+repository in HACS and add `https://github.com/bharat/homeassistant-control4-zigbee`
+in its place (category: Integration). The installed files stay put while you do.
 
 ## Migrating a Device from Control4
 

@@ -56,6 +56,8 @@ Key commands:
 - `c4.dmx.dim` — Query dimmer type (response identifies device model)
 - `c4.dmx.amb <sensor>` — Query ambient light sensor
 - `c4.dmx.blc 00 05 <rgb>` — GET/SET keypad backlight color (`000000` = off; drives hidden LEDs `06`-`0c`)
+- `c4.dmx.ls` — Load status, unsolicited (`0t`) on every load change, never answered to a GET. Ten hex fields: two unknown, level %, volts, mA, W, VA, power factor x1000, then two unknown (field 9 may be an energy counter). Field meanings come from captures (V x mA ≈ VA, VA x PF ≈ W), not documentation.
+- `c4.dm.tv 00 <param>` — GET/SET one dimming table parameter (`01` default on %, `02`/`03` click ramp up/down ms, `04`/`05` hold ramp up/down ms, `06` max %, `08` min %, `09` cold start ms, `0a` cold start %). SET takes the value as 8 hex digits. The reply doesn't echo the param, so reads are matched by sequence number.
 
 ### Layer 2: Zigbee-side device definition
 
@@ -95,7 +97,8 @@ MQTT topics and manages HA entities.
 | `audit.py` | Pure helpers for the audit sweep: three-way drift classification (store / Z2M cache / firmware) and stalest-device ordering |
 | `store.py` | Persistent storage (`.storage/`) for device configs |
 | `models.py` | Data models: `DeviceConfig`, `DeviceState`, `SlotConfig` |
-| `sensor.py` | Sensor anchor entity (device representation) |
+| `sensor.py` | Sensor anchor entity (device representation), ambient light, load power sensors |
+| `number.py` | Dimming table settings (`c4_tv_<param>`), not created for relay switches |
 | `light.py` | Dimmer load entity |
 | `event.py` | Button event entities (with LED config as attributes) |
 | `__init__.py` | Platform setup, websocket API, service registration |
@@ -142,9 +145,18 @@ HA Device: "Kitchen Dimmer"
 ├── event.kitchen_dimmer_button_5         # button (Bottom, wire 04)
 │     attributes: (same structure)
 │
-└── sensor.kitchen_dimmer_ambient_light   # ambient light sensor
-      state: lux value
+├── sensor.kitchen_dimmer_ambient_light   # ambient light sensor
+│     state: lux value
+│
+├── sensor.kitchen_dimmer_power           # load readings from c4_load_*
+├── sensor.kitchen_dimmer_voltage         #   (also current, apparent power,
+├── sensor.kitchen_dimmer_power_factor    #   and two disabled raw fields)
+│
+└── number.kitchen_dimmer_click_ramp_up   # dimming table, one per param
+      (9 total, CONFIG category, disabled by default)
 ```
+
+Load sensors are created the first time a device publishes `c4_load_power`. Dimming numbers are created for every load device that isn't a relay; on first sight the manager sends `c4_read_dimming` (spaced 5 s apart across devices) unless Z2M already has `c4_tv_*` cached. A write sends `c4_cmd` `c4.dm.tv 00 <param> <value>`, and the converter reads that param back and publishes the new `c4_tv_<param>`.
 
 ### Relay-only switch (e.g., Z2M name "Bath Fan", C4-SW120277)
 
@@ -159,7 +171,8 @@ HA Device: "Bath Fan"
 ├── event.bath_fan_button_2               # Top (wire 01)
 ├── event.bath_fan_button_6               # Bottom (wire 05)
 ├── event.bath_fan_paddle_up / paddle_down
-└── sensor.bath_fan_ambient_light
+├── sensor.bath_fan_ambient_light
+└── sensor.bath_fan_power, _voltage, ... # load readings; no dimming numbers
 ```
 
 The Zigbee-side converter cannot tell a relay from a dimmer: it maps dim

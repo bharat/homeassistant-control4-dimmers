@@ -9,6 +9,8 @@ functional, running in production against a 31-device fleet.
 - Automatic device type detection (dimmer / keypad-dimmer / keypad) via `c4_device_type` MQTT field
 - Event entities for each physical button slot
 - Per-slot LED color/mode configuration pushed to device firmware
+- Load power sensors from `c4.dmx.ls` (power, voltage, current, apparent power, power factor) on dimmers and relay switches
+- Dimming table settings from `c4.dm.tv` (ramp times, default/min/max level, cold start) as number entities, dimmers only
 - Persistent device configuration storage with snapshot/restore
 - Bundled Lovelace card (`control4-dimmer-card`) with dashboard view and visual chassis editor
 - WebSocket API for card-to-backend communication
@@ -77,6 +79,5 @@ Tracked in [issue #104](https://github.com/bharat/homeassistant-control4-zigbee/
 ## Remaining Work
 
 - Upstream campaign (Phase 7, above)
-- Expose `c4.dmx.ls` telemetry as HA sensor entities (voltage, current, power, temperature, energy)
-- Expose dimming table parameters (`c4.dm.tv`) as HA number entities (ramp rates, min/max brightness)
+- Identify the last two `c4.dmx.ls` fields (field 9 looks like an energy counter, field 10 is unknown)
 - HACS default-repository inclusion (gated on upstream support so strangers get a working stack)

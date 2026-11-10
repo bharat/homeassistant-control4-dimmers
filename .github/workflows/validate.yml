@@ -33,8 +33,3 @@ jobs:
         uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
-          # home-assistant/brands stopped accepting custom-integration icons in
-          # 2026.3.0. They now ship in custom_components/control4_dimmers/brand/
-          # and take priority over the CDN, so this check no longer applies.
-          # https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api
-          ignore: brands

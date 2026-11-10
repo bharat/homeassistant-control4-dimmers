@@ -8,7 +8,7 @@ pymicro-vad==2.1.0
 pyspeex-noise==2.0.1
 PyTurboJPEG==2.6.1
 pip==26.2.2
-ruff==0.17.2
+ruff==0.17.3
 pre_commit==4.7.0
 paho-mqtt==2.1.0
 pytest==9.0.3
